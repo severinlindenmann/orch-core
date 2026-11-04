@@ -3,7 +3,7 @@ import { SendSharesReview } from '../settings/hub/SendShares'
 import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Pencil, Share2, Tag, Timer } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
@@ -424,6 +424,7 @@ function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; 
 }
 
 const START_EVENT = 'orch:start-agent'
+const LIVE_PHASE_POLL_MS = 5000
 
 /** The newest agent run of this ticket and the run id its agent waits in a terminal on (Today's terminal_wait), polled.
  *  Real host only: in the mock both are absent, so mock mode never shows the stopped or waiting cards. */
@@ -565,6 +566,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
     enabled: ticket.type === 'epic' && !!home,
   })
+  const qc = useQueryClient()
   const { run, wait } = useTicketAgent(ticket, home)
   const runLive = run?.state === 'starting' || run?.state === 'running'
   const start = useStartAgent(ticket, viewer)
@@ -601,6 +603,16 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
   useEffect(() => {
     if (phase.kind === 'working' && home) clearMark(home, ticket.key)
   }, [phase.kind, home, ticket.key])
+  // W32: on a real host no live event tells this page that the agent ended its turn (the wait mark), that its run ended,
+  // or that the claim went. While a live phase shows, read those inputs again every few seconds; it stops with the phase.
+  const livePhase = phase.kind === 'working' || phase.kind === 'starting' || phase.kind === 'waiting' || phase.kind === 'open'
+  useEffect(() => {
+    if (!livePhase || !home || !isRealHost()) return
+    const t = setInterval(() => {
+      for (const key of [['runs', home], ['today', home], ['ticket', home, ticket.key]]) void qc.invalidateQueries({ queryKey: key })
+    }, LIVE_PHASE_POLL_MS)
+    return () => clearInterval(t)
+  }, [livePhase, home, ticket.key, qc])
   const restricted = ticket.visibility !== 'workspace'
   const shown = ticket.labels.slice(0, MAX_LABELS)
   const more = ticket.labels.length - shown.length

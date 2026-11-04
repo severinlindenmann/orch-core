@@ -176,3 +176,36 @@ def test_every_part_of_the_tree_carries_the_one_dev_version():
         assert tomllib.loads(pyproject.read_text())["project"]["version"] == "2.0.0.dev0", pyproject
     for init in (mod.CORE / "src" / "orch" / "__init__.py", *(i for _, i in mod.PARTS if i is not None)):
         assert '__version__ = "2.0.0.dev0"' in init.read_text(), init
+
+
+class _Dist:
+    def __init__(self, text):
+        self.text = text
+
+    def read_text(self, name):
+        assert name == "direct_url.json"
+        return self.text
+
+
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        (
+            '{"url": "https://github.com/x/orch-core.git", "vcs_info": {"vcs": "git", "commit_id": "'
+            + "21a5d05c0123456789abcdef0123456789abcdef"
+            + '"}}',
+            "orch 2.0.0.dev0 (development build, git 21a5d05)",
+        ),
+        ('{"url": "file:///src", "dir_info": {"editable": true}}', "orch 2.0.0.dev0 (development build)"),
+        (None, "orch 2.0.0.dev0 (development build)"),
+        ("not json", "orch 2.0.0.dev0 (development build)"),
+        ('{"vcs_info": {"commit_id": "<script>"}}', "orch 2.0.0.dev0 (development build)"),
+    ],
+)
+def test_w29_a_git_install_shows_its_commit(tmp_path, monkeypatch, text, line):
+    from importlib import metadata
+
+    monkeypatch.setattr(_build, "_STAMP", tmp_path / "missing.json")
+    monkeypatch.setattr(metadata, "distribution", lambda name: _Dist(text))
+    assert _build.version_line() == line
+    assert _build.build_info()["development"] is True

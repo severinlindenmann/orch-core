@@ -100,7 +100,7 @@ export interface Progress {
   waiting?: string | null
   steps: { id: string; label: string; status: 'todo' | 'doing' | 'done' | 'failed' | 'skipped' }[]
   done: boolean
-  error: { code: string; message: string; finishable: boolean } | null
+  error: { code: string; message: string; finishable: boolean; details?: string } | null
   retry: string[]
   reasons?: Record<string, string>
   reason_codes?: Record<string, string>

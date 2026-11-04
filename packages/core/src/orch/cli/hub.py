@@ -396,7 +396,9 @@ def main(
             raise PubError("unsupported.platform", "orch hub needs POSIX filesystem semantics")
         a = _parser().parse_intermixed_args(argv)
         if env.get("ORCH_GRANT") or env.get("ORCH_SESSION"):
-            raise PubError("op.not_allowed", "a person does this at their own terminal; an agent never joins a hub")
+            # W29 (#1167): the words name what was refused (keys rotate comes here too)
+            what = "rotates the workspace key" if a.cmd == "rotate" else "joins or leaves a hub"
+            raise PubError("op.not_allowed", f"a person does this at their own terminal; an agent never {what}")
         if a.cmd == "share":
             return _share(a, env, out, as_json)
         a.card_obj = None

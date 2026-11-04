@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Publish visitor pages</title>
+<style>
+:root { color-scheme: light dark; }
+body { font: 16px/1.5 system-ui,sans-serif; margin: 0 auto; padding: 24px; max-width: 1500px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,440px),1fr)); gap: 24px; }
+h1 { margin-bottom: 8px; } h2 { font-size: 16px; margin: 0; padding: 12px; }
+section { border: 1px solid #888; border-radius: 8px; overflow: hidden; }
+iframe { width: 100%; height: 440px; display: block; border: 0; border-top: 1px solid #888; }
+</style>
+<h1>Publish visitor pages</h1>
+<p>Generated from the product renderers. Each frame is an inert visitor state;
+forms, navigation and scripts are disabled. Colors follow your system preference.</p>
+<div class="gallery">
+<section><h2>Password prompt</h2><iframe inert sandbox title="Password prompt" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Open shared files&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Files were shared with you&lt;/h1&gt;&lt;form id=&quot;f&quot; method=&quot;post&quot; action=&quot;/s/11111111111111111111111111111111/open&quot;&gt;&lt;input type=&quot;hidden&quot; name=&quot;t&quot; value=&quot;&quot;&gt;&lt;p&gt;Nothing has been opened yet.&lt;/p&gt;&lt;p&gt;&lt;label&gt;Password &lt;input type=&quot;password&quot; name=&quot;p&quot; autocomplete=&quot;off&quot; required maxlength=&quot;256&quot;&gt;&lt;/label&gt;&lt;/p&gt;&lt;button type=&quot;submit&quot;&gt;Open shared files&lt;/button&gt;&lt;p class=&quot;s&quot;&gt;Opening these files may count as one view. If this link allows only one view, you may not be able to reopen it.&lt;/p&gt;&lt;/form&gt;&lt;p id=&quot;x&quot; hidden&gt;This address is incomplete. Open the original link again, using the whole link you were given, including the part after the # sign.&lt;/p&gt;&lt;script&gt;var m=/[#&amp;]t=([A-Za-z0-9_-]+)/.exec(location.hash);var f=document.getElementById(&#x27;f&#x27;);if(m){f.t.value=m[1];f.hidden=false;history.replaceState(null,&#x27;&#x27;,location.pathname);f.onsubmit=function(){f.querySelector(&#x27;button&#x27;).disabled=true}}else{document.getElementById(&#x27;x&#x27;).hidden=false}&lt;/script&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Wrong password</h2><iframe inert sandbox title="Wrong password" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Wrong password&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Wrong password&lt;/h1&gt;&lt;p&gt;That password did not work. Use your link again and check the password.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Shared files — two files</h2><iframe inert sandbox title="Shared files — two files" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Shared files&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Shared files&lt;/h1&gt;&lt;ul&gt;&lt;li&gt;&lt;a href=&quot;/s/11111111111111111111111111111111/v/22222222222222222222222222222222/Project%20notes.txt&quot;&gt;Project notes.txt&lt;/a&gt;&lt;/li&gt;&lt;li&gt;&lt;a href=&quot;/s/11111111111111111111111111111111/v/22222222222222222222222222222222/report.pdf&quot;&gt;report.pdf&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Open shared files</h2><iframe inert sandbox title="Open shared files" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Open shared files&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Files were shared with you&lt;/h1&gt;&lt;form id=&quot;f&quot; method=&quot;post&quot; action=&quot;/s/11111111111111111111111111111111/open&quot;&gt;&lt;input type=&quot;hidden&quot; name=&quot;t&quot; value=&quot;&quot;&gt;&lt;p&gt;Nothing has been opened yet.&lt;/p&gt;&lt;button type=&quot;submit&quot;&gt;Open shared files&lt;/button&gt;&lt;p class=&quot;s&quot;&gt;Opening these files may count as one view. If this link allows only one view, you may not be able to reopen it.&lt;/p&gt;&lt;/form&gt;&lt;p id=&quot;x&quot; hidden&gt;This address is incomplete. Open the original link again, using the whole link you were given, including the part after the # sign.&lt;/p&gt;&lt;script&gt;var m=/[#&amp;]t=([A-Za-z0-9_-]+)/.exec(location.hash);var f=document.getElementById(&#x27;f&#x27;);if(m){f.t.value=m[1];f.hidden=false;history.replaceState(null,&#x27;&#x27;,location.pathname);f.onsubmit=function(){f.querySelector(&#x27;button&#x27;).disabled=true}}else{document.getElementById(&#x27;x&#x27;).hidden=false}&lt;/script&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Needs its secret link — missing # part</h2><iframe inert sandbox title="Needs its secret link — missing # part" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Open shared files&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Files were shared with you&lt;/h1&gt;&lt;form id=&quot;f&quot; method=&quot;post&quot; action=&quot;/s/11111111111111111111111111111111/open&quot; hidden&gt;&lt;input type=&quot;hidden&quot; name=&quot;t&quot; value=&quot;&quot;&gt;&lt;p&gt;Nothing has been opened yet.&lt;/p&gt;&lt;button type=&quot;submit&quot;&gt;Open shared files&lt;/button&gt;&lt;p class=&quot;s&quot;&gt;Opening these files may count as one view. If this link allows only one view, you may not be able to reopen it.&lt;/p&gt;&lt;/form&gt;&lt;p id=&quot;x&quot;&gt;This address is incomplete. Open the original link again, using the whole link you were given, including the part after the # sign.&lt;/p&gt;&lt;script&gt;var m=/[#&amp;]t=([A-Za-z0-9_-]+)/.exec(location.hash);var f=document.getElementById(&#x27;f&#x27;);if(m){f.t.value=m[1];f.hidden=false;history.replaceState(null,&#x27;&#x27;,location.pathname);f.onsubmit=function(){f.querySelector(&#x27;button&#x27;).disabled=true}}else{document.getElementById(&#x27;x&#x27;).hidden=false}&lt;/script&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>App loader — Opening</h2><iframe inert sandbox title="App loader — Opening" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Opening&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;meta http-equiv=&quot;refresh&quot; content=&quot;0;url=/a/demo/v/22222222222222222222222222222222/&quot;&gt;&lt;h1&gt;Opening&lt;/h1&gt;&lt;p&gt;&lt;a href=&quot;/a/demo/v/22222222222222222222222222222222/&quot;&gt;Continue&lt;/a&gt;&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Not found</h2><iframe inert sandbox title="Not found" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Not found&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Not found&lt;/h1&gt;&lt;p&gt;Nothing is shared at this address.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Already opened</h2><iframe inert sandbox title="Already opened" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Already opened&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Already opened&lt;/h1&gt;&lt;p&gt;This link was already opened and cannot be used again. Ask the person who sent it for a new link.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Expired</h2><iframe inert sandbox title="Expired" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Expired&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Expired&lt;/h1&gt;&lt;p&gt;This link has expired. Ask the person who sent it for a new link.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Removed</h2><iframe inert sandbox title="Removed" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Removed&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Removed&lt;/h1&gt;&lt;p&gt;This link was removed. Ask the person who sent it for a new link.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>View ended</h2><iframe inert sandbox title="View ended" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Ended&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Ended&lt;/h1&gt;&lt;p&gt;This viewing session has ended. Use your link again if it still works. Ask the person who sent it for a new link.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Needs sign-in</h2><iframe inert sandbox title="Needs sign-in" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Sign-in is not available right now&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Sign-in is not available right now&lt;/h1&gt;&lt;p&gt;Try again later.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Not allowed</h2><iframe inert sandbox title="Not allowed" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Not allowed&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Not allowed&lt;/h1&gt;&lt;p&gt;This request is not allowed.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Not allowed — use Open</h2><iframe inert sandbox title="Not allowed — use Open" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Not allowed&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Not allowed&lt;/h1&gt;&lt;p&gt;Use the Open shared files button on the link page.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Too large</h2><iframe inert sandbox title="Too large" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Too large&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Too large&lt;/h1&gt;&lt;p&gt;That request is too large.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Slow down</h2><iframe inert sandbox title="Slow down" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Slow down&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Slow down&lt;/h1&gt;&lt;p&gt;Too many attempts. Wait a minute and try again.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Busy</h2><iframe inert sandbox title="Busy" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Busy&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Busy&lt;/h1&gt;&lt;p&gt;Try again in a moment.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Unavailable</h2><iframe inert sandbox title="Unavailable" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Unavailable&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Unavailable&lt;/h1&gt;&lt;p&gt;This service is not available right now.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Error</h2><iframe inert sandbox title="Error" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Error&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Error&lt;/h1&gt;&lt;p&gt;Something went wrong.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>App password prompt</h2><iframe inert sandbox title="App password prompt" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Password&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;This page needs a password&lt;/h1&gt;&lt;form method=&quot;post&quot; action=&quot;/a/demo/v/00000000000000000000000000000000/gate&quot;&gt;&lt;p&gt;&lt;input type=&quot;password&quot; name=&quot;p&quot; autocomplete=&quot;off&quot; autofocus required maxlength=&quot;256&quot; aria-label=&quot;Password&quot;&gt;&lt;/p&gt;&lt;button type=&quot;submit&quot;&gt;Open&lt;/button&gt;&lt;/form&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>App wrong password</h2><iframe inert sandbox title="App wrong password" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Password&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;This page needs a password&lt;/h1&gt;&lt;p role=&quot;alert&quot;&gt;That password did not work.&lt;/p&gt;&lt;form method=&quot;post&quot; action=&quot;/a/demo/v/00000000000000000000000000000000/gate&quot;&gt;&lt;p&gt;&lt;input type=&quot;password&quot; name=&quot;p&quot; autocomplete=&quot;off&quot; autofocus required maxlength=&quot;256&quot; aria-label=&quot;Password&quot;&gt;&lt;/p&gt;&lt;button type=&quot;submit&quot;&gt;Open&lt;/button&gt;&lt;/form&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>App not found</h2><iframe inert sandbox title="App not found" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Not found&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Not found&lt;/h1&gt;&lt;p&gt;Nothing is published at this address.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Stopped</h2><iframe inert sandbox title="Stopped" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Stopped&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Stopped&lt;/h1&gt;&lt;p&gt;This app was stopped by the person who published it.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>App view ended</h2><iframe inert sandbox title="App view ended" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;en&quot;&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;&lt;meta name=&quot;robots&quot; content=&quot;noindex,nofollow&quot;&gt;&lt;title&gt;Ended&lt;/title&gt;&lt;style&gt;body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:30rem;margin:8vh auto;padding:0 20px;color:#1d1d1f;background:#f5f5f7}main{display:block;background:#fff;border:1px solid #d2d2d7;border-radius:14px;padding:24px}.w{font-size:.8rem;font-weight:600;letter-spacing:.04em;color:#6e6e73;margin:0 0 16px}button{font:inherit;font-weight:600;padding:.7em 1.4em;border:0;border-radius:8px;min-height:44px;background:#0f766e;color:#fff;cursor:pointer}button:disabled{opacity:.6}h1{font-size:1.35rem;margin:0 0 .5em}p.s{color:#6e6e73;font-size:.9rem}li{margin:.2em 0}a{color:#0f766e}@media(prefers-color-scheme:dark){body{background:#111;color:#f5f5f7}main{background:#1c1c1e;border-color:#3a3a3c}.w,p.s{color:#a1a1a6}button{background:#2dd4bf;color:#04201d}a{color:#2dd4bf}}&lt;/style&gt;&lt;main&gt;&lt;p class=&quot;w&quot;&gt;Shared with orch&lt;/p&gt;&lt;h1&gt;Ended&lt;/h1&gt;&lt;p&gt;This viewing session has ended. Open the address again.&lt;/p&gt;&lt;/main&gt;&lt;/html&gt;"></iframe></section>
+<section><h2>Host app needs its secret link</h2><iframe inert sandbox title="Host app needs its secret link" srcdoc="&lt;!doctype html&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Not found&lt;/title&gt;&lt;style&gt;body{font:15px/1.6 system-ui,sans-serif;max-width:34em;margin:22vh auto 0;padding:0 20px;
+color:#495159;background:#F2F3F5}@media (prefers-color-scheme:dark){body{color:#A3ABB5;background:#15171A}}&lt;/style&gt;
+&lt;p&gt;This app needs its secret link.&lt;/p&gt;"></iframe></section>
+<section><h2>Host not found</h2><iframe inert sandbox title="Host not found" srcdoc="&lt;!doctype html&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;title&gt;Not found&lt;/title&gt;&lt;style&gt;body{font:15px/1.6 system-ui,sans-serif;max-width:34em;margin:22vh auto 0;padding:0 20px;
+color:#495159;background:#F2F3F5}@media (prefers-color-scheme:dark){body{color:#A3ABB5;background:#15171A}}&lt;/style&gt;
+&lt;p&gt;Nothing is shared at this address.&lt;/p&gt;"></iframe></section>
+<section><h2>Sealed app loader</h2><iframe inert sandbox title="Sealed app loader" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;title&gt;Shared page&lt;/title&gt;
+&lt;style&gt;
+  :root { color-scheme: light dark; --bg: #F2F3F5; --fg: #495159; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15171A; --fg: #A3ABB5; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font: 15px/1.6 system-ui, sans-serif; color: var(--fg); }
+  iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+  .msg { max-width: 34em; margin: 22vh auto 0; padding: 0 20px; }
+&lt;/style&gt;
+&lt;div class=&quot;msg&quot; id=&quot;msg&quot;&gt;Opening the shared page…&lt;/div&gt;
+&lt;script&gt;
+const SHARE_ID = &quot;11111111111111111111111111111111&quot;;
+/*open*/
+async function openSealed(keyText, blob, shareId) {
+  // blob: &quot;OAS1&quot; | 12-byte nonce | AES-256-GCM ciphertext and tag; additional data &quot;orch-apps:&lt;id&gt;&quot;
+  const b64 = keyText.replace(/-/g, &quot;+&quot;).replace(/_/g, &quot;/&quot;);
+  const raw = Uint8Array.from(atob(b64 + &quot;=&quot;.repeat((4 - b64.length % 4) % 4)), c =&gt; c.charCodeAt(0));
+  if (raw.length !== 32) throw new Error(&quot;key length&quot;);
+  const magic = new TextDecoder().decode(blob.slice(0, 4));
+  if (magic !== &quot;OAS1&quot;) throw new Error(&quot;format&quot;);
+  const key = await crypto.subtle.importKey(&quot;raw&quot;, raw, &quot;AES-GCM&quot;, false, [&quot;decrypt&quot;]);
+  const plain = await crypto.subtle.decrypt(
+    { name: &quot;AES-GCM&quot;, iv: blob.slice(4, 16), additionalData: new TextEncoder().encode(&quot;orch-apps:&quot; + shareId) },
+    key, blob.slice(16));
+  return new TextDecoder().decode(plain);
+}
+/*open*/
+(async () =&gt; {
+  const msg = document.getElementById(&quot;msg&quot;);
+  const say = (text) =&gt; { msg.textContent = text; };
+  const keyText = new URLSearchParams(location.hash.slice(1)).get(&quot;k&quot;);
+  if (!keyText) return say(&quot;This link is missing its key. Ask for the full link, including the part after #.&quot;);
+  let res;
+  try { res = await fetch(&quot;blob&quot;, { cache: &quot;no-store&quot;, credentials: &quot;omit&quot; }); }
+  catch { return say(&quot;The shared page could not be loaded. Check your connection and reload.&quot;); }
+  if (res.status === 410) return say(&quot;This share has expired or was revoked.&quot;);
+  if (!res.ok) return say(&quot;This share does not exist.&quot;);
+  let html;
+  try { html = await openSealed(keyText, new Uint8Array(await res.arrayBuffer()), SHARE_ID); }
+  catch { return say(&quot;This link does not open this share. The key may be cut off; copy the whole link again.&quot;); }
+  const frame = document.createElement(&quot;iframe&quot;);
+  // no allow-same-origin: the page runs in its own opaque origin and cannot read this page&#x27;s URL or its key
+  frame.setAttribute(&quot;sandbox&quot;, &quot;allow-scripts allow-forms allow-popups allow-modals allow-downloads&quot;);
+  frame.title = &quot;Shared page&quot;;
+  frame.srcdoc = html;
+  msg.replaceWith(frame);
+})();
+&lt;/script&gt;
+&lt;/html&gt;
+"></iframe></section>
+<section><h2>Sealed share — This link is missing its key. Ask for the full link, including the part after #.</h2><iframe inert sandbox title="Sealed share — This link is missing its key. Ask for the full link, including the part after #." srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;title&gt;Shared page&lt;/title&gt;
+&lt;style&gt;
+  :root { color-scheme: light dark; --bg: #F2F3F5; --fg: #495159; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15171A; --fg: #A3ABB5; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font: 15px/1.6 system-ui, sans-serif; color: var(--fg); }
+  iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+  .msg { max-width: 34em; margin: 22vh auto 0; padding: 0 20px; }
+&lt;/style&gt;
+&lt;div class=&quot;msg&quot; id=&quot;msg&quot;&gt;This link is missing its key. Ask for the full link, including the part after #.&lt;/div&gt;
+&lt;script&gt;
+const SHARE_ID = &quot;11111111111111111111111111111111&quot;;
+/*open*/
+async function openSealed(keyText, blob, shareId) {
+  // blob: &quot;OAS1&quot; | 12-byte nonce | AES-256-GCM ciphertext and tag; additional data &quot;orch-apps:&lt;id&gt;&quot;
+  const b64 = keyText.replace(/-/g, &quot;+&quot;).replace(/_/g, &quot;/&quot;);
+  const raw = Uint8Array.from(atob(b64 + &quot;=&quot;.repeat((4 - b64.length % 4) % 4)), c =&gt; c.charCodeAt(0));
+  if (raw.length !== 32) throw new Error(&quot;key length&quot;);
+  const magic = new TextDecoder().decode(blob.slice(0, 4));
+  if (magic !== &quot;OAS1&quot;) throw new Error(&quot;format&quot;);
+  const key = await crypto.subtle.importKey(&quot;raw&quot;, raw, &quot;AES-GCM&quot;, false, [&quot;decrypt&quot;]);
+  const plain = await crypto.subtle.decrypt(
+    { name: &quot;AES-GCM&quot;, iv: blob.slice(4, 16), additionalData: new TextEncoder().encode(&quot;orch-apps:&quot; + shareId) },
+    key, blob.slice(16));
+  return new TextDecoder().decode(plain);
+}
+/*open*/
+(async () =&gt; {
+  const msg = document.getElementById(&quot;msg&quot;);
+  const say = (text) =&gt; { msg.textContent = text; };
+  const keyText = new URLSearchParams(location.hash.slice(1)).get(&quot;k&quot;);
+  if (!keyText) return say(&quot;This link is missing its key. Ask for the full link, including the part after #.&quot;);
+  let res;
+  try { res = await fetch(&quot;blob&quot;, { cache: &quot;no-store&quot;, credentials: &quot;omit&quot; }); }
+  catch { return say(&quot;The shared page could not be loaded. Check your connection and reload.&quot;); }
+  if (res.status === 410) return say(&quot;This share has expired or was revoked.&quot;);
+  if (!res.ok) return say(&quot;This share does not exist.&quot;);
+  let html;
+  try { html = await openSealed(keyText, new Uint8Array(await res.arrayBuffer()), SHARE_ID); }
+  catch { return say(&quot;This link does not open this share. The key may be cut off; copy the whole link again.&quot;); }
+  const frame = document.createElement(&quot;iframe&quot;);
+  // no allow-same-origin: the page runs in its own opaque origin and cannot read this page&#x27;s URL or its key
+  frame.setAttribute(&quot;sandbox&quot;, &quot;allow-scripts allow-forms allow-popups allow-modals allow-downloads&quot;);
+  frame.title = &quot;Shared page&quot;;
+  frame.srcdoc = html;
+  msg.replaceWith(frame);
+})();
+&lt;/script&gt;
+&lt;/html&gt;
+"></iframe></section>
+<section><h2>Sealed share — The shared page could not be loaded. Check your connection and reload.</h2><iframe inert sandbox title="Sealed share — The shared page could not be loaded. Check your connection and reload." srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;title&gt;Shared page&lt;/title&gt;
+&lt;style&gt;
+  :root { color-scheme: light dark; --bg: #F2F3F5; --fg: #495159; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15171A; --fg: #A3ABB5; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font: 15px/1.6 system-ui, sans-serif; color: var(--fg); }
+  iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+  .msg { max-width: 34em; margin: 22vh auto 0; padding: 0 20px; }
+&lt;/style&gt;
+&lt;div class=&quot;msg&quot; id=&quot;msg&quot;&gt;The shared page could not be loaded. Check your connection and reload.&lt;/div&gt;
+&lt;script&gt;
+const SHARE_ID = &quot;11111111111111111111111111111111&quot;;
+/*open*/
+async function openSealed(keyText, blob, shareId) {
+  // blob: &quot;OAS1&quot; | 12-byte nonce | AES-256-GCM ciphertext and tag; additional data &quot;orch-apps:&lt;id&gt;&quot;
+  const b64 = keyText.replace(/-/g, &quot;+&quot;).replace(/_/g, &quot;/&quot;);
+  const raw = Uint8Array.from(atob(b64 + &quot;=&quot;.repeat((4 - b64.length % 4) % 4)), c =&gt; c.charCodeAt(0));
+  if (raw.length !== 32) throw new Error(&quot;key length&quot;);
+  const magic = new TextDecoder().decode(blob.slice(0, 4));
+  if (magic !== &quot;OAS1&quot;) throw new Error(&quot;format&quot;);
+  const key = await crypto.subtle.importKey(&quot;raw&quot;, raw, &quot;AES-GCM&quot;, false, [&quot;decrypt&quot;]);
+  const plain = await crypto.subtle.decrypt(
+    { name: &quot;AES-GCM&quot;, iv: blob.slice(4, 16), additionalData: new TextEncoder().encode(&quot;orch-apps:&quot; + shareId) },
+    key, blob.slice(16));
+  return new TextDecoder().decode(plain);
+}
+/*open*/
+(async () =&gt; {
+  const msg = document.getElementById(&quot;msg&quot;);
+  const say = (text) =&gt; { msg.textContent = text; };
+  const keyText = new URLSearchParams(location.hash.slice(1)).get(&quot;k&quot;);
+  if (!keyText) return say(&quot;This link is missing its key. Ask for the full link, including the part after #.&quot;);
+  let res;
+  try { res = await fetch(&quot;blob&quot;, { cache: &quot;no-store&quot;, credentials: &quot;omit&quot; }); }
+  catch { return say(&quot;The shared page could not be loaded. Check your connection and reload.&quot;); }
+  if (res.status === 410) return say(&quot;This share has expired or was revoked.&quot;);
+  if (!res.ok) return say(&quot;This share does not exist.&quot;);
+  let html;
+  try { html = await openSealed(keyText, new Uint8Array(await res.arrayBuffer()), SHARE_ID); }
+  catch { return say(&quot;This link does not open this share. The key may be cut off; copy the whole link again.&quot;); }
+  const frame = document.createElement(&quot;iframe&quot;);
+  // no allow-same-origin: the page runs in its own opaque origin and cannot read this page&#x27;s URL or its key
+  frame.setAttribute(&quot;sandbox&quot;, &quot;allow-scripts allow-forms allow-popups allow-modals allow-downloads&quot;);
+  frame.title = &quot;Shared page&quot;;
+  frame.srcdoc = html;
+  msg.replaceWith(frame);
+})();
+&lt;/script&gt;
+&lt;/html&gt;
+"></iframe></section>
+<section><h2>Sealed share — This share has expired or was revoked.</h2><iframe inert sandbox title="Sealed share — This share has expired or was revoked." srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;title&gt;Shared page&lt;/title&gt;
+&lt;style&gt;
+  :root { color-scheme: light dark; --bg: #F2F3F5; --fg: #495159; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15171A; --fg: #A3ABB5; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font: 15px/1.6 system-ui, sans-serif; color: var(--fg); }
+  iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+  .msg { max-width: 34em; margin: 22vh auto 0; padding: 0 20px; }
+&lt;/style&gt;
+&lt;div class=&quot;msg&quot; id=&quot;msg&quot;&gt;This share has expired or was revoked.&lt;/div&gt;
+&lt;script&gt;
+const SHARE_ID = &quot;11111111111111111111111111111111&quot;;
+/*open*/
+async function openSealed(keyText, blob, shareId) {
+  // blob: &quot;OAS1&quot; | 12-byte nonce | AES-256-GCM ciphertext and tag; additional data &quot;orch-apps:&lt;id&gt;&quot;
+  const b64 = keyText.replace(/-/g, &quot;+&quot;).replace(/_/g, &quot;/&quot;);
+  const raw = Uint8Array.from(atob(b64 + &quot;=&quot;.repeat((4 - b64.length % 4) % 4)), c =&gt; c.charCodeAt(0));
+  if (raw.length !== 32) throw new Error(&quot;key length&quot;);
+  const magic = new TextDecoder().decode(blob.slice(0, 4));
+  if (magic !== &quot;OAS1&quot;) throw new Error(&quot;format&quot;);
+  const key = await crypto.subtle.importKey(&quot;raw&quot;, raw, &quot;AES-GCM&quot;, false, [&quot;decrypt&quot;]);
+  const plain = await crypto.subtle.decrypt(
+    { name: &quot;AES-GCM&quot;, iv: blob.slice(4, 16), additionalData: new TextEncoder().encode(&quot;orch-apps:&quot; + shareId) },
+    key, blob.slice(16));
+  return new TextDecoder().decode(plain);
+}
+/*open*/
+(async () =&gt; {
+  const msg = document.getElementById(&quot;msg&quot;);
+  const say = (text) =&gt; { msg.textContent = text; };
+  const keyText = new URLSearchParams(location.hash.slice(1)).get(&quot;k&quot;);
+  if (!keyText) return say(&quot;This link is missing its key. Ask for the full link, including the part after #.&quot;);
+  let res;
+  try { res = await fetch(&quot;blob&quot;, { cache: &quot;no-store&quot;, credentials: &quot;omit&quot; }); }
+  catch { return say(&quot;The shared page could not be loaded. Check your connection and reload.&quot;); }
+  if (res.status === 410) return say(&quot;This share has expired or was revoked.&quot;);
+  if (!res.ok) return say(&quot;This share does not exist.&quot;);
+  let html;
+  try { html = await openSealed(keyText, new Uint8Array(await res.arrayBuffer()), SHARE_ID); }
+  catch { return say(&quot;This link does not open this share. The key may be cut off; copy the whole link again.&quot;); }
+  const frame = document.createElement(&quot;iframe&quot;);
+  // no allow-same-origin: the page runs in its own opaque origin and cannot read this page&#x27;s URL or its key
+  frame.setAttribute(&quot;sandbox&quot;, &quot;allow-scripts allow-forms allow-popups allow-modals allow-downloads&quot;);
+  frame.title = &quot;Shared page&quot;;
+  frame.srcdoc = html;
+  msg.replaceWith(frame);
+})();
+&lt;/script&gt;
+&lt;/html&gt;
+"></iframe></section>
+<section><h2>Sealed share — This share does not exist.</h2><iframe inert sandbox title="Sealed share — This share does not exist." srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;title&gt;Shared page&lt;/title&gt;
+&lt;style&gt;
+  :root { color-scheme: light dark; --bg: #F2F3F5; --fg: #495159; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15171A; --fg: #A3ABB5; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font: 15px/1.6 system-ui, sans-serif; color: var(--fg); }
+  iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+  .msg { max-width: 34em; margin: 22vh auto 0; padding: 0 20px; }
+&lt;/style&gt;
+&lt;div class=&quot;msg&quot; id=&quot;msg&quot;&gt;This share does not exist.&lt;/div&gt;
+&lt;script&gt;
+const SHARE_ID = &quot;11111111111111111111111111111111&quot;;
+/*open*/
+async function openSealed(keyText, blob, shareId) {
+  // blob: &quot;OAS1&quot; | 12-byte nonce | AES-256-GCM ciphertext and tag; additional data &quot;orch-apps:&lt;id&gt;&quot;
+  const b64 = keyText.replace(/-/g, &quot;+&quot;).replace(/_/g, &quot;/&quot;);
+  const raw = Uint8Array.from(atob(b64 + &quot;=&quot;.repeat((4 - b64.length % 4) % 4)), c =&gt; c.charCodeAt(0));
+  if (raw.length !== 32) throw new Error(&quot;key length&quot;);
+  const magic = new TextDecoder().decode(blob.slice(0, 4));
+  if (magic !== &quot;OAS1&quot;) throw new Error(&quot;format&quot;);
+  const key = await crypto.subtle.importKey(&quot;raw&quot;, raw, &quot;AES-GCM&quot;, false, [&quot;decrypt&quot;]);
+  const plain = await crypto.subtle.decrypt(
+    { name: &quot;AES-GCM&quot;, iv: blob.slice(4, 16), additionalData: new TextEncoder().encode(&quot;orch-apps:&quot; + shareId) },
+    key, blob.slice(16));
+  return new TextDecoder().decode(plain);
+}
+/*open*/
+(async () =&gt; {
+  const msg = document.getElementById(&quot;msg&quot;);
+  const say = (text) =&gt; { msg.textContent = text; };
+  const keyText = new URLSearchParams(location.hash.slice(1)).get(&quot;k&quot;);
+  if (!keyText) return say(&quot;This link is missing its key. Ask for the full link, including the part after #.&quot;);
+  let res;
+  try { res = await fetch(&quot;blob&quot;, { cache: &quot;no-store&quot;, credentials: &quot;omit&quot; }); }
+  catch { return say(&quot;The shared page could not be loaded. Check your connection and reload.&quot;); }
+  if (res.status === 410) return say(&quot;This share has expired or was revoked.&quot;);
+  if (!res.ok) return say(&quot;This share does not exist.&quot;);
+  let html;
+  try { html = await openSealed(keyText, new Uint8Array(await res.arrayBuffer()), SHARE_ID); }
+  catch { return say(&quot;This link does not open this share. The key may be cut off; copy the whole link again.&quot;); }
+  const frame = document.createElement(&quot;iframe&quot;);
+  // no allow-same-origin: the page runs in its own opaque origin and cannot read this page&#x27;s URL or its key
+  frame.setAttribute(&quot;sandbox&quot;, &quot;allow-scripts allow-forms allow-popups allow-modals allow-downloads&quot;);
+  frame.title = &quot;Shared page&quot;;
+  frame.srcdoc = html;
+  msg.replaceWith(frame);
+})();
+&lt;/script&gt;
+&lt;/html&gt;
+"></iframe></section>
+<section><h2>Sealed share — This link does not open this share. The key may be cut off; copy the whole link again.</h2><iframe inert sandbox title="Sealed share — This link does not open this share. The key may be cut off; copy the whole link again." srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;title&gt;Shared page&lt;/title&gt;
+&lt;style&gt;
+  :root { color-scheme: light dark; --bg: #F2F3F5; --fg: #495159; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #15171A; --fg: #A3ABB5; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font: 15px/1.6 system-ui, sans-serif; color: var(--fg); }
+  iframe { border: 0; width: 100%; height: 100%; display: block; background: #fff; }
+  .msg { max-width: 34em; margin: 22vh auto 0; padding: 0 20px; }
+&lt;/style&gt;
+&lt;div class=&quot;msg&quot; id=&quot;msg&quot;&gt;This link does not open this share. The key may be cut off; copy the whole link again.&lt;/div&gt;
+&lt;script&gt;
+const SHARE_ID = &quot;11111111111111111111111111111111&quot;;
+/*open*/
+async function openSealed(keyText, blob, shareId) {
+  // blob: &quot;OAS1&quot; | 12-byte nonce | AES-256-GCM ciphertext and tag; additional data &quot;orch-apps:&lt;id&gt;&quot;
+  const b64 = keyText.replace(/-/g, &quot;+&quot;).replace(/_/g, &quot;/&quot;);
+  const raw = Uint8Array.from(atob(b64 + &quot;=&quot;.repeat((4 - b64.length % 4) % 4)), c =&gt; c.charCodeAt(0));
+  if (raw.length !== 32) throw new Error(&quot;key length&quot;);
+  const magic = new TextDecoder().decode(blob.slice(0, 4));
+  if (magic !== &quot;OAS1&quot;) throw new Error(&quot;format&quot;);
+  const key = await crypto.subtle.importKey(&quot;raw&quot;, raw, &quot;AES-GCM&quot;, false, [&quot;decrypt&quot;]);
+  const plain = await crypto.subtle.decrypt(
+    { name: &quot;AES-GCM&quot;, iv: blob.slice(4, 16), additionalData: new TextEncoder().encode(&quot;orch-apps:&quot; + shareId) },
+    key, blob.slice(16));
+  return new TextDecoder().decode(plain);
+}
+/*open*/
+(async () =&gt; {
+  const msg = document.getElementById(&quot;msg&quot;);
+  const say = (text) =&gt; { msg.textContent = text; };
+  const keyText = new URLSearchParams(location.hash.slice(1)).get(&quot;k&quot;);
+  if (!keyText) return say(&quot;This link is missing its key. Ask for the full link, including the part after #.&quot;);
+  let res;
+  try { res = await fetch(&quot;blob&quot;, { cache: &quot;no-store&quot;, credentials: &quot;omit&quot; }); }
+  catch { return say(&quot;The shared page could not be loaded. Check your connection and reload.&quot;); }
+  if (res.status === 410) return say(&quot;This share has expired or was revoked.&quot;);
+  if (!res.ok) return say(&quot;This share does not exist.&quot;);
+  let html;
+  try { html = await openSealed(keyText, new Uint8Array(await res.arrayBuffer()), SHARE_ID); }
+  catch { return say(&quot;This link does not open this share. The key may be cut off; copy the whole link again.&quot;); }
+  const frame = document.createElement(&quot;iframe&quot;);
+  // no allow-same-origin: the page runs in its own opaque origin and cannot read this page&#x27;s URL or its key
+  frame.setAttribute(&quot;sandbox&quot;, &quot;allow-scripts allow-forms allow-popups allow-modals allow-downloads&quot;);
+  frame.title = &quot;Shared page&quot;;
+  frame.srcdoc = html;
+  msg.replaceWith(frame);
+})();
+&lt;/script&gt;
+&lt;/html&gt;
+"></iframe></section>
+</div>
+</html>

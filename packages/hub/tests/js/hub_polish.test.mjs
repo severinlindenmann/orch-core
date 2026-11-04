@@ -32,7 +32,7 @@ test("Continue renders the known workspace name, with a fallback when unknown", 
       plain: (...nodes) => { c.output = nodes; } });
     vm.runInContext(section("async function landFromTicket(", '// "Opening your hub'), c);
     await c.landFromTicket("ticket");
-    assert.ok(c.output.map(text).join(" ").includes(workspace ? "from Design <team>'s workspace." : "from your workspace."));
+    assert.ok(c.output.map(text).join(" ").includes(workspace ? "from Design <team>." : "from your workspace."));
   }
 });
 

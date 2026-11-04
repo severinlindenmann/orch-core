@@ -115,7 +115,7 @@ test("P02: reauth goes straight to the sign-in form with the name filled in and 
   assert.equal(calls[0], "DELETE /session");
   assert.equal(calls[1].prefill, "Anna Test"); // QA b1852: the person's name, never the 32-hex user id
   assert.match(calls[1].title, /Sign in to open Admin/);
-  assert.match(calls[1].why, /You came from Design’s workspace/);
+  assert.match(calls[1].why, /You came from Design\. Confirm/);
   assert.equal(c.returnHash, "#/admin");
 });
 test("P10: the 'No connection' bar stays away while a restore or restart is expected (state.restarting)", () => {

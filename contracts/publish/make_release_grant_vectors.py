@@ -97,7 +97,9 @@ def build():
             "expect": {"error": None, "running": False, "current_version": 7},
             "scope": "orch-publish commit state transition, even with valid approval; "
                      "only app.start with its own approval starts the app. "
-                     "The signer state check is advisory, from its own last committed or started record; "
+                     "The signer state check uses its own last signed commit/start/stop approval for that app; "
+                     "a stopped indication only warns in the signer's own review and never refuses: "
+                     "This app was stopped the last time this computer approved it; publishing keeps it stopped. "
                      "orch-publish preserves running state regardless of that check.",
         }, {
             "name": "first_commit_new_app_stays_stopped", "status": "pending",

@@ -73,7 +73,7 @@ export type SharesData =
        * them. For a moved hub the page reads the add-ons row only (`hub_moved` there, with the new values): the one source for
        * the banner and its review; this reason just keeps "cannot be reached" from showing beside it.
        */
-      why?: 'unreachable' | 'not_allowed' | 'local' | 'hub_left' | 'hub_moved'
+      why?: 'unreachable' | 'not_allowed' | 'refused' | 'local' | 'hub_left' | 'hub_moved'
       shares: Share[]
       staged: Staged[]
     }
@@ -237,6 +237,10 @@ export const isLoopback = (origin: string | null): boolean => !!origin && /^http
  * "This computer" (and "nobody else") only when `from` says the Publish server is on this computer: a loopback address alone
  * does not say so, a hub can be reached through one.
  */
+/** B07: the links open only on this computer (the local test setup): the "anyone with the link" warning would contradict it. */
+export const localOnly = (server: string | null, share: string | null, from: 'computer' | 'hub' | null = null): boolean =>
+  from === 'computer' && isLoopback(server) && isLoopback(share)
+
 export function reachNote(server: string | null, share: string | null, from: 'computer' | 'hub' | null = null): string | null {
   if (!server || !share) return null
   const s = isLoopback(server)

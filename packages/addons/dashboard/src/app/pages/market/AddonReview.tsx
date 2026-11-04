@@ -19,8 +19,11 @@ export function addonContent(content: SignContent, _marketplace?: boolean): Sign
   return content.summary && lines ? { ...content, summary: { ...content.summary, lines } } : content
 }
 
-export function AddonReview({ workspace, row, onBusy, onDone, onClose }: {
-  workspace: Workspace; row: AddOnRow; marketplace: boolean; onBusy: (busy: boolean) => void; onDone: () => void; onClose: () => void
+export function AddonReview({ workspace, row, browse, onBusy, onDone, onClose }: {
+  workspace: Workspace; row: AddOnRow; marketplace: boolean
+  /** W14: opened from Browse, where an add-on that is on is no longer listed: the toast says where it went. */
+  browse?: boolean
+  onBusy: (busy: boolean) => void; onDone: () => void; onClose: () => void
 }) {
   const turningOn = row.state !== 'on'
   const title = `${turningOn ? 'Turn on' : 'Turn off'} ${row.title}`
@@ -29,10 +32,13 @@ export function AddonReview({ workspace, row, onBusy, onDone, onClose }: {
   const [viaHub, setViaHub] = useState(false)
   const hubOffered = turningOn && hubApproves(useHub(workspace.id).data)
   const [signing, setSigning] = useState(false)
+  // W07 / W14: one plain toast for both directions, saying the result (the review above showed what is signed)
+  const onText = `${row.title} is on.${browse ? ' You find it under Installed now.' : ''}`
   if (viaHub) return <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: 'addon_grant', name: row.id }} inline forceHub onClose={onClose} onSettled={phase => { if (phase === 'done') onDone() }} />
   return <>
-    <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: turningOn ? 'addon_grant' : 'addon_disable', name: row.id }} inline onSigning={busy => { setSigning(busy); onBusy(busy) }} onClose={onClose} doneToast={turningOn ? undefined : ''} onSettled={phase => { if (phase === 'done') {
-      if (!turningOn) toast.success(`${row.title} is off`, { action: { label: 'Undo', onClick: () => requestReverse({ ws: workspace.id, action: { action: 'addon_grant', name: row.id } }) } })
+    <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: turningOn ? 'addon_grant' : 'addon_disable', name: row.id }} inline onSigning={busy => { setSigning(busy); onBusy(busy) }} onClose={onClose} doneToast="" onSettled={phase => { if (phase === 'done') {
+      if (turningOn) toast.success(onText)
+      else toast.success(`${row.title} is off.`, { action: { label: 'Undo', onClick: () => requestReverse({ ws: workspace.id, action: { action: 'addon_grant', name: row.id } }) } })
       onDone()
     } }} />
     {hubOffered && <div className="flex justify-end"><Button variant="ghost" disabled={signing} onClick={() => setViaHub(true)}>Approve in the hub instead</Button></div>}

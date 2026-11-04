@@ -1606,5 +1606,43 @@ def serve(call: Call) -> dict[str, Any]:
     from .terms import runner_info
 
     runner = runner_info(service, person)
-    runs = [view(r) | {"out_bytes": int(r.get("out") or 0), "waiting": waiting_of(service, hub, r)} for r in window]
+    contacted = _contacted(service, window)
+    runs = [
+        view(r)
+        | {"out_bytes": int(r.get("out") or 0), "waiting": waiting_of(service, hub, r)}
+        | contacted.get(r["run"], {})
+        for r in window
+    ]
     return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})
+
+
+def _contacted(service: Any, window: list[dict[str, Any]]) -> dict[str, dict[str, bool]]:
+    """W00: for each agent run with a session, ``{"contacted": bool}``: has that session made any host call yet (the
+    session records every column-G request with ``auth.session``). An agent whose orch never reaches the host shows
+    as such on the dashboard instead of "Taking longer than usual". Shells and runs without a session: nothing."""
+    from datetime import datetime
+
+    from .sessions import RETENTION, records
+
+    now = service.clock()
+    agents = []
+    for r in window:
+        if r.get("kind") != "agent" or not isinstance(r.get("session"), str):
+            continue
+        try:  # older than the session records keep: unknown (never a false "has not reached orch")
+            started = datetime.fromisoformat(str(r.get("started_at")).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        if now - started < RETENTION:
+            agents.append(r)
+    if not agents:
+        return {}
+    try:
+        seen = [rec.session for rec in records(service).snapshot(now)]
+    except Exception:  # noqa: BLE001 - unknown is never "not contacted": the field is then left out
+        return {}
+
+    def reached(session: str) -> bool:  # the run's own session or one of its delegated children (s_….n)
+        return any(s == session or s.startswith(session + ".") for s in seen)
+
+    return {r["run"]: {"contacted": reached(r["session"])} for r in agents}

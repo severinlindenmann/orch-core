@@ -115,7 +115,7 @@ class AppServer:
         if method not in ("GET", "HEAD", "POST"):
             return self.page(
                 405,
-                ("Not allowed", "This request is not allowed."),
+                S.NOT_ALLOWED,
                 slug,
                 extra={"allow": "GET, HEAD"},
             )
@@ -129,7 +129,7 @@ class AppServer:
             if method != "GET":  # a HEAD or a POST must not open a view session
                 return self.page(
                     405,
-                    ("Not allowed", "This request is not allowed."),
+                    S.NOT_ALLOWED,
                     slug,
                     extra={"allow": "GET"},
                 )
@@ -146,7 +146,7 @@ class AppServer:
             if method != "POST":
                 return self.page(
                     405,
-                    ("Not allowed", "This request is not allowed."),
+                    S.NOT_ALLOWED,
                     slug,
                     extra={"allow": "POST"},
                 )
@@ -154,12 +154,12 @@ class AppServer:
                 return self.page(429, S.TOO_MANY, slug, extra={"retry-after": "60"})
             raw = await self._body(receive)
             if raw is None:
-                return self.page(413, ("Too large", "That request is too large."), slug)
+                return self.page(413, S.TOO_LARGE, slug)
             return await asyncio.to_thread(self._gate, slug, raw)
         if method == "POST":  # form rows are S7
             return self.page(
                 405,
-                ("Not allowed", "This request is not allowed."),
+                S.NOT_ALLOWED,
                 slug,
                 view,
                 extra={"allow": "GET, HEAD"},
@@ -235,6 +235,14 @@ class AppServer:
         )
         return self.page(status, ("Password", ""), slug, body=body)
 
+    def _opening_page(self, slug, view, reach=()):
+        url = f"/a/{slug}/v/{view}/"
+        body = (
+            f'<meta http-equiv="refresh" content="0;url={url}"><h1>Opening</h1>'
+            f'<p><a href="{url}">Continue</a></p>'
+        )
+        return self.page(200, ("Opening", ""), slug, view, reach, body=body)
+
     def _issue(self, conn, app_id):
         """A view session, or None when the app is not running. Counts one visit (a daily total, nothing else)."""
         now = self.clock()
@@ -298,9 +306,7 @@ class AppServer:
             if not given or len(given.encode("utf-8", "replace")) > P.PW_INPUT_MAX:
                 return self._gate_page(slug, WRONG, 401)
             if not self._kdf.acquire(blocking=False):  # a slot without waiting: the KDF is bounded
-                return self.page(
-                    503, ("Busy", "Try again in a moment."), slug, extra={"retry-after": "5"}
-                )
+                return self.page(503, S.BUSY, slug, extra={"retry-after": "5"})
             try:
                 ok = P.password_ok(json.loads(app["pw"]), given)
             finally:
@@ -310,12 +316,7 @@ class AppServer:
             view = self._issue(conn, app["id"])
             if view is None:
                 return self.page(410, STOPPED, slug)
-            url = f"/a/{slug}/v/{view}/"
-            body = (
-                f'<meta http-equiv="refresh" content="0;url={url}"><h1>Opening</h1>'
-                f'<p><a href="{url}">Continue</a></p>'
-            )
-            return self.page(200, ("Opening", ""), slug, view, self._reach(conn, app), body=body)
+            return self._opening_page(slug, view, self._reach(conn, app))
         finally:
             conn.close()
 

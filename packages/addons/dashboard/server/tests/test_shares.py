@@ -105,6 +105,8 @@ def host(gateway, monkeypatch):
     fake.answers["ticket.query"] = {"rows": [{"key": "DEMO-1", "title": "Fix billing"}], "next_page": None}
     monkeypatch.setattr(gateway, "call", lambda ws, op, args=None: fake.call(op, args))
     monkeypatch.setattr(gateway, "enabled", lambda ws: fake)
+    monkeypatch.setattr(gateway, "new_link", lambda ws: fake)  # the network ops use a link of their own
+    fake.close = lambda: None
     return fake
 
 
@@ -652,3 +654,64 @@ def test_prepare_passes_work_folder_names_and_never_a_path(client, token, stub, 
     both = {"ticket": "DEMO-1", "artifacts": ["A.txt"], "workfiles": ["a.txt"], "idem": IDEM}
     assert client.post(url(stub, "/shares/prepare"), json=both, headers=hdr(token)).status_code == 400
     assert len(host.calls) == n
+
+
+class SharedLink(Host):
+    """Like the real HostLink: one request at a time, the lock held until the answer comes (hostlink.py `call`)."""
+
+    def __init__(self, started=None, release=None):
+        super().__init__()
+        import threading
+
+        self.lock = threading.Lock()
+        self.started, self.release = started, release
+
+    def call(self, op, args=None, write=False, idem=None, **kw):
+        with self.lock:
+            if op == "publish.send" and self.release:  # the slow network part, inside the link's lock
+                self.started.set()
+                assert self.release.wait(20)
+                return SENT
+            return super().call(op, args, write, idem, **kw)
+
+
+def test_a_slow_send_never_holds_the_link_the_workspace_reads_use(client, token, stub, gateway, monkeypatch):
+    """W34: while the hub is cut a send waits in its backoff for tens of seconds. It must not hold the workspace's
+    shared host link: every other read (and with the link's 30 s timeout, the closing of it) waited behind it."""
+    import threading
+    import time
+
+    started, release = threading.Event(), threading.Event()
+    shared = SharedLink(started, release)
+    shared.answers["publish.list"] = LIST
+    shared.answers["ticket.query"] = {"rows": [{"key": "DEMO-1", "title": "Fix billing"}], "next_page": None}
+    monkeypatch.setattr(gateway, "call", lambda ws, op, args=None: shared.call(op, args))
+    monkeypatch.setattr(gateway, "enabled", lambda ws: shared)
+
+    class OwnLink(Host):
+        def call(self, op, args=None, write=False, idem=None, **kw):
+            started.set()
+            assert release.wait(20)
+            return SENT
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(gateway, "new_link", lambda ws: OwnLink())
+    sending = []
+    sender = threading.Thread(
+        target=lambda: sending.append(
+            client.post(url(stub, "/shares/send"), json={"staged_id": STAGED, "idem": IDEM}, headers=hdr(token))
+        )
+    )
+    sender.start()
+    try:
+        assert started.wait(10)
+        began = time.monotonic()
+        res = client.get(url(stub, "/shares"), headers=hdr(token))
+        assert res.status_code == 200, res.text
+        assert time.monotonic() - began < 5
+    finally:
+        release.set()
+        sender.join(20)
+    assert sending[0].status_code == 200 and sending[0].json()["link"] == LINK

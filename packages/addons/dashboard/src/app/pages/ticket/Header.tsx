@@ -3,7 +3,7 @@ import { SendSharesReview } from '../settings/hub/SendShares'
 import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Pencil, Share2, Tag, Timer } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
@@ -344,7 +344,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = fal
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
-  const busy = runLive || phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open'
+  const busy = runLive || phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open' || phase.kind === 'unreachable'
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
   const p = primaryAction(av, { start: start.startable && !blocked && !busy })
   if (signing)
@@ -417,13 +417,14 @@ export function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: 
 }
 
 /** The newest agent run of this ticket, if any. */
-function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; state: string; started_at: string }> | undefined, key: string): ProgressRun | null {
+function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; state: string; started_at: string; contacted?: boolean }> | undefined, key: string): ProgressRun | null {
   const mine = (Array.isArray(runs) ? runs : []).filter((r) => r.ticket === key && r.kind === 'agent')
   const newest = mine.reduce<(typeof mine)[number] | null>((a, r) => (!a || Date.parse(r.started_at) > Date.parse(a.started_at) ? r : a), null)
   return newest as ProgressRun | null
 }
 
 const START_EVENT = 'orch:start-agent'
+const LIVE_PHASE_POLL_MS = 5000
 
 /** The newest agent run of this ticket and the run id its agent waits in a terminal on (Today's terminal_wait), polled.
  *  Real host only: in the mock both are absent, so mock mode never shows the stopped or waiting cards. */
@@ -530,6 +531,17 @@ export function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phas
           </Button>
         </>
       )}
+      {phase.kind === 'unreachable' && (
+        <>
+          <Pill tone="warning">The agent has not reached orch</Pill>
+          <span className="text-[13px] text-text">If its terminal says it cannot reach the orch host, stop it and start it again.</span>
+          {phase.run && (
+            <Button type="button" size="sm" variant="outline" onClick={() => openDockOn(phase.run!)}>
+              Open agent
+            </Button>
+          )}
+        </>
+      )}
       {phase.kind === 'failed' && (
         <>
           <Pill tone="warning">{phase.reason}</Pill>
@@ -554,6 +566,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
     enabled: ticket.type === 'epic' && !!home,
   })
+  const qc = useQueryClient()
   const { run, wait } = useTicketAgent(ticket, home)
   const runLive = run?.state === 'starting' || run?.state === 'running'
   const start = useStartAgent(ticket, viewer)
@@ -590,6 +603,16 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
   useEffect(() => {
     if (phase.kind === 'working' && home) clearMark(home, ticket.key)
   }, [phase.kind, home, ticket.key])
+  // W32: on a real host no live event tells this page that the agent ended its turn (the wait mark), that its run ended,
+  // or that the claim went. While a live phase shows, read those inputs again every few seconds; it stops with the phase.
+  const livePhase = phase.kind === 'working' || phase.kind === 'starting' || phase.kind === 'waiting' || phase.kind === 'open'
+  useEffect(() => {
+    if (!livePhase || !home || !isRealHost()) return
+    const t = setInterval(() => {
+      for (const key of [['runs', home], ['today', home], ['ticket', home, ticket.key]]) void qc.invalidateQueries({ queryKey: key })
+    }, LIVE_PHASE_POLL_MS)
+    return () => clearInterval(t)
+  }, [livePhase, home, ticket.key, qc])
   const restricted = ticket.visibility !== 'workspace'
   const shown = ticket.labels.slice(0, MAX_LABELS)
   const more = ticket.labels.length - shown.length
@@ -676,7 +699,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
 
       <BlockedByConnection ticket={ticket} />
       {/* run17 P06: a finished ticket has no agent line; a ticket that waits for you says so once (the card), unless the agent idles at its prompt */}
-      {ticket.status !== 'done' && ticket.status !== 'closed' && !ticket.closed && (phase.kind !== 'needs' || !!wait) && phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
+      {ticket.status !== 'done' && ticket.status !== 'closed' && !ticket.closed && (phase.kind !== 'needs' || !!wait) && phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && phase.kind !== 'unreachable' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
     </header>
   )
 }

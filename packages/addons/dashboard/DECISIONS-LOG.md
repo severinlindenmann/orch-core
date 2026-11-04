@@ -2162,6 +2162,22 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 
 **Revert:** Remove work-folder result cards/read previews and the new read route/op; restore the previous query key. Keep explicit verdict choice unless the owner changes P26.
 
+
+### 2026-10-31 — W01 setup service failure wording
+
+**Decision:** Show plain service-manager failure reasons and keep diagnostic text in collapsed Details. Preserve confirmed macOS background-item advice. Do not offer `orch dashboard open` as recovery from a missing workspace host.
+
+**Why:** The dashboard launcher starts only the dashboard; workspace access still requires a listening host socket. The task explicitly limits this change to reproduction and plain wording if that fallback cannot provide workspace access.
+
+**Revert:** Remove the diagnostic presentation with its tests; add an access command only when its host-start behavior has been verified.
+
+
+### 2026-10-31 — W01: open a workspace after a finishable setup failure
+
+- **Decision:** Put primary “Open your workspace” first on finishable error cards, using the success screen's finish path. Keep retry secondary and retain “Finish setup later”.
+- **Why:** A post-genesis failure leaves an existing workspace that the person should be able to open while deferring unfinished steps.
+- **Revert:** Remove the finishable-error open action and restore the previous warning and retry styling.
+
 ### 2026-10-31 — Open hub in the dashboard demo
 
 - **Decision:** Share the mock API transport with hub switching; the production client exports a fetch transport. Mock rail and switch routes use `VITE_HUB_MOCKUP_URL`, defaulting to `http://127.0.0.1:8787/hub/index.html`, and map the requested page to its hash.

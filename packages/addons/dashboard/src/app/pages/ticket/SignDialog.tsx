@@ -227,7 +227,8 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
     try {
       await api.postAction(ticket.key, request())
       await qc.invalidateQueries()
-      toast.success(`${d.title}: signed with Touch ID`)
+      // W11 (mockup path, same words as the real host's dialog): a verdict says where the ticket went
+      toast.success(action.kind === 'verdict' && result === 'pass' ? `${ticket.key} is done. You find it on Today under Recently.` : action.kind === 'verdict' && result === 'fail' ? `${ticket.key} was sent back for changes.` : `${d.title}: signed with Touch ID`)
       onPending?.(false)
       onClose()
     } catch (e) {

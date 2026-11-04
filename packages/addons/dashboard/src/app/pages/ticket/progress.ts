@@ -10,6 +10,8 @@ export type Phase =
   | { kind: 'idle' }
   | { kind: 'starting'; slow: boolean; /** a run of this ticket still lives: never offer a second start next to it (run 16 P01) */ live?: true }
   | { kind: 'open'; /** a run lives but claims nothing: the way into it */ run?: string }
+  /** W00: the agent runs but its orch never reached the host (its terminal says why); never a second start next to it */
+  | { kind: 'unreachable'; run?: string }
   | { kind: 'waiting'; /** the run the agent waits in (open it with openDockOn) */ run: string }
   | { kind: 'working' }
   | { kind: 'needs' }
@@ -25,6 +27,8 @@ export interface ProgressRun {
   started_at: string
   /** the run id (openDockOn) */
   run?: string
+  /** W00: the run's agent session has made a host call (false: its orch cannot reach the host); absent: unknown */
+  contacted?: boolean
 }
 
 export const STARTING_SLOW_MS = 90_000
@@ -137,6 +141,11 @@ export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: M
   if (!liveMark && !runLive) return { kind: 'idle' }
   const since = o.mark?.since ?? runStart
   if (!runLive) return { kind: 'starting', slow: o.now - since >= STARTING_SLOW_MS }
+  // W00: the run lives, nothing is claimed and the host has never heard from its agent's session after the slow mark:
+  // its orch cannot reach the host (it stops with "cannot reach the orch host: ..." in its terminal). Say so, never
+  // "Taking longer than usual" for ever. Unknown (an older host) keeps the rules below.
+  if (!ticket.claim && o.run?.contacted === false && o.now - (Number.isNaN(runStart) ? since : runStart) >= STARTING_SLOW_MS)
+    return { kind: 'unreachable', ...(o.run?.run ? { run: o.run.run } : {}) }
   // A claim that is no longer live is history: nobody is working and the run is not ours to describe (review P01).
   if (ticket.claim && ticket.claim.live === false) return { kind: 'idle' }
   // The run lives but claims nothing and waits for nobody we can see: after the start window say it is open (never

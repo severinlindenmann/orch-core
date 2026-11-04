@@ -7,7 +7,7 @@ import { HandoffSignDialog } from './HandoffSignDialog'
 import type { HumanAction } from './shared'
 
 // The popover renders its children and its confirm label, so the radios can be driven.
-vi.mock('@/components/sign/SignPopover', () => ({ SignPopover: (p: { children: ReactNode; confirmLabel: string }) => <div><span data-testid="confirm">{p.confirmLabel}</span>{p.children}</div> }))
+vi.mock('@/components/sign/SignPopover', () => ({ SignPopover: (p: { children: ReactNode; confirmLabel: string; doneToast?: string }) => <div><span data-testid="confirm">{p.confirmLabel}</span><span data-testid="done-toast">{p.doneToast}</span>{p.children}</div> }))
 vi.mock('./EvidenceView', async (orig) => ({ ...(await orig<typeof import('./EvidenceView')>()), VerdictEvidence: () => null, VerdictPreview: () => null }))
 vi.mock('./ManualAcceptance', () => ({ ManualAcceptanceReview: () => null }))
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }))
@@ -28,4 +28,11 @@ it('a pick on ticket A does not carry to ticket B, nor past a close', () => {
   r.rerender(view(t('B-1'), null))
   r.rerender(view(t('B-1'), { kind: 'verdict' }))
   expect(screen.getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true)
+})
+
+it('W11: after Pass the toast says the ticket is done and where it went; Send back says so', () => {
+  render(view(t('A-1'), { kind: 'verdict' }))
+  expect(screen.getByTestId('done-toast')).toHaveTextContent('A-1 is done. You find it on Today under Recently.')
+  fireEvent.click(screen.getByRole('radio', { name: /Send back/ }))
+  expect(screen.getByTestId('done-toast')).toHaveTextContent('A-1 was sent back for changes.')
 })

@@ -41,6 +41,13 @@ function open(first: ActivityPage, more?: ActivityPage) {
 }
 
 describe('Activity page (real host)', () => {
+  it('W15: an empty Ticket filter does not look like a ticket key (it reads "Any ticket")', async () => {
+    open(page([row('1')]))
+    const box = await screen.findByLabelText('Ticket', {}, T)
+    expect((box as HTMLInputElement).value).toBe('')
+    expect(box.getAttribute('placeholder')).toBe('Any ticket')
+    expect(box.getAttribute('placeholder')).not.toMatch(/-\d{4}/)
+  })
   it('groups by local day, says it in words and links the ticket', async () => {
     open(page([row('1', { actor: { kind: 'agent', id: 'claude-code', for_name: 'Severin' }, did: 'moved the ticket from open to done', type: 'status.changed' }), row('2', { at: iso(1), did: 'created the ticket' })]))
     expect(await screen.findByRole('heading', { name: /^Today ·/ }, T)).toBeInTheDocument()

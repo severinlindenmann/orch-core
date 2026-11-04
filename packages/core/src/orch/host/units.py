@@ -103,6 +103,16 @@ def systemd_quote(arg: str) -> str:
     return f'"{out}"'
 
 
+def systemd_home(home: str) -> str:
+    """``Environment="HOME=…"`` for a unit (W00): an absolute path without control characters (a newline would add
+    directives), backslash and ``"`` escaped and ``%`` written ``%%`` (specifiers expand in Environment=); ``$`` stays
+    as is, because Environment= does not expand variables (``$$`` would stay a literal ``$$``)."""
+    if not home.startswith("/") or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in home):
+        raise ValueError(f"HOME must be an absolute path without control characters: {home!r}")
+    out = home.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'Environment="HOME={out}"'
+
+
 def launchd_plist(
     python: Path,
     release: Path,
@@ -161,7 +171,7 @@ def systemd_unit(
         "[Service]",
         "Type=simple",
         f"ExecStart={exec_start}",
-        *([f"Environment={systemd_quote('HOME=' + home)}"] if home else []),  # W00
+        *([systemd_home(home)] if home else []),  # W00
         "Restart=always",
         "RestartSec=1",
         "UMask=0077",

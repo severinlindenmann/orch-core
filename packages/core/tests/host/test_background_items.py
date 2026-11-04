@@ -224,8 +224,18 @@ def test_w00_the_host_and_runner_units_carry_the_installs_home():
         assert plistlib.loads(mac.content)["EnvironmentVariables"] == {"HOME": "/Users/lab/a home"}
         linux = plan_of(env, Path("/s"), Path("/r"), Path("/rel/v"), platform="linux", python=Path("/py"), uid=1000)
         text = linux.content.decode()
-        assert 'Environment="HOME=/Users/lab/a home"' in text or "Environment=HOME=/Users/lab/a\\x20home" in text, text
+        assert 'Environment="HOME=/Users/lab/a home"' in text, text
     # without a HOME argument nothing changes (the builders' other callers)
     assert "EnvironmentVariables" not in plistlib.loads(
         runner_service.launchd_plist(Path("/py"), Path("/rel/v"), Path("/s"), Path("/r"))
     )
+
+
+def test_w00_the_units_home_line_is_escaped_for_systemd_and_refuses_injection():
+    """Opus (W00): Environment= expands % specifiers but not $; a newline would add directives."""
+    import pytest
+
+    assert units.systemd_home('/h/$x%y"z') == 'Environment="HOME=/h/$x%%y\\"z"'
+    for bad in ("relative/home", "/h\nExecStartPre=/bin/x", "/h\x7f"):
+        with pytest.raises(ValueError):
+            units.systemd_home(bad)

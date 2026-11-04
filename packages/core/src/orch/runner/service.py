@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from orch.host import enable as host_enable
-from orch.host.units import launcher_arguments, systemd_quote
+from orch.host.units import launcher_arguments, systemd_home, systemd_quote
 
 __all__ = [
     "LAUNCHD_LABEL",
@@ -107,7 +107,7 @@ def systemd_unit(
             "[Service]",
             "Type=simple",
             f"ExecStart={exec_start}",
-            *([f"Environment={systemd_quote('HOME=' + home)}"] if home else []),  # W00: the runs inherit it
+            *([systemd_home(home)] if home else []),  # W00: the runs inherit it
             "Restart=always",
             "RestartSec=1",
             "Delegate=yes",

@@ -44,11 +44,11 @@ function StagedRow({ s, ws, mayChange, onSign }: { s: Staged; ws: string; mayCha
         {s.files.length} file{s.files.length === 1 ? '' : 's'} · {kindText(s.kind, s.views)}
         {s.origin === 'agent' ? ' · prepared by an agent' : ''}
       </span>
-      <span className="text-text-muted">Waiting for your signature</span>
+      <span className="text-text-muted">{s.signed ? 'Signed, not sent yet' : 'Waiting for your signature'}</span>
       {mayChange && (
         <>
           <Button size="sm" className="h-7 text-[12px]" onClick={() => onSign(s)}>
-            Review and sign
+            {s.signed ? 'Send now' : 'Review and sign'}
           </Button>
           <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => void discard()}>
             Discard

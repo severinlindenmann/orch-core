@@ -1009,3 +1009,17 @@ it('lists pre-join hub shares and opens the confirming sync review without sendi
   expect(await screen.findByRole('button', { name: 'Sign' }, T)).toBeTruthy()
   expect(calls('/hub/share/sync')).toHaveLength(0)
 })
+
+it('W22: a copy signed earlier whose send failed shows "Signed, not sent yet"; Send now sends it with no second signature', async () => {
+  route()
+  staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: 'secret', days: 7, views: 0, origin: 'person', signed: true, files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
+  const user = userEvent.setup()
+  show('/w/DEMO/shares')
+  const row = (await screen.findByText('Signed, not sent yet', {}, T)).closest('li') as HTMLElement
+  expect(within(row).queryByRole('button', { name: 'Review and sign' })).toBeNull()
+  await user.click(within(row).getByRole('button', { name: 'Send now' }))
+  await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(calls('/shares/send')).toHaveLength(1)
+  expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([]) // nothing signed again
+  staged = []
+})

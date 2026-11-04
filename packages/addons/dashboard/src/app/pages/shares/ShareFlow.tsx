@@ -48,6 +48,7 @@ import {
 import type { Artifact } from '@/api/types'
 import { fmtDateTime } from '@/lib/time'
 import { publishError as shareError } from './hubErrors'
+import { ApiError } from '@/api/types'
 
 /** Publish as link: how long the one-file link works, sent with the prepare call and the fallback of the sheet's lead when the staged copy does not say. */
 const PUBLISH_DAYS = 7
@@ -94,7 +95,7 @@ function Where({ server, share, from }: { server: string | null; share: string |
  */
 export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; ticket: { key: string; artifacts: Artifact[] }; resume?: Staged; /** Publish as link (run-14 P01): the one file named, a small panel instead of the form, then Sign and publish. */ only?: string; onClose: () => void }) {
   const qc = useQueryClient()
-  const [stage, setStage] = useState<Stage>(resume ? { at: 'confirm', staged: resume } : only ? { at: 'one' } : { at: 'form' })
+  const [stage, setStage] = useState<Stage>(resume?.signed ? { at: 'send', staged: resume } : resume ? { at: 'confirm', staged: resume } : only ? { at: 'one' } : { at: 'form' })
   const info = useQuery(shareQueries.ofTicket(ws, ticket.key))
   const data = info.data && info.data.available ? info.data : null
   const server = data?.server ?? null
@@ -250,6 +251,11 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     const idem = sendIdem.current.idem
     const fail = (e: unknown, connected?: boolean) => {
       void refreshShares(qc, ws)
+      // W22: the signature is no longer good (expired, or the settings changed): back to the review, to sign again
+      if (e instanceof ApiError && e.code === 'publish.not_approved') {
+        sendIdem.current = null // a fresh request after the new signature, never a replay of this refusal
+        return setStage({ at: 'confirm', staged: { ...staged, signed: false } })
+      }
       setStage({ at: 'send', staged, ...(connected ? { connected } : {}), error: { text: shareError(e), unknown: isUnknownWorkspace(e), unreachable: isUnreachable(e) } })
     }
     try {
@@ -279,6 +285,15 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
       sending.current = false
     }
   }
+  // W22: a copy this person already signed (the send failed): the person's own "Send now" press is the only way this
+  // flow opens with a signed copy (Shares row, ticket Shares box); it sends with no second signature
+  const resumedSend = useRef(false)
+  useEffect(() => {
+    if (!resume?.signed || resumedSend.current) return
+    resumedSend.current = true
+    void send(resume)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---- one file: Publish as link. No dialog of its own: the copy is prepared at once (aside, nothing leaves the computer)
   // and the ONE sign sheet follows. Only a failure (or "no publish server") shows a small panel, before anything is signed.

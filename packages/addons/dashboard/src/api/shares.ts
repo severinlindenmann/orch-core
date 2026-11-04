@@ -52,6 +52,8 @@ export interface Staged {
   days: number | null
   views: number | null
   origin: 'agent' | 'person' | null
+  /** W22: this person already signed this copy and the send did not go through: Send now, no second signature. */
+  signed?: boolean
   files: StagedFile[]
   created_at: string | null
 }

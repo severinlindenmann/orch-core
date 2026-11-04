@@ -45,12 +45,12 @@ export function TicketShares({ ticket }: { ticket: TicketDocument }) {
       {data.staged.map((s) => (
         <p key={s.staged_id} className="text-[13px]" data-staged={s.staged_id}>
           <span className="block text-text-muted">
-            Waiting for your signature: {s.files.length} file{s.files.length === 1 ? '' : 's'}
+            {s.signed ? 'Signed, not sent yet' : 'Waiting for your signature'}: {s.files.length} file{s.files.length === 1 ? '' : 's'}
             {s.origin === 'agent' ? ', prepared by an agent' : ''}.
           </span>
           {mayChange && (
             <Button size="sm" variant="secondary" className="mt-1" onClick={() => setResume(s)}>
-              Review and sign
+              {s.signed ? 'Send now' : 'Review and sign'}
             </Button>
           )}
         </p>

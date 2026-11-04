@@ -32,6 +32,8 @@ it('a pick on ticket A does not carry to ticket B, nor past a close', () => {
 
 it('W11: after Pass the toast says the ticket is done and where it went; Send back says so', () => {
   render(view(t('A-1'), { kind: 'verdict' }))
+  // P26: nothing is preselected; Pass is the person's deliberate click
+  fireEvent.click(screen.getByRole('radio', { name: /Pass/ }))
   expect(screen.getByTestId('done-toast')).toHaveTextContent('A-1 is done. You find it on Today under Recently.')
   fireEvent.click(screen.getByRole('radio', { name: /Send back/ }))
   expect(screen.getByTestId('done-toast')).toHaveTextContent('A-1 was sent back for changes.')

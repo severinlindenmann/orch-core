@@ -59,6 +59,10 @@ from .term import TermListener, TicketError
 __all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_gen", "spawn_spec"]
 
 LOG = logging.getLogger(__name__)
+#: W30: the output tail an exit report carries (bytes), and what is removed from it
+TAIL_BYTES = 2048
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 #: ``peer.denied`` answers in a row after which the runner exits to be started afresh (its unit restarts it)
 DENIED_LIMIT = 3
 #: how long the runner waits for the host's welcome. The host asks who the peer is off its event loop (the service
@@ -673,8 +677,26 @@ class HostLink:
             "at": exit_.get("at") or now_iso(),
             "cleanup": payload.get("cleanup") or "unknown",
         }
+        tail = self._failed_tail(run, exit_)
+        if tail:
+            args["tail"] = tail
         with contextlib.suppress(OSError, ConnectionError):
             self._send_req("runner.exit", args)
+
+    def _failed_tail(self, run: str, exit_: dict[str, Any]) -> str:
+        """W30: the last 2 KB of a run's output, control characters removed, only for a run that ended by itself with
+        a non-zero code (the host names the cause from it). Never the environment; empty when the ring is gone."""
+        if exit_.get("reason") != "exited" or not exit_.get("code"):
+            return ""
+        try:
+            ring = self.sup.ring(run)
+            if ring is None:
+                return ""
+            _start, _end, data = ring.read(max(ring.start, ring.end - TAIL_BYTES))
+        except Exception:  # noqa: BLE001 - the tail is a courtesy; the exit report must go out
+            return ""
+        text = _CONTROL.sub("", _ANSI.sub("", data.decode("utf-8", "replace")))
+        return text[-TAIL_BYTES:]
 
 
 class _Stale(Exception):

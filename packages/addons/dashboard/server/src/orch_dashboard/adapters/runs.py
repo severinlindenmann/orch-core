@@ -39,6 +39,13 @@ def run(row):
     out["cwd"] = {key: display(cwd.get(key)) for key in ("kind", "repo", "ticket") if key in cwd}
     exit_ = row.get("exit")
     out["exit"] = {key: exit_.get(key) for key in EXIT_FIELDS.split()} if isinstance(exit_, dict) else None
+    # W30: why an agent stopped before it began (the host's plain words); passed on only when short, clean text
+    for key in ("stop_message", "stop_hint"):
+        value = text(row.get(key), 300)
+        if value:
+            out[key] = value
+    if row.get("stop_cause") in ("program_not_found", "spawn_failed", "exited_early"):
+        out["stop_cause"] = row["stop_cause"]
     if isinstance(row.get("out_bytes"), int):
         out["out_bytes"] = row["out_bytes"]
     return out

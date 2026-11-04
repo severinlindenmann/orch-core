@@ -125,4 +125,21 @@ describe('agentFinished (r14 P06)', () => {
     expect(agentFinished({ kind: 'agent', state: 'exited' }, 'done')).toBe(false)
     expect(agentFinished({ kind: 'shell', state: 'running' }, 'done')).toBe(false)
   })
+
+  it('a run that could not start shows the recorded reason and what to do (W30)', () => {
+    const run = {
+      state: 'exited' as const,
+      started_at: iso(NOW - 5000),
+      stop_message: 'The agent program could not be started: claude was not found.',
+      stop_hint: 'Ask the person who set up this computer to check the installation.',
+    }
+    expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({
+      kind: 'failed',
+      reason: 'The agent program could not be started: claude was not found. Ask the person who set up this computer to check the installation.',
+    })
+    const withMark = { since: NOW - 9000, failed: { reason: 'generic' } }
+    expect(phaseOf(ticket(), { needsYou: false, mark: withMark, run, now: NOW })).toMatchObject({ kind: 'failed', reason: expect.stringContaining('claude was not found') })
+    const old = { ...run, started_at: iso(NOW - 20_000) }
+    expect(phaseOf(ticket(), { needsYou: false, mark: { since: NOW - 1000, failed: { reason: 'generic' } }, run: old, now: NOW })).toMatchObject({ reason: 'generic' })
+  })
 })

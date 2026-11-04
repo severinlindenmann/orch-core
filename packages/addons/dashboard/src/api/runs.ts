@@ -42,6 +42,10 @@ export interface Run {
   subagent_model?: string | null
   /** Focus mode: the run a person delegated this one from (a child task), else null. The main session has none. */
   parent_run?: string | null
+  /** W30: set when an agent could not start or stopped right after its start: the cause, plain words and what to do. */
+  stop_cause?: 'program_not_found' | 'spawn_failed' | 'exited_early'
+  stop_message?: string
+  stop_hint?: string
 }
 
 export interface RunnerInfo {

@@ -976,3 +976,108 @@ def test_a_hung_service_manager_denies_within_its_own_short_limit(monkeypatch):
     assert seen["timeout"] == runners.SYSTEMCTL_SECONDS == 3
     monkeypatch.setattr(runners.sys, "platform", "linux")
     assert runners.runner_identity(runners.Credentials(os.getuid(), os.getgid(), os.getpid())) is False
+
+
+# -- W30: why an agent stopped before it began ----------------------------------------
+
+
+def _send_exit(w, run: str, **kw) -> None:
+    sock, _ = _hello(w.h.host.runner_path)
+    dec = frames.Decoder()
+    try:
+        term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+        args = {"version": "t", "gen": GEN1, "pid": ME, "term_socket": term, "grants": [],
+                "runs": [{"run": run, "workspace_id": w.wid, "state": "running"}]}  # fmt: skip
+        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
+        _recv_all(sock, dec)
+        ex = {"run": run, "code": 0, "signal": None, "at": "2026-10-12T00:00:05Z", "cleanup": "complete", **kw}
+        sock.sendall(frames.encode({"t": "req", "id": "e1", "op": "runner.exit", "args": ex}))
+        assert _recv_all(sock, dec)[0]["ok"]
+    finally:
+        sock.close()
+
+
+def _agent(w, **kw):
+    return _put(w, kind="agent", harness="claude", started_at="2026-10-12T00:00:00Z", **kw)
+
+
+def test_w30_exit_127_with_not_found_output_is_program_not_found(w):
+    hub = w.h.host.runners
+    run = _agent(w)
+    _send_exit(w, run, code=127, tail="zsh:1: command not found: claude\n")
+    rec = hub.store.records[run]
+    assert rec["stop_cause"] == "program_not_found"
+    assert rec["stop_message"] == "The agent program could not be started: claude was not found."
+    assert rec["stop_hint"] == "Ask the person who set up this computer to check the installation."
+    from orch.host.runners import view
+
+    assert view(rec)["stop_cause"] == "program_not_found" and "tail" not in json.dumps(view(rec))
+
+
+def test_w30_quick_nonzero_exit_is_exited_early(w):
+    hub = w.h.host.runners
+    run = _agent(w)
+    _send_exit(w, run, code=2, tail="boom")
+    rec = hub.store.records[run]
+    assert rec["stop_cause"] == "exited_early" and "claude" in rec["stop_message"]
+
+
+def test_w30_normal_exits_have_no_cause(w):
+    hub = w.h.host.runners
+    ok0 = _agent(w)
+    _send_exit(w, ok0, code=0)
+    late = _put(w, kind="agent", harness="claude", started_at="2026-10-11T00:00:00Z")
+    _send_exit(w, late, code=2)
+    stopped = _agent(w, stopping=True)
+    _send_exit(w, stopped, code=127, tail="command not found")
+    shell = _put(w, kind="shell", started_at="2026-10-12T00:00:00Z")
+    _send_exit(w, shell, code=127, tail="command not found")
+    for r in (ok0, late, stopped, shell):
+        assert "stop_cause" not in hub.store.records[r]
+
+
+def test_w30_spawn_error_is_recorded_with_cause_and_audited(w, monkeypatch):
+    from orch.host import securitylog
+
+    hub = w.h.host.runners
+    seen = []
+    monkeypatch.setattr(securitylog, "record", lambda *a, **kw: seen.append((a[3], kw)))
+    for code, cause in (("harness.not_found", "program_not_found"), ("run.spawn_failed", "spawn_failed")):
+        run = new_run_id()
+        w.h.run(hub.intent(w.wid, fields(w, run=run, kind="agent", harness="claude"), {}, who="t"))
+
+        async def boom(cmd, args, timeout=None, code=code):
+            raise HostError(code, "x")
+
+        hub.command = boom
+        with pytest.raises(HostError):
+            w.h.run(hub.dispatch(run, {"kind": "agent"}, audit=True))
+        rec = hub.store.records[run]
+        assert rec["stop_cause"] == cause and rec["stop_message"]
+        assert ("run.outcome", {"run": run, "outcome": "failed", "cause": cause}) in [
+            (e, {k: v for k, v in kw.items() if k != "code"}) for e, kw in seen
+        ]
+
+
+def test_w30_exit_report_tail_is_bounded_and_clean(w, rstate, tmp_path):
+    """The runner sends the last 2 KB of output, without control characters, only for a failed exit."""
+    hub = w.h.host.runners
+    r = Runner(w, rstate)
+    try:
+        run = new_run_id()
+        cmd = (
+            "printf '\\033[31m%s\\033[0m' $(head -c 5000 /dev/zero | tr '\\0' x); "
+            "echo; echo nope: command not found; exit 127"
+        )
+        w.h.run(
+            hub.spawn(
+                w.wid, fields(w, run=run, kind="agent", harness="claude"), payload(tmp_path, ["/bin/sh", "-c", cmd])
+            )
+        )
+        wait_for(lambda: hub.store.records[run].get("cleanup") == "complete")
+        rec = hub.store.records[run]
+        assert rec["stop_cause"] == "program_not_found"
+        tail = rec["exit_tail"]
+        assert len(tail) <= 2048 and "\x1b" not in tail and "command not found" in tail
+    finally:
+        r.close()

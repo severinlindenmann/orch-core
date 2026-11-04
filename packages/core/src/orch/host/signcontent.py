@@ -1604,7 +1604,9 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
                 "title": f"Turn off {nice}",
                 "lines": [
                     f"{nice} stops working in this workspace until you turn it on again.",
-                    "Its settings and saved data stay on this computer.",
+                    "Its settings and saved data stay in this workspace.",
+                    # Opus W07 N1: these do not come back when it is turned on again
+                    "Waiting follow-ups and scheduled runs that depend on it are cancelled and do not come back.",
                 ],
             }
         return f"Turn off {nice}" if named else f"Disable the add-on {name}"

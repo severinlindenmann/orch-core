@@ -846,7 +846,8 @@ def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_packag
     assert off["summary"]["title"] == "Turn off Command window"
     assert off["summary"]["lines"] == [
         "Command window stops working in this workspace until you turn it on again.",
-        "Its settings and saved data stay on this computer.",
+        "Its settings and saved data stay in this workspace.",
+        "Waiting follow-ups and scheduled runs that depend on it are cancelled and do not come back.",
     ]
     other = build(
         {

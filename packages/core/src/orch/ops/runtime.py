@@ -398,7 +398,16 @@ class Workspace:
             backend = FileBackend(keys)
             if backend.exists("wsk"):
                 host = BackendSigner(backend, "wsk")
-        self.pin_created = not (sd / "hosts" / wid / "genesis").exists()
+        needs_pin = not (sd / "hosts" / wid / "genesis").exists()
+        # W00: an agent (its grant or the host's launch markers) never creates a genesis pin by trust on first use; a
+        # person's own session (ORCH_SESSION alone, e.g. Claude Code with the orch plugin) still may. Protection for a
+        # confused agent, NOT a boundary: an agent controls its env. Store.open then checks the pin's content.
+        if needs_pin and any(name in self.env for name in ("ORCH_GRANT", "ORCH_TICKET", "ORCH_WORKDIR")):
+            raise OrchError(
+                "host.unavailable",
+                "an agent never pins a workspace on first use: it reaches the orch host, or a person runs this first",
+            )
+        self.pin_created = needs_pin
         return Store.open(
             root,
             expected_workspace_id=wid,

@@ -179,7 +179,8 @@ def test_a_relative_xdg_path_is_ignored(tmp_path):
     assert runtime.state_dir({"XDG_CONFIG_HOME": "/abs", "HOME": "/h"}).as_posix() == "/abs/orch"
 
 
-def test_status_shows_the_state_dir_and_a_pin_made_by_this_call(ws, cli):
+def test_status_shows_the_state_dir_and_a_pin_made_by_this_call(ws):
+    cli = Cli(ws, grant=False, session=None)  # only a person can establish a new genesis pin
     assert "state_dir" not in cli.j("status").data and "state dir" not in cli("status").out  # only with --verbose
     d = cli.j("status", "--verbose").data
     assert d["state_dir"] == str(ws.host_state) and "pin" not in d  # the bootstrap pinned the genesis already

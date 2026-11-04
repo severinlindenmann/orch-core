@@ -170,8 +170,10 @@ export function spacesView(data, actions = {}, now = Date.now()) {
   // QA P03: while no workspace can start a space the button is a plain, dimmed one, never the page's main action
   const newSpace = h("button", { type: "button", id: "new-space", class: canStart ? "pri" : "", text: "New shared space", onclick: open });
   newSpace.disabled = !canStart;
-  const noStart = !canStart && candidates.length ? h("div", { class: "small muted", id: "space-no-start", role: "note" },
-    h("span", { text: (candidates.length > 1 ? "Your workspaces need" : nameOf(candidates[0]) + "'s workspace needs") + " to share everything before you can start a space." }),
+  const aboutSpaces = info("About shared spaces", "Workspaces put documents into a shared space and read each other's. A workspace set to Reads only can read but not add or remove. Archiving stops new additions; reading goes on.");
+  const noStart = !canStart && candidates.length ? h("div", { class: "small muted grow", id: "space-no-start", role: "note" },
+    h("span", { text: (candidates.length > 1 ? "Your workspaces need" : nameOf(candidates[0]) + " needs") + " to share everything before you can start a space." }),
+    aboutSpaces,
     h("details", {},
       h("summary", { text: "Show me how" }),
       h("ol", {},
@@ -180,9 +182,8 @@ export function spacesView(data, actions = {}, now = Date.now()) {
         h("li", {}, "Choose ", h("b", { text: "Let the hub read everything" }), ". Then come back here.")))) : null;
   if (noStart) newSpace.setAttribute("aria-describedby", "space-no-start");
   const root = h("div", { class: "spaces" },
-    h("div", { class: "row" }, h("h1", { class: "grow", text: "Shared spaces" }),
-      newSpace, noStart,
-      info("About shared spaces", "Workspaces put documents into a shared space and read each other's. A workspace set to Reads only can read but not add or remove. Archiving stops new additions; reading goes on.")),
+    h("h1", { text: "Shared spaces" }),
+    h("div", { class: "row" }, newSpace, noStart ?? aboutSpaces),
     all.length ? h("p", { class: "banner warn", role: "note", text: STATEMENT }) : null,
     toggle, list, dialogHost);
   if (toggle) toggle.addEventListener("click", () => { showArchived = !showArchived; draw(); });

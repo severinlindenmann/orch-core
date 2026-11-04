@@ -1,11 +1,11 @@
-"""Invariants of scripts/release/release.yml.draft (the manager copies it to .github/workflows/release.yml)."""
+"""Invariants of the release workflow, .github/workflows/release.yml (the one source; the old draft copy is gone)."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-DRAFT = (Path(__file__).resolve().parents[4] / "scripts" / "release" / "release.yml.draft").read_text()
+DRAFT = (Path(__file__).resolve().parents[4] / ".github" / "workflows" / "release.yml").read_text()
 
 
 def _steps() -> list[tuple[str, str]]:
@@ -57,7 +57,9 @@ def test_no_install_or_build_work_in_a_step_that_holds_the_key():
         assert "--no-sync" in text, name
         assert not re.search(r"uv sync|uv build|uv pip|npm |pip install", text), name
     # the environment those steps run with is installed earlier, without the secret
-    assert DRAFT.count("uv sync --frozen --project packages/core --no-dev") == 2
+    # (#1873: with no cache, so nothing a poisoned shared cache holds reaches a signing step)
+    syncs = re.findall(r"uv sync [^\n]*--project packages/core --no-dev[^\n]*", DRAFT)
+    assert len(syncs) == 2 and all("--no-cache" in s and "--frozen" in s for s in syncs), syncs
     assert not re.search(r"uv run (?!--no-sync)", DRAFT)
 
 

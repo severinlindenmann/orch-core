@@ -68,5 +68,5 @@ def test_install_sh_floor_is_not_older_than_the_current_revocation_list():
 
 
 def test_the_release_draft_compiles_wheels_only():
-    draft = (ROOT / "scripts" / "release" / "release.yml.draft").read_text()
+    draft = (ROOT / ".github" / "workflows" / "release.yml").read_text()
     assert "uv pip compile wheels.in" in draft and "--only-binary :all:" in draft  # no wheel: the release run fails

@@ -25,6 +25,9 @@ export interface ProgressRun {
   started_at: string
   /** the run id (openDockOn) */
   run?: string
+  /** W30: why an agent stopped before it began (host words) and what to do; only on a run that failed to start */
+  stop_message?: string | null
+  stop_hint?: string | null
 }
 
 export const STARTING_SLOW_MS = 90_000
@@ -127,6 +130,9 @@ export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: M
   if (o.wait && !claimLive && !runDead) return { kind: 'waiting', run: o.wait }
   if (o.needsYou) return { kind: 'needs' }
   if (agentWorking(ticket, o.wait)) return { kind: 'working' }
+  // W30: the host's own words for why the run could not start (program not found, ...), when the run is newer than our ask.
+  const runWhy = runDead && o.run?.stop_message && (!o.mark || runStart > o.mark.since) ? `${o.run.stop_message}${o.run.stop_hint ? ` ${o.run.stop_hint}` : ''}` : null
+  if (runWhy) return { kind: 'failed', reason: runWhy }
   // A current live run beats an older failed mark: the agent runs, so nothing failed.
   if (o.mark?.failed && !runLive) return { kind: 'failed', reason: o.mark.failed.reason, initial: o.mark.failed.initial }
   // A run of this ticket that ended before an agent claimed it, newer than our ask: the start did not work.

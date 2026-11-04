@@ -385,6 +385,7 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
             "at": _TIME,
             "cleanup": _CLEANUP,
             "tail": {"type": "string", "maxLength": 2048},  # W30: the last output of a failed exit, for the cause
+            "claim_released": {"type": "boolean"},
         },
         ("run", "code", "signal", "at", "cleanup"),
     ),
@@ -855,6 +856,8 @@ class RunnerHub:
                 # Opus W30: the tail only decides the cause; it is never kept (terminal output can hold secrets)
                 new.update(zip(("stop_cause", "stop_message", "stop_hint"), cause, strict=True))
                 self._audit("run.outcome", run=args["run"], outcome="failed", cause=cause[0])
+        if args.get("claim_released") is True:  # W31: the runner let go of the run's claim as the agent
+            new["claim_released"] = True
         if new != rec:
             await self._save(new)
         return {}

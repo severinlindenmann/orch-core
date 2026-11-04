@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { queries } from '@/api/queries'
 import { suggestedWhere, type AddOnRow, type PublishWhere } from '@/api/addOnSwitches'
 import { destinationLine, hostOf, sameOrigin } from '@/api/shares'
+import { ReservedLead, reviewFacts } from './reviewFacts'
 import type { Workspace } from '@/api/types'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { BuiltInAddOns } from '../settings/host/AddOns'
@@ -31,17 +32,17 @@ export function turnOnSpec(
   const old = replaces ? replacedHosts(where, replaces) : null
   return {
     title: 'Turn on Publish',
+    doneToast: '', // W5 P12: no early toast; the flow says the rest
     confirmLabel: 'Sign and turn on',
-    // B11: the share itself still waits for its own press; the toast must not read as if something was published
-    doneToast: 'Publish is on.',
     action: { action: 'addon_enable', name: 'publish', publish: { server: where.server, share: where.share } },
     prepareOnOpen: true,
-    lead: (
-      <>
-        <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{line}</p>
+    // W5 P12: a line is shown only when the host's review does not already state it (each fact once)
+    lead: (content) => (
+      <ReservedLead>
+        {!reviewFacts(content).destination && <p data-testid="where-files-go" className="text-[13px] font-medium text-text">{line}</p>}
         {links && <p data-testid="links-open-at" className="text-[13px] text-text">Links open at {hostOf(where.share)}.</p>}
         {old && <p data-testid="replaces-old" className="text-[13px] text-text">{old}</p>}
-      </>
+      </ReservedLead>
     ),
     onEnd,
   }
@@ -108,11 +109,10 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
             suggestedFrom={row.suggest_from}
             hubName={row.suggest_hub}
             description="To share files with a link, Publish has to be on."
-            notice="Anyone with the link can read what you share."
             close={onClose}
             submit={(title, action) => {
               setAsked(true)
-              ask({ title, action, prepareOnOpen: true, onEnd: (signed) => { if (!signed) onClose() } })
+              ask({ title, action, doneToast: '', prepareOnOpen: true, onEnd: (signed) => { if (!signed) onClose() } })
             }}
           />
         )}
@@ -126,7 +126,7 @@ export function TurnOnPublish({ workspace, onOn, onClose }: { workspace: Workspa
           <DialogTitle>Turn on Publish</DialogTitle>
           <DialogDescription>To share files with a link, Publish has to be on. Nothing leaves this computer until you sign.</DialogDescription>
         </DialogHeader>
-        <BuiltInAddOns workspace={workspace} browse only={['publish']} label="Publish" />
+        <BuiltInAddOns quiet workspace={workspace} browse only={['publish']} label="Publish" />
       </DialogContent>
     </Dialog>
   )

@@ -2106,3 +2106,26 @@ def test_the_run_time_guard_covers_send_and_register_and_not_the_ops_that_act_on
         publishing._run(call, {"op": op})
         assert ran[-1] == fn
     assert guarded == []
+
+
+def test_w22_a_signed_copy_whose_send_failed_is_listed_as_signed_and_sends_without_a_new_signature(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    (row,) = ok(w.req("publish.list", {}))["data"]["staged"]
+    assert row["staged_id"] == staged and row["signed"] is False  # not signed yet: Review and sign
+    w.approve(staged)
+    w.server.fail.append(("PUT", r"/shares/[0-9a-f]{32}$", 409, "conflict"))
+    assert err(w.send(staged)) == "publish.server_refused"
+    (row,) = ok(w.req("publish.list", {}))["data"]["staged"]
+    assert row["signed"] is True  # signed, not sent yet: Send now
+    sid = ok(w.send(staged))["data"]["share_id"]  # no second signature
+    assert w.server.shares[sid]["files"]["report.md"] == REPORT
+    assert ok(w.req("publish.list", {}))["data"]["staged"] == []
+
+
+def test_w22_an_agent_listing_never_carries_signed(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    for row in ok(w.req("publish.list", {}, agent=True))["data"]["staged"]:
+        assert "signed" not in row

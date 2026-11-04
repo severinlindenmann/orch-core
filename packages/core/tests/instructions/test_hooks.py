@@ -482,6 +482,83 @@ def test_submit_hint_says_show_when_only_an_artifact_is_missing():
     assert e.value.hint == "orch wait"
 
 
+# W28 (#950): a Claude Code started by hand has no ORCH_SESSION; the session-start hook gives it one through
+# Claude Code's CLAUDE_ENV_FILE (exported for every later command of that session).
+SESSION = __import__("re").compile(r"^export ORCH_SESSION=s_[0-7][0-9A-HJKMNP-TV-Z]{25}\n$")
+
+
+def _envfile(tmp_path, text=""):
+    d = tmp_path / "session-env" / "0b1c"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "sessionstart-hook-0.sh"
+    f.write_text(text)
+    return f
+
+
+def test_w28_a_hand_started_session_gets_its_own_session_id(ws, tmp_path):
+    envfile = _envfile(tmp_path)
+    code, out, err = hook(ws, "session-start", ORCH_SESSION="", CLAUDE_ENV_FILE=str(envfile))
+    assert code == 0, out + err
+    assert SESSION.fullmatch(envfile.read_text())
+    assert out.splitlines()[0].startswith("ok session-start ")
+
+
+def test_w28_a_session_that_has_an_id_keeps_it(ws, tmp_path):
+    envfile = _envfile(tmp_path, "export X=1\n")
+    hook(ws, "session-start", CLAUDE_ENV_FILE=str(envfile))  # ws.env() carries ORCH_SESSION
+    assert envfile.read_text() == "export X=1\n"
+
+
+@pytest.mark.parametrize("kind", ["unset", "missing", "symlink", "dir", "profile", "fifo", "dotdot", "linked_folder"])
+def test_w28_no_usable_env_file_writes_nothing(ws, tmp_path, kind):
+    import os
+
+    target = _envfile(tmp_path)
+    folder = target.parent
+    env = {"ORCH_SESSION": ""}
+    if kind == "missing":
+        env["CLAUDE_ENV_FILE"] = str(folder / "nope.sh")
+    elif kind == "symlink":
+        (folder / "link.sh").symlink_to(target)
+        env["CLAUDE_ENV_FILE"] = str(folder / "link.sh")
+    elif kind == "dir":
+        env["CLAUDE_ENV_FILE"] = str(folder / "sub")
+        (folder / "sub").mkdir()
+    elif kind == "profile":  # a shell profile a repository's settings could name: not Claude Code's session folder
+        (tmp_path / ".zshrc").write_text("")
+        env["CLAUDE_ENV_FILE"] = str(tmp_path / ".zshrc")
+    elif kind == "fifo":
+        os.mkfifo(folder / "pipe")
+        env["CLAUDE_ENV_FILE"] = str(folder / "pipe")
+    elif kind == "dotdot":  # <cfg>/session-env/../settings.json
+        (tmp_path / ".zshrc").write_text("")
+        env["CLAUDE_ENV_FILE"] = str(tmp_path / "session-env" / ".." / ".zshrc")
+        kind = "profile"
+    elif kind == "linked_folder":  # session-env/<link to home>/.zshrc
+        (tmp_path / ".zshrc").write_text("")
+        (tmp_path / "session-env" / "lnk").symlink_to(tmp_path)
+        env["CLAUDE_ENV_FILE"] = str(tmp_path / "session-env" / "lnk" / ".zshrc")
+        kind = "profile"
+    code, out, _ = hook(ws, "session-start", **env)
+    assert code == 0 and out.startswith("ok session-start ")
+    assert target.read_text() == "" and not (folder / "nope.sh").exists()
+    if kind == "profile":
+        assert (tmp_path / ".zshrc").read_text() == ""
+
+
+def test_w28_outside_a_workspace_nothing_is_written(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    envfile = _envfile(tmp_path)
+    out = io.StringIO()
+    main(
+        ["instructions", "hook", "session-start"],
+        env={"HOME": str(tmp_path), "CLAUDE_ENV_FILE": str(envfile)},
+        stdout=out,
+        stderr=io.StringIO(),
+    )
+    assert envfile.read_text() == ""
+
+
 def test_w33_a_planted_link_or_negative_count_buys_no_blocks(ws):
     gate = _complete_gate(ws)
     sessions = ws.root / ".orch" / ".state" / "sessions"

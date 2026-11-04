@@ -33,3 +33,7 @@ def test_w18_an_animated_png_is_still_not_shown():
 
 def test_w18_a_paste_keeps_the_strict_check():
     assert reads.picture(MAC) is None
+
+
+def test_w18_a_private_critical_chunk_is_not_shown():
+    assert reads.media(png(chunk(b"CgBI", b"\x00" * 4))) is None

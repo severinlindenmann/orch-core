@@ -165,3 +165,27 @@ def test_w18_evidence_keeps_the_structure_and_size_rules():
     big = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 20000, 1, 8, 2, 0, 0, 0)) + chunk(b"IEND")
     with pytest.raises(ImageRefused):
         imagecheck.check(big, display=True)
+
+
+def test_w18_display_still_refuses_a_private_critical_chunk_and_a_non_empty_end():
+    with pytest.raises(ImageRefused):
+        imagecheck.check(png(chunk(b"CgBI", b"\x00" * 4)), display=True)  # Apple's private critical chunk
+    bad_end = png()[: -len(chunk(b"IEND"))] + chunk(b"IEND", b"x")
+    with pytest.raises(ImageRefused, match="end chunk"):
+        imagecheck.check(bad_end, display=True)
+
+
+def test_w18_only_the_evidence_read_uses_the_display_check():
+    """Opus W18 note: a display=True added by mistake to a paste path (stored, signed) fails here."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[3]  # packages/
+    hits = sorted(
+        str(p.relative_to(root))
+        for p in root.glob("**/*.py")
+        if "/tests/" not in str(p)
+        and "/.venv/" not in str(p)
+        and "display=True" in p.read_text(errors="ignore")
+        and "imagecheck" in p.read_text(errors="ignore")
+    )
+    assert hits == ["addons/dashboard/server/src/orch_dashboard/reads.py"]

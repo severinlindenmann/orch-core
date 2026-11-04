@@ -343,3 +343,18 @@ test("workspace sign-in keeps the return origin and copy after an unsuccessful s
   await form.onsubmit({ preventDefault() {} });
   assert.ok(shown.at(-1).find((n) => n?.tag === "form").children.some((n) => n.text === "Back to my workspace"));
 });
+
+test("Continue as uses the complete workspace label without adding another workspace suffix", async () => {
+  let shown;
+  const context = vm.createContext({
+    history: { replaceState() {} }, location: { pathname: "/" },
+    show() {}, openingCard() {}, renderText: String,
+    api: async () => ({ status: 200, body: { name: "Anna Test", workspace: { name: "Anna Test's workspace" } } }),
+    landingPlan: () => "confirm",
+    h: (tag, attrs, ...children) => ({ tag, ...attrs, children }),
+    plain: (...nodes) => { shown = nodes; },
+  });
+  vm.runInContext(source.slice(source.indexOf("async function landFromTicket("), source.indexOf('// "Opening your hub')), context);
+  await context.landFromTicket("ticket");
+  assert.equal(shown[1].text, "You opened the company hub from Anna Test's workspace.");
+});

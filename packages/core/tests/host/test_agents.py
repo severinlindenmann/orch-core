@@ -563,3 +563,48 @@ def test_company_skills_reach_only_the_rules_file_of_a_claude_code_ticket_agent(
     ok(start(c, ticket=key, harness="codex", mode="work", spec=pre2["spec"]))
     cargv, cenv = read_out(w, "codex")
     assert not any("invoices" in a for a in cargv) and not any(text in v for v in cenv.values())
+
+
+def test_w00_an_agent_of_a_runner_with_a_foreign_home_still_sees_the_installs_tickets(w, tmp_path, monkeypatch):
+    """W00 (QA root cause): launchd gave the runner the login HOME, not the install's, and no ORCH_STATE_DIR; its
+    agents' orch then read another state dir and saw no tickets. The runner names its own state dir to every run."""
+    import io
+    import os
+
+    from orch.cli.main import main as orch_main
+
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    grant_addon(w)
+    enablement.set_enabled(Path(w.lab.state), w.wid, True, UID, terminals=False, text="t")
+    programs = {"codex": str(fake(tmp_path, "codex")), "claude-code": str(fake(tmp_path, "claude"))}
+    doc = {"v": 1, "login_shell": False, "programs": programs}
+    write_config(w, doc)
+    (tmp_path / "rs").mkdir(mode=0o700)
+    foreign = tmp_path / "login-home"  # the GUI session's HOME launchd hands the runner
+    foreign.mkdir()
+    runner_env = {
+        k: v for k, v in os.environ.items() if k not in ("ORCH_STATE_DIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME")
+    }
+    runner_env |= {"HOME": str(foreign), "ORCH_HOST_RUN_DIR": str(w.lab.run)}
+    r = Runner(w, tmp_path / "rs", config=parse(doc), env=runner_env, state_dir=Path(w.lab.state))
+    w.runner, w.out = r, tmp_path / "out"
+    try:
+        ok(deposit(w.conn(), issue(w)))
+        c = w.conn()
+        _, key = w.ticket()
+        pre = preview(c, ticket=key, harness="codex", mode="work")
+        ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))
+        _, env = read_out(w, "codex")
+        assert env["HOME"] == str(foreign) and env["ORCH_STATE_DIR"] == str(Path(w.lab.state).resolve())
+        out, err = io.StringIO(), io.StringIO()
+        old = os.getcwd()
+        os.chdir(env["ORCH_WORKDIR"])
+        try:
+            rc = orch_main(["list"], env=env, stdout=out, stderr=err)
+        finally:
+            os.chdir(old)
+        assert rc == 0, err.getvalue()
+        assert key in out.getvalue(), out.getvalue()  # the install's tickets, through the host
+        assert not (foreign / ".config" / "orch").exists()  # nothing written under the login HOME
+    finally:
+        r.close()

@@ -50,7 +50,14 @@ class Runner:
     """A runner in this process: supervisor + terminal socket + host link."""
 
     def __init__(
-        self, w, state: Path, gen: str = GEN1, config: RunnerConfig | None = None, release: str | None = None
+        self,
+        w,
+        state: Path,
+        gen: str = GEN1,
+        config: RunnerConfig | None = None,
+        release: str | None = None,
+        env: dict[str, str] | None = None,
+        state_dir: Path | None = None,
     ) -> None:
         self.sup = Supervisor(state, cgroups=None, scan_interval=0.2, exit_grace=0.5)
         self.sup.open()
@@ -70,6 +77,8 @@ class Runner:
             config=config if config is not None else RunnerConfig(programs={"codex": "/bin/sh"}),
             grants=GrantStore(clock=lambda: w.lab.ws.clock[0]),  # the lab's clock, as the host's
             release=release,
+            env=env,
+            state_dir=state_dir,
         )
         self.grants = self.link.grants
         self.link.start()

@@ -274,6 +274,7 @@ class HostLink:
         restart: Callable[[bool], dict[str, Any]] | None = None,
         restarting: Callable[[], bool] | None = None,
         on_denied: Callable[[], None] | None = None,
+        state_dir: Path | str | None = None,
     ) -> None:
         self.sup = sup
         #: called once after :data:`DENIED_LIMIT` ``peer.denied`` refusals in a row (a stale view of who the runner
@@ -292,6 +293,11 @@ class HostLink:
         self.gen = gen
         self.term = term
         self.env = dict(os.environ if env is None else env)
+        if state_dir is not None:
+            # W00 (QA root cause): a launchd/systemd runner may get another HOME than the install's (a lab, --state, a
+            # service user); an agent's orch then finds another state dir, so no host and an empty direct-mode view.
+            # Every run this runner starts is named the runner's own state dir; it wins over anything inherited.
+            self.env["ORCH_STATE_DIR"] = str(Path(state_dir).resolve())
         self.backoff = backoff
         #: ``runner.json`` (read again at every spawn when a loader is given: an edit applies to the next launch)
         self._config = config if config is not None else RunnerConfig()

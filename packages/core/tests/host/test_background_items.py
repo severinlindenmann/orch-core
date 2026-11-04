@@ -208,3 +208,34 @@ def test_status_reports_a_service_that_macos_turned_off(tmp_path, monkeypatch):
     assert any(p["what"] == msg for p in rep["problems"])
     assert msg in status.render(rep)
     assert rep["ok"] is False
+
+
+def test_w00_the_host_and_runner_units_carry_the_installs_home():
+    """W00: launchd gives a job the GUI session's HOME and the runner's agents inherit it; the units name the HOME of
+    the environment that installed them (a lab, a service user), on macOS and Linux, for the host and the runner."""
+    import plistlib
+
+    from orch.host import enable as host_enable
+    from orch.runner import service as runner_service
+
+    env = {"HOME": "/Users/lab/a home"}
+    for plan_of in (host_enable.plan, runner_service.plan):
+        mac = plan_of(env, Path("/s"), Path("/r"), Path("/rel/v"), platform="darwin", python=Path("/py"), uid=501)
+        assert plistlib.loads(mac.content)["EnvironmentVariables"] == {"HOME": "/Users/lab/a home"}
+        linux = plan_of(env, Path("/s"), Path("/r"), Path("/rel/v"), platform="linux", python=Path("/py"), uid=1000)
+        text = linux.content.decode()
+        assert 'Environment="HOME=/Users/lab/a home"' in text, text
+    # without a HOME argument nothing changes (the builders' other callers)
+    assert "EnvironmentVariables" not in plistlib.loads(
+        runner_service.launchd_plist(Path("/py"), Path("/rel/v"), Path("/s"), Path("/r"))
+    )
+
+
+def test_w00_the_units_home_line_is_escaped_for_systemd_and_refuses_injection():
+    """Opus (W00): Environment= expands % specifiers but not $; a newline would add directives."""
+    import pytest
+
+    assert units.systemd_home('/h/$x%y"z') == 'Environment="HOME=/h/$x%%y\\"z"'
+    for bad in ("relative/home", "/h\nExecStartPre=/bin/x", "/h\x7f"):
+        with pytest.raises(ValueError):
+            units.systemd_home(bad)

@@ -103,6 +103,16 @@ def systemd_quote(arg: str) -> str:
     return f'"{out}"'
 
 
+def systemd_home(home: str) -> str:
+    """``Environment="HOME=…"`` for a unit (W00): an absolute path without control characters (a newline would add
+    directives), backslash and ``"`` escaped and ``%`` written ``%%`` (specifiers expand in Environment=); ``$`` stays
+    as is, because Environment= does not expand variables (``$$`` would stay a literal ``$$``)."""
+    if not home.startswith("/") or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in home):
+        raise ValueError(f"HOME must be an absolute path without control characters: {home!r}")
+    out = home.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'Environment="HOME={out}"'
+
+
 def launchd_plist(
     python: Path,
     release: Path,
@@ -111,6 +121,7 @@ def launchd_plist(
     log_dir: Path | None = None,
     run_dir: Path | None = None,
     extra_args: tuple[str, ...] = (),
+    home: str | None = None,
 ) -> bytes:
     """``run_dir``: the tier-A run directory (``<state>/run``, H7); without it the host uses the tier-B default.
     ``python`` is not in the plist (the launcher's shebang names it, see :func:`launcher_arguments`)."""
@@ -122,6 +133,8 @@ def launchd_plist(
         "ProcessType": "Background",
         "Umask": 0o077,
     }
+    if home:  # W00: launchd would give the GUI session's HOME, not the install's
+        doc["EnvironmentVariables"] = {"HOME": home}
     if log_dir is not None:
         doc["StandardOutPath"] = str(log_dir / "host.log")
         doc["StandardErrorPath"] = str(log_dir / "host.log")
@@ -139,6 +152,7 @@ def systemd_unit(
     host_uid: int | None = None,
     run_dir: Path | None = None,
     extra_args: tuple[str, ...] = (),
+    home: str | None = None,
 ) -> str:
     """A user unit (``systemctl --user``), or a system unit that runs as ``user`` (required with ``system``).
     ``run_dir`` names the run directory (tier A: ``<state>/run``, H7); a system unit defaults to ``/run/orch/<uid>``."""
@@ -157,6 +171,7 @@ def systemd_unit(
         "[Service]",
         "Type=simple",
         f"ExecStart={exec_start}",
+        *([systemd_home(home)] if home else []),  # W00
         "Restart=always",
         "RestartSec=1",
         "UMask=0077",

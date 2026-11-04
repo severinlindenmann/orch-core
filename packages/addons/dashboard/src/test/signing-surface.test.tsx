@@ -337,7 +337,7 @@ const CASES: Case[] = [
     setup: (s) => {
       installAndGrant(s, wsOf(s), 'links')
       s.addonState(wsOf(s), 'links').pending = {
-        id: 'pr_9', carrier: 'local', peer: { name: 'CLI · Client VM', ws: 'CLI', owner: 'Severin' }, accepts: ['status'], days: 30, pairing_code: 'ABC-DEF',
+        id: 'pr_9', carrier: 'local', peer: { name: 'CLI · Client VM', ws: 'CLI', owner: 'Anna Test' }, accepts: ['status'], days: 30, pairing_code: 'ABC-DEF',
         started_at: '2026-10-09T11:29:00Z', started_by: 'p_sev', joined: { at: '2026-10-09T11:29:30Z', fingerprint: 'K7M2QX', theyAccept: ['status'] },
       }
     },

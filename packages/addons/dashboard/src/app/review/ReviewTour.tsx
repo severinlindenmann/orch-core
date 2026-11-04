@@ -83,7 +83,7 @@ export function ReviewTour() {
   // Opens the step's page first; only once the router has really arrived there does it set up the step (dataset,
   // person, workspace). A route blocker (unsaved New ticket overlay, settings drawer, wiki edit) therefore asks
   // before anything changes, and "Keep editing" leaves the demo exactly as it was. The viewer and workspace default
-  // to Severin in DEMO, so a step never inherits the person of the step before.
+  // to Anna Test in DEMO, so a step never inherits the person of the step before.
   // The workspace is set with setWorkspaceId, not switchWorkspace: every screen that holds a switch guard also holds
   // a route blocker, so the navigation above has already asked; and switchWorkspace's page-keeping redirects (to
   // Tickets or Today) would undo the page the step just opened.

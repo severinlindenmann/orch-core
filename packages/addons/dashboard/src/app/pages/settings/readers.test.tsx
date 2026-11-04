@@ -95,7 +95,7 @@ describe('every reason is a plain sentence', () => {
 describe('devices are named by label, never by id', () => {
   it('label and member from the roster; a device without a label by its member; an unknown one says so', () => {
     const named = nameDevices([PHONE, LAPTOP, 'd_' + '9'.repeat(32)], readersRoster())
-    expect(named.map((d) => [d.label?.slice(0, 9) ?? null, d.member])).toEqual([['Severin’s', 'Severin'], [null, 'Mara'], [null, null]])
+    expect(named.map((d) => [d.label?.slice(0, 9) ?? null, d.member])).toEqual([['Anna Test', 'Anna Test'], [null, 'Mara'], [null, null]])
     render(
       <p>
         {named.map((d) => (

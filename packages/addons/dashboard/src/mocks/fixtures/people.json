@@ -1,5 +1,5 @@
 [
-  { "person": "p_sev", "name": "Severin", "email": "severin@example.test" },
+  { "person": "p_sev", "name": "Anna Test", "email": "anna@example.test" },
   { "person": "p_mara", "name": "Mara", "email": "mara@example.test" },
   { "person": "p_tom", "name": "Tom", "email": "tom@example.test" },
   { "person": "p_ida", "name": "Ida", "email": "ida@example.test" },

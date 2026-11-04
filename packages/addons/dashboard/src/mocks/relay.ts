@@ -11,7 +11,7 @@ import type { RelayDevice, RelayLink, RelayPairing, RelayQueueItem, RelayRequest
 import { can } from '@/api/permissions'
 import type { MockStore, StoreFailure } from './store'
 
-export const RELAY_URL = 'https://relay.dev.severin.io'
+export const RELAY_URL = 'https://relay.example.test'
 export const PAIRING_MS = 10 * 60_000
 const CONNECT_MS = 2_000
 const RECONNECT_MS = 4_000
@@ -29,16 +29,16 @@ export interface RelaySim {
 type SeedDevice = Omit<RelayDevice, 'epoch'>
 /** Each person's devices (a device belongs to a person; membership of a workspace is per device). */
 const SEED_DEVICES: SeedDevice[] = [
-  { id: 'd_mac', person: 'p_sev', label: "Severin's MacBook Pro", platform: 'mac', primary: true, this_device: true, scopes: ['look', 'decide', 'operate', 'type'], paired_at: CREATED, last_seen: null },
-  { id: 'd_sev_iphone', person: 'p_sev', label: "Severin's iPhone", platform: 'iphone', primary: false, this_device: false, scopes: ['look', 'decide', 'operate', 'type'], paired_at: '2026-08-20T18:02:00Z', last_seen: '2026-10-09T07:55:00Z' },
+  { id: 'd_mac', person: 'p_sev', label: "Anna Test's MacBook Pro", platform: 'mac', primary: true, this_device: true, scopes: ['look', 'decide', 'operate', 'type'], paired_at: CREATED, last_seen: null },
+  { id: 'd_sev_iphone', person: 'p_sev', label: "Anna Test's iPhone", platform: 'iphone', primary: false, this_device: false, scopes: ['look', 'decide', 'operate', 'type'], paired_at: '2026-08-20T18:02:00Z', last_seen: '2026-10-09T07:55:00Z' },
   { id: 'd_mara_mba', person: 'p_mara', label: "Mara's MacBook Air", platform: 'mac', primary: true, this_device: false, scopes: ['look', 'decide', 'operate'], paired_at: '2026-08-21T08:30:00Z', last_seen: '2026-10-09T09:12:00Z' },
   { id: 'd_tom_ipad', person: 'p_tom', label: "Tom's iPad", platform: 'ipad', primary: false, this_device: false, scopes: ['look'], paired_at: '2026-09-02T12:10:00Z', last_seen: '2026-10-08T16:40:00Z' },
 ]
 
 /** Pushes and drops waiting for the relay (seed). A ticket-bound item is shown only to people who can see the ticket. */
 const SEED_QUEUE: Omit<RelayQueueItem, 'state'>[] = [
-  { id: 'q_drop_notes', kind: 'drop', label: 'Drop: release-notes.md for Severin\'s iPhone', device: 'd_sev_iphone', queued_at: '2026-10-09T10:40:00Z' },
-  { id: 'q_push_0043', kind: 'push', label: 'Question on DEMO-0043 for Severin\'s iPhone', device: 'd_sev_iphone', ticket: 'DEMO-0043', queued_at: '2026-10-09T11:05:00Z' },
+  { id: 'q_drop_notes', kind: 'drop', label: 'Drop: release-notes.md for Anna Test\'s iPhone', device: 'd_sev_iphone', queued_at: '2026-10-09T10:40:00Z' },
+  { id: 'q_push_0043', kind: 'push', label: 'Question on DEMO-0043 for Anna Test\'s iPhone', device: 'd_sev_iphone', ticket: 'DEMO-0043', queued_at: '2026-10-09T11:05:00Z' },
   { id: 'q_push_0044', kind: 'push', label: 'Question on DEMO-0044 for Mara\'s MacBook Air', device: 'd_mara_mba', ticket: 'DEMO-0044', queued_at: '2026-10-09T11:08:00Z' },
   { id: 'q_push_0045', kind: 'push', label: 'Verdict needed on DEMO-0045 for Mara\'s MacBook Air', device: 'd_mara_mba', ticket: 'DEMO-0045', queued_at: '2026-10-09T11:12:00Z' },
 ]

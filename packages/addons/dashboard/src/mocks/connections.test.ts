@@ -49,7 +49,7 @@ describe('skills', () => {
     expect(names.every((n) => ['orch', 'orch-evidence'].includes(n))).toBe(true)
   })
   it('lists only tickets the viewer can see', async () => {
-    // DEMO-0044 is restricted to Severin and Mara; Tom (viewer) may not see it.
+    // DEMO-0044 is restricted to Anna Test and Mara; Tom (viewer) may not see it.
     expect(setup().store.ticket('DEMO-0044')!.visibility).toEqual({ restricted: ['p_sev', 'p_mara'] })
     const t = async (who: string) => (await setup(who).api.getSkills(DEMO)).find((s) => s.name === 'warehouse-admin')!.tickets
     const c = async (who: string) => (await setup(who).api.getConnections(DEMO)).find((s) => s.name === 'az-storage')!.tickets
@@ -100,7 +100,7 @@ describe('connections and checks', () => {
     const by = Object.fromEntries((await api.getConnections(DEMO)).map((c) => [c.name, c]))
     expect(by.gh.last_check?.status).toBe('ok')
     expect(by['databricks-prod']).toMatchObject({ kind: 'cli_login', login_hint: expect.stringMatching(/^databricks auth login/), last_check: { status: 'auth_expired' } })
-    expect(by['gcloud-billing'].last_check).toMatchObject({ status: 'wrong_identity', expected: 'orch-agent@acme-energy.iam.gserviceaccount.com', actual: 'severin@acme-energy.ch' })
+    expect(by['gcloud-billing'].last_check).toMatchObject({ status: 'wrong_identity', expected: 'orch-agent@service.example.test', actual: 'anna@example.test' })
     expect(by['tariff-api']).toMatchObject({ kind: 'api_token', login_hint: null, env: ['TARIFF_API_TOKEN'], last_check: { status: 'service_down' } })
     expect(by['az-storage'].last_check?.status).toBe('unknown')
     expect(by['databricks-prod'].tickets).toEqual(['DEMO-0053'])

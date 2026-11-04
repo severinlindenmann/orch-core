@@ -36,10 +36,10 @@ const MORE_FILES = 3
 const MAX_TITLE = 120
 
 const seed = (): Quick[] => [
-  { id: 'Q-001', title: 'Fix the typo in README', status: 'open', added_by: 'Severin' },
+  { id: 'Q-001', title: 'Fix the typo in README', status: 'open', added_by: 'Anna Test' },
   { id: 'Q-002', title: 'Bump the dbt-core patch version', status: 'open', added_by: 'Mara' },
-  { id: 'Q-003', title: 'Remove the dead import in billing_api/jobs.py', status: 'claimed', added_by: 'Severin', claimed_by: 'Claude Code' },
-  { id: 'Q-004', title: 'Rename the stale seeds fixture', status: 'outgrew', added_by: 'Severin', commits: 4, files: 7 },
+  { id: 'Q-003', title: 'Remove the dead import in billing_api/jobs.py', status: 'claimed', added_by: 'Anna Test', claimed_by: 'Claude Code' },
+  { id: 'Q-004', title: 'Rename the stale seeds fixture', status: 'outgrew', added_by: 'Anna Test', commits: 4, files: 7 },
   { id: 'Q-005', title: 'Drop the unused logo.png', status: 'done', added_by: 'Mara', claimed_by: 'Claude Code', proof: 'removed, 4f2a91c' },
   { id: 'Q-006', title: 'Update the freshness check comment', status: 'open', added_by: 'Claude Code' },
 ]
@@ -100,7 +100,7 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
   if (store.workspaces.find((w) => w.id === ws)?.prefix !== 'DEMO') return base
   const t = briefs(store, ws)
   const converted = [...t.filter((x) => x.restricted).slice(0, 1), ...t.filter((x) => !x.restricted).slice(0, 1)]
-  const who = ['Severin', 'Mara', 'Claude Code']
+  const who = ['Anna Test', 'Mara', 'Claude Code']
   const plan: Status[] = ['outgrew', 'outgrew', 'outgrew', 'outgrew', 'converted', 'converted', 'done', 'done', 'done', 'done', 'claimed', 'claimed', 'claimed', 'claimed', 'open', 'open', 'open', 'open', 'open']
   QUICK_TITLES.forEach((title, i) => {
     const status = plan[i]

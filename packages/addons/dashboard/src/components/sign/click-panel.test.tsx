@@ -538,13 +538,13 @@ it('shows the full terminal lines when structured content is absent', () => {
   expect(screen.getByText('Fallback second line')).toBeVisible()
 })
 
-it('K6: a removed person reads "remove: Severin", never "remove: — → Severin"', () => {
+it('K6: a removed person reads "remove: Anna Test", never "remove: — → Anna Test"', () => {
   const ID = 'p_181d953f12ab34cd56ef78901234abcd'
   const client = new QueryClient()
-  client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Severin' }] }])
+  client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Anna Test' }] }])
   render(<QueryClientProvider client={client}><ClickSignPanel answer={answer({ content: { headline: 'x', fields_changed: [{ field: 'assignees: remove', before: null, after: ID }] } })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={WS} /></QueryClientProvider>)
   const row = screen.getByText('Assignees: remove:').closest('dl > div')!
-  expect(row).toHaveTextContent(/^Assignees: remove: Severin/)
+  expect(row).toHaveTextContent(/^Assignees: remove: Anna Test/)
   expect(row).not.toHaveTextContent('—')
 })
 
@@ -561,13 +561,13 @@ describe('people in the content are named from the View\'s own workspace', () =>
   const content = { headline: 'x', fields_changed: [{ field: 'owner', before: null, after: ID }] }
   function named(dialogWs: string) {
     const client = new QueryClient()
-    client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Severin' }] }, { id: 'w_other', members: [{ person: ID, name: 'Impostor' }] }])
+    client.setQueryData(['workspaces'], [{ id: WS, members: [{ person: ID, name: 'Anna Test' }] }, { id: 'w_other', members: [{ person: ID, name: 'Impostor' }] }])
     render(<QueryClientProvider client={client}><ClickSignPanel answer={answer({ content })} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} ws={dialogWs} /></QueryClientProvider>)
     return screen.getByText('Owner:').closest('dl > div')!
   }
   it('uses view.workspace, not the dialog\'s workspace', () => {
     const row = named('w_other')
-    expect(row).toHaveTextContent('Owner: Severin')
+    expect(row).toHaveTextContent('Owner: Anna Test')
     expect(row).not.toHaveTextContent('Impostor')
   })
 })

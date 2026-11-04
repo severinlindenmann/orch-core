@@ -63,7 +63,7 @@ const NOW = '2026-10-09T11:30:00Z'
  * never eligible.
  */
 const SEED_INBOX: (Received & { to: string[] })[] = [
-  { id: 'in_photos', to: ['DEMO'], name: 'meter-room-photos.zip', bytes: 5_200_000, from: "Severin's iPhone", received_at: '2026-10-09T10:58:00Z', expires_at: at(NOW, 6), addressed: 'workspace', ticket: 'DEMO-0043' },
+  { id: 'in_photos', to: ['DEMO'], name: 'meter-room-photos.zip', bytes: 5_200_000, from: "Anna Test's iPhone", received_at: '2026-10-09T10:58:00Z', expires_at: at(NOW, 6), addressed: 'workspace', ticket: 'DEMO-0043' },
   { id: 'in_notes', to: ['DEMO', 'CLI'], name: 'release-notes.md', bytes: 2_150, from: 'INT · Internal tools', received_at: '2026-10-09T09:40:00Z', expires_at: at(NOW, 2), addressed: 'inbox' },
   { id: 'in_invoice', to: ['DEMO', 'INT'], name: 'supplier-invoice-0923.pdf', bytes: 412_000, from: "Mara's MacBook Air", received_at: '2026-10-08T15:20:00Z', expires_at: at(NOW, 13), addressed: 'inbox', claimed_by: 'DEMO' },
   { id: 'in_private', to: ['DEMO'], name: 'incident-timeline.md', bytes: 6_800, from: "Mara's MacBook Air", received_at: '2026-10-09T08:15:00Z', expires_at: at(NOW, 5), addressed: 'workspace', ticket: 'DEMO-0044' },
@@ -87,7 +87,7 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
   const prefix = store.workspaces.find((w) => w.id === ws)?.prefix ?? ws.slice(0, 4)
   const tickets = briefs(store, ws)
   const people = ['p_sev', 'p_mara', 'p_tom']
-  const from = ["Severin's iPhone", "Mara's MacBook Air", 'INT · Internal tools', 'CLI · Command line', "Tom's iPad"]
+  const from = ["Anna Test's iPhone", "Mara's MacBook Air", 'INT · Internal tools', 'CLI · Command line', "Tom's iPad"]
   const names = ['export', 'photos', 'notes', 'invoice', 'schema', 'log-bundle', 'screenshots', 'contract', 'readings', 'backup']
   const ext = ['csv', 'zip', 'md', 'pdf', 'json', 'tar.gz', 'png']
   for (let i = 0; i < 36; i++) {
@@ -270,7 +270,7 @@ registerAddon({
           ok: true,
           message: `Dropped ${file.name} as a link for ${span}.`,
           changed: true,
-          secret: { label: `Link to ${file.name}`, value: `https://relay.dev.severin.io/d/${id.slice(4)}#k=${key}`, note: `Simulated link, valid for ${span}${to.max_views ? ` or ${to.max_views} views` : ''}. ${LINK_ONLY_APP} The key is in the part after #, which never leaves the device; it is shown once.` },
+          secret: { label: `Link to ${file.name}`, value: `https://relay.example.test/d/${id.slice(4)}#k=${key}`, note: `Simulated link, valid for ${span}${to.max_views ? ` or ${to.max_views} views` : ''}. ${LINK_ONLY_APP} The key is in the part after #, which never leaves the device; it is shown once.` },
         }
       }
       return { ok: true, message: to.kind === 'person' ? `Sealed ${file.name} to ${nameIn(c, to.person)}. Only their devices can open it, for ${span}.` : `Dropped ${file.name} into ${to.prefix}'s inbox for ${span}.`, changed: true }

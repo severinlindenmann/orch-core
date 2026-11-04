@@ -177,7 +177,7 @@ describe('publish ticket panel', () => {
 })
 
 describe('publish decisions on Today', () => {
-  it('Severin sees the failed-build decision, Tom does not', async () => {
+  it('Anna Test sees the failed-build decision, Tom does not', async () => {
     const a = renderApp('/', { viewer: 'p_sev' })
     expect(await screen.findByText(/Ops notebook failed to build/, {}, T)).toBeInTheDocument()
     a.unmount()

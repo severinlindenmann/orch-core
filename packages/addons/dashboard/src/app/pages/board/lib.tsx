@@ -94,7 +94,7 @@ export interface BoardDisplay {
   lanes: Record<string, boolean>
 }
 export const DEFAULT_DISPLAY: BoardDisplay = { density: 'comfortable', labels: true, estimate: true, progress: false, collapsed: ['done'], group: 'epic', lanes: {} }
-/** Remembered per viewer: Tom does not inherit what Severin chose. */
+/** Remembered per viewer: Tom does not inherit what Anna Test chose. */
 export const displayKey = (person: string) => `orch.board.display.${person}`
 
 function loadDisplay(person: string | undefined): BoardDisplay {

@@ -36,10 +36,10 @@
         "tool": "databricks",
         "target": {
           "label": "profile",
-          "value": "prod (adb-1185402263331905.5.azuredatabricks.net)"
+          "value": "prod (databricks.example.test)"
         },
         "check": "databricks current-user me --profile prod",
-        "login_hint": "databricks auth login --profile prod --host https://adb-1185402263331905.5.azuredatabricks.net",
+        "login_hint": "databricks auth login --profile prod --host https://databricks-prod.example.test",
         "env": [],
         "sim": {
           "status": "auth_expired",
@@ -47,13 +47,13 @@
           "duration_ms": 1210,
           "output": [
             "Error: default auth: databricks-cli: cannot get access token: refresh token is invalid or expired.",
-            "Config: profile=prod, host=https://adb-1185402263331905.5.azuredatabricks.net",
+            "Config: profile=prod, host=https://databricks-prod.example.test",
             "Try logging in again: databricks auth login --profile prod"
           ]
         },
         "ok_output": [
           "{",
-          "  \"userName\": \"orch-agent@acme-energy.ch\",",
+          "  \"userName\": \"orch-agent@example.test\",",
           "  \"active\": true",
           "}"
         ],
@@ -68,22 +68,22 @@
         "tool": "gcloud",
         "target": {
           "label": "account",
-          "value": "orch-agent@acme-energy.iam.gserviceaccount.com"
+          "value": "orch-agent@service.example.test"
         },
         "check": "gcloud auth list --filter=status:ACTIVE --format=value(account)",
-        "login_hint": "gcloud auth activate-service-account orch-agent@acme-energy.iam.gserviceaccount.com --key-file=<key file>",
+        "login_hint": "gcloud auth activate-service-account orch-agent@service.example.test --key-file=<key file>",
         "env": [],
         "sim": {
           "status": "wrong_identity",
           "exit_code": 0,
           "duration_ms": 880,
           "output": [
-            "severin@acme-energy.ch"
+            "anna@example.test"
           ],
-          "actual": "severin@acme-energy.ch"
+          "actual": "anna@example.test"
         },
         "ok_output": [
-          "orch-agent@acme-energy.iam.gserviceaccount.com"
+          "orch-agent@service.example.test"
         ],
         "seed_check": {
           "at": "2026-10-09T09:58:00Z",
@@ -96,7 +96,7 @@
         "tool": "databricks",
         "target": {
           "label": "endpoint",
-          "value": "adb-4417926513240.12.azuredatabricks.net (ci workspace)"
+          "value": "databricks.example.test (ci workspace)"
         },
         "check": "databricks current-user me --debug",
         "login_hint": null,
@@ -113,7 +113,7 @@
             "> * Host: {DATABRICKS_HOST}",
             "> * Authorization: Bearer {DATABRICKS_TOKEN}",
             "< HTTP/2.0 200 OK",
-            "{ \"userName\": \"ci-orch@acme-energy.ch\", \"active\": true }"
+            "{ \"userName\": \"ci-orch@example.test\", \"active\": true }"
           ]
         },
         "seed_check": {
@@ -180,7 +180,7 @@
       "dir_mode": "0700",
       "file_mode": "0600",
       "modified_at": "2026-10-09T10:05:00Z",
-      "text": "# orch secrets for Acme energy data (6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11)\n# NAME=value lines. Parsed by orch, never sourced.\nDATABRICKS_HOST=https://adb-4417926513240.12.azuredatabricks.net\n# rotated 9 Oct 2026, 10:05\nDATABRICKS_TOKEN=demo-not-a-real-databricks-token-0001\nTARIFF_API_TOKEN=demo-not-a-real-tariff-token-0002\nOLD_WAREHOUSE_KEY=demo-not-a-real-warehouse-key-0003\nexport SLACK_WEBHOOK=https://hooks.slack.example/T000/B000/abcdefgh\nLEGACY_PIN=4711\n"
+      "text": "# orch secrets for Acme energy data (6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11)\n# NAME=value lines. Parsed by orch, never sourced.\nDATABRICKS_HOST=https://databricks-ci.example.test\n# rotated 9 Oct 2026, 10:05\nDATABRICKS_TOKEN=demo-not-a-real-databricks-token-0001\nTARIFF_API_TOKEN=demo-not-a-real-tariff-token-0002\nOLD_WAREHOUSE_KEY=demo-not-a-real-warehouse-key-0003\nexport SLACK_WEBHOOK=https://hooks.slack.example/T000/B000/abcdefgh\nLEGACY_PIN=4711\n"
     },
     "ticket_skills": {
       "DEMO-0043": [

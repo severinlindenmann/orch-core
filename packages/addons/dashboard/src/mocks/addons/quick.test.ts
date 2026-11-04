@@ -80,7 +80,7 @@ describe('quick tasks actions', () => {
   it('claim marks an open task as claimed by the viewer and refuses a claimed one', async () => {
     const s = setup()
     expect((await run(s, 'claim', { id: 'Q-001' })).changed).toBe(true)
-    expect((await state(s)).items.find((q) => q.id === 'Q-001')).toMatchObject({ status: 'claimed', claimed_by: 'Severin' })
+    expect((await state(s)).items.find((q) => q.id === 'Q-001')).toMatchObject({ status: 'claimed', claimed_by: 'Anna Test' })
     await refused(run(s, 'claim', { id: 'Q-003' }))
   })
   it('close with proof needs a claimed task and a one-line proof', async () => {

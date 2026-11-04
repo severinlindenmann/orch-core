@@ -86,8 +86,8 @@ describe('activity timeline', () => {
     expect(st.timeline.length).toBeGreaterThan(10)
     const ats = st.timeline.map((r) => r.at)
     expect([...ats].sort().reverse()).toEqual(ats)
-    expect(st.timeline[0]).toMatchObject({ actor: 'Severin', ticket: undefined })
-    expect(st.timeline[0].title).toMatch(/^Severin · workspace · /)
+    expect(st.timeline[0]).toMatchObject({ actor: 'Anna Test', ticket: undefined })
+    expect(st.timeline[0].title).toMatch(/^Anna Test · workspace · /)
     for (const r of st.timeline) {
       expect(r.summary.trim(), r.title).not.toBe('')
       expect(r.title).not.toMatch(/undefined|null|\s$|labelled\s*$/)
@@ -109,7 +109,7 @@ describe('activity timeline', () => {
     expect(shell(await everything(s))).toBe(false) // member
   })
 
-  it('R2: actors by display name (addon titles, "Claude Code for Severin"), Records events listed', async () => {
+  it('R2: actors by display name (addon titles, "Claude Code for Anna Test"), Records events listed', async () => {
     const s = setup()
     installAndGrant(s.store, s.ws, 'records')
     tick()
@@ -123,8 +123,8 @@ describe('activity timeline', () => {
     // The commit and the push are one run by Records in the workspace log.
     const rec = st.timeline.find((r) => r.actor === 'Records (records)')!
     expect(rec).toMatchObject({ count: 2, ticket: undefined })
-    expect(rec.subtitle).toMatch(/latest: pushed \w+ to the remote \(Severin\)/)
-    expect(titles).toContain('Claude Code for Severin · DEMO-0044 · finished T9')
+    expect(rec.subtitle).toMatch(/latest: pushed \w+ to the remote \(Anna Test\)/)
+    expect(titles).toContain('Claude Code for Anna Test · DEMO-0044 · finished T9')
     expect(titles).not.toMatch(/^(estimate|github|codex|claude-code) · /m)
   })
   it('groups by day: a day heading per day, newest first', async () => {
@@ -145,9 +145,9 @@ describe('activity timeline', () => {
     for (const t of ['T1', 'T2', 'T3', 'T4', 'T5']) s.store.append('DEMO-0044', { type: 'task.done', task: t, actor: AGENT })
     const st = await state(s)
     const top = st.timeline[0]
-    expect(top).toMatchObject({ actor: 'Claude Code for Severin', ticket: 'DEMO-0044', count: 5, group: 'tasks' })
-    expect(top.title).toBe('Claude Code for Severin · DEMO-0044 · 5 task updates')
-    expect(st.timeline.filter((r) => r.ticket === 'DEMO-0044' && r.actor === 'Claude Code for Severin' && r.group === 'tasks')).toHaveLength(1)
+    expect(top).toMatchObject({ actor: 'Claude Code for Anna Test', ticket: 'DEMO-0044', count: 5, group: 'tasks' })
+    expect(top.title).toBe('Claude Code for Anna Test · DEMO-0044 · 5 task updates')
+    expect(st.timeline.filter((r) => r.ticket === 'DEMO-0044' && r.actor === 'Claude Code for Anna Test' && r.group === 'tasks')).toHaveLength(1)
   })
   it('does not collapse across different actors or tickets', async () => {
     const s = setup()
@@ -200,7 +200,7 @@ describe('activity timeline', () => {
     expect(waiting.counts).toEqual(before.counts)
     await run(s, 'show_new')
     const top = (await state(s)).timeline[0]
-    expect(top).toMatchObject({ ticket: 'DEMO-0043', actor: 'Severin' })
+    expect(top).toMatchObject({ ticket: 'DEMO-0043', actor: 'Anna Test' })
     expect(top.summary).toBe('logged a note')
     expect((await state(s)).newEvents).toBe(0)
   })
@@ -240,7 +240,7 @@ describe('activity filter bar (per viewer)', () => {
     expect(st.typeOptions.slice(1).map((o) => o.title.split(' ')[0])).toEqual(['Status', 'Gates', 'Questions', 'Tasks', 'Artifacts', 'Addons', 'Workspace'])
     expect(st.typeOptions.slice(1).every((o) => /\(\d+\)$/.test(o.title))).toBe(true)
     expect(st.personOptions[0]).toEqual({ const: 'everyone', title: 'Everyone' })
-    expect(st.personOptions.map((o) => o.title).join()).toMatch(/Severin \(\d+\).*Claude Code \(\d+\)/)
+    expect(st.personOptions.map((o) => o.title).join()).toMatch(/Anna Test \(\d+\).*Claude Code \(\d+\)/)
   })
   it('the headline is the sum of the type counts for the period, and follows the period', async () => {
     const s = setup()
@@ -466,7 +466,7 @@ describe('activity today card and by-ticket table', () => {
     const rows = (await state(s)).ticketRows
     const r = rows.find((x) => x.ticket === 'DEMO-0044')!
     expect(r.events).toBeGreaterThanOrEqual(2)
-    expect(r.last_actor).toBe('Severin')
+    expect(r.last_actor).toBe('Anna Test')
     const counts = rows.map((x) => x.events)
     expect([...counts].sort((a, b) => b - a)).toEqual(counts)
   })
@@ -515,7 +515,7 @@ describe('a discarded ticket in the log', () => {
   }
   it('a restricted ticket\'s discard line is shown only to people who could see the ticket', async () => {
     const s = setup('p_sev')
-    const key = await make(s, { restricted: ['p_mara'] }) // Severin was not on it
+    const key = await make(s, { restricted: ['p_mara'] }) // Anna Test was not on it
     s.store.setViewer('p_mara')
     expect((await discards(s)).map((r) => r.summary).join()).toContain(key)
     s.store.setViewer('p_sev')

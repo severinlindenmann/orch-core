@@ -43,13 +43,13 @@ describe('agent transcript', () => {
     const s = setup('p_sev')
     const a = (await state(s)).sessions.find((x) => x.kind === 'agent')!
     expect(a.transcript.some((c) => c.startsWith('orch approve'))).toBe(false)
-    // DEMO-0043 waits on Severin's answer to Q2: the live move says so, with his name.
-    expect(a.ctx.ticket?.move).toMatchObject({ who: 'p_sev', why: 'Answer Q2', name: 'Severin' })
+    // DEMO-0043 waits on Anna Test's answer to Q2: the live move says so, with his name.
+    expect(a.ctx.ticket?.move).toMatchObject({ who: 'p_sev', why: 'Answer Q2', name: 'Anna Test' })
   })
 })
 
 describe('terminals state', () => {
-  it('seeds four sessions: Severin shell in DEMO-0043, an agent mirror, a stopped shell and an ended Codex review', async () => {
+  it('seeds four sessions: Anna Test shell in DEMO-0043, an agent mirror, a stopped shell and an ended Codex review', async () => {
     const s = setup('p_sev')
     const st = await state(s)
     expect(st.sessions).toHaveLength(4)

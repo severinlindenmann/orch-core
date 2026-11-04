@@ -454,7 +454,7 @@ describe('viewer menu', () => {
   it('names each person with their role, and the choice survives a dataset switch', async () => {
     const { user } = renderApp('/')
     await user.click(await screen.findByRole('button', { name: 'Viewing as' }))
-    expect(await screen.findByRole('menuitemradio', { name: 'Severin · owner' })).toBeInTheDocument()
+    expect(await screen.findByRole('menuitemradio', { name: 'Anna Test · owner' })).toBeInTheDocument()
     expect(screen.getByRole('menuitemradio', { name: 'Tom · viewer' })).toBeInTheDocument()
     await user.click(screen.getByRole('menuitemradio', { name: 'Mara · maintainer' }))
     await user.click(await screen.findByRole('button', { name: 'Busy day' }))

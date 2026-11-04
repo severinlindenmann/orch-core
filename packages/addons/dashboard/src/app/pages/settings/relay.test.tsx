@@ -13,7 +13,7 @@ describe('Settings > Relay & devices (Preview, simulated)', () => {
     // Consistent with the devices below: they reached it before, so it is not "never linked".
     expect(screen.queryByText(/never been linked/)).toBeNull()
     expect(screen.getByText(/Mara's MacBook Air last reached this workspace 2 h ago; what is queued waits until you connect\./)).toBeInTheDocument()
-    const mac = screen.getByText("Severin's MacBook Pro").closest('tr')!
+    const mac = screen.getByText("Anna Test's MacBook Pro").closest('tr')!
     expect(within(mac).getByText('This device')).toBeInTheDocument()
     expect(within(mac).getByText('epoch 1')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Pair a device' })).toBeNull() // phones pair through the hub

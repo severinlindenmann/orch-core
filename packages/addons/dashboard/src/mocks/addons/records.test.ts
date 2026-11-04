@@ -48,12 +48,12 @@ describe('records seed and derived pending changes', () => {
     expect(st.pendingTickets).toBe(st.rows.length)
     expect(st.pendingEvents).toBe(st.rows.reduce((n, r) => n + r.events, 0))
     expect(st.summary).toBe(`${st.pendingEvents} events to record · 1 commit waiting to push`)
-    expect(st.remote).toBe('git@github.com:acme-energy/energy-records.git')
+    expect(st.remote).toBe('git@git.example.test:demo/energy-records.git')
     expect(st.history.length).toBeGreaterThanOrEqual(2)
     expect(st.history[0].hash).toMatch(/^[0-9a-f]{7}$/)
   })
   it('settings default: auto-commit every 30 minutes, push on, the remote', async () => {
-    expect((await state(setup())).settings).toEqual({ auto_commit_minutes: 30, push: true, remote: 'git@github.com:acme-energy/energy-records.git' })
+    expect((await state(setup())).settings).toEqual({ auto_commit_minutes: 30, push: true, remote: 'git@git.example.test:demo/energy-records.git' })
   })
 })
 
@@ -67,7 +67,7 @@ describe('commit records', () => {
     expect(after.rows).toEqual([])
     expect(after.summary).toBe('Everything is recorded · 2 commits waiting to push')
     expect(after.history).toHaveLength(before.history.length + 1)
-    expect(after.history[0]).toMatchObject({ tickets: before.pendingTickets, events: before.pendingEvents, by: 'Severin' })
+    expect(after.history[0]).toMatchObject({ tickets: before.pendingTickets, events: before.pendingEvents, by: 'Anna Test' })
     expect(after.history[0].hash).toMatch(/^[0-9a-f]{7}$/)
     expect(after.history[0].hash).not.toBe(before.history[0].hash)
   })
@@ -129,7 +129,7 @@ describe('push and pull', () => {
   })
   it('push is refused when push is off in settings', async () => {
     const s = setup()
-    await run(s, 'save_settings', { formData: { auto_commit_minutes: 30, push: false, remote: 'git@github.com:acme-energy/energy-records.git' } })
+    await run(s, 'save_settings', { formData: { auto_commit_minutes: 30, push: false, remote: 'git@git.example.test:demo/energy-records.git' } })
     const r = await refused(run(s, 'push'))
     expect(r).toMatchObject({ status: 409, code: 'records.push_off' })
     expect(r.message).toMatch(/push is off/i)
@@ -142,7 +142,7 @@ describe('records settings', () => {
     await run(s, 'save_settings', { formData: { auto_commit_minutes: 15, push: true, remote: 'git@github.com:acme-energy/other.git' } })
     expect((await state(s)).settings).toEqual({ auto_commit_minutes: 15, push: true, remote: 'git@github.com:acme-energy/other.git' })
     await run(s, 'save_settings', { formData: { auto_commit_minutes: -4, push: 'yes', remote: 42 } })
-    expect((await state(s)).settings).toEqual({ auto_commit_minutes: 30, push: false, remote: 'git@github.com:acme-energy/energy-records.git' })
+    expect((await state(s)).settings).toEqual({ auto_commit_minutes: 30, push: false, remote: 'git@git.example.test:demo/energy-records.git' })
     await expect(run(setup('p_mara'), 'save_settings', { formData: {} })).rejects.toMatchObject({ status: 403 })
   })
   it('manifest: settings form, owner-level save_settings', () => {

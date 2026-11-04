@@ -52,7 +52,7 @@ const wt = (ticket: string, repo: string, title: string, d: Partial<Worktree>): 
 const seedDemo = (): Worktree[] => [
   wt('DEMO-0043', REPOS[0], 'Load tariff tables as dbt seeds', { dirty: 3, ahead: 2 }),
   wt('DEMO-0041', REPOS[0], 'Add billing reconciliation tests', { ahead: 1, behind: 3, created_by: 'Mara' }),
-  wt('DEMO-0046', REPOS[1], 'Fix duplicate meter ids in dim_meter', { created_by: 'Severin' }),
+  wt('DEMO-0046', REPOS[1], 'Fix duplicate meter ids in dim_meter', { created_by: 'Anna Test' }),
   wt('DEMO-0037', REPOS[2], 'Add freshness checks to sources', { ahead: 4, behind: 1 }),
 ]
 
@@ -70,7 +70,7 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
   const pool = briefs(store, ws).filter((t) => ['in-progress', 'testing', 'waiting', 'open'].includes(t.status) || t.restricted)
   for (const t of rng.shuffle(pool).slice(0, scaled(16, scaleOf(store, ws)) + 4)) {
     const repo = REPOS.find((r) => r.endsWith(t.repo.replace('acme-energy-', ''))) ?? REPOS[0]
-    const w = wt(t.key, repo, t.title, { dirty: rng.chance(0.5) ? rng.int(1, 12) : 0, ahead: rng.int(0, 6), behind: rng.int(0, 5), created_by: rng.pick(['Claude Code', 'Codex', 'Mara', 'Severin']) })
+    const w = wt(t.key, repo, t.title, { dirty: rng.chance(0.5) ? rng.int(1, 12) : 0, ahead: rng.int(0, 6), behind: rng.int(0, 5), created_by: rng.pick(['Claude Code', 'Codex', 'Mara', 'Anna Test']) })
     if (have.has(w.id)) continue
     have.add(w.id)
     state.worktrees.push(w)

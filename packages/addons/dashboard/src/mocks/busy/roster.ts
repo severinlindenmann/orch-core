@@ -1,4 +1,4 @@
-// The agent sessions that are working in the busy day, across Severin's and Mara's grants (DEMO workspace).
+// The agent sessions that are working in the busy day, across Anna Test's and Mara's grants (DEMO workspace).
 // Their ids never clash with the fixtures (s_77c2, s_9e3f, s_a41, ...).
 export interface Session {
   id: string

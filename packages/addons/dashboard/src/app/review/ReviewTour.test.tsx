@@ -36,7 +36,7 @@ describe('review tour', () => {
     expect(screen.getByTestId('topbar-title')).toHaveTextContent('Settings')
   })
 
-  it('Go switches the viewer when the step is for someone else, and back to Severin otherwise', async () => {
+  it('Go switches the viewer when the step is for someone else, and back to Anna Test otherwise', async () => {
     const { user } = renderApp('/')
     let sheet = await openTour(user)
     await openScenario(user, sheet, /^4\. Maintainer/)

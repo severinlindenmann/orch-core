@@ -9,7 +9,7 @@ import { createMockStore } from './store'
 import { signedSource } from './addons/land-worker'
 import { installAndGrant } from '@/test/installAddon'
 
-const KEY = 'DEMO-0041' // testing, no verdict; Severin is a reviewer
+const KEY = 'DEMO-0041' // testing, no verdict; Anna Test is a reviewer
 const setup = (viewer = 'p_sev', factory = false) => {
   const store = createMockStore({ persist: false })
   const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id

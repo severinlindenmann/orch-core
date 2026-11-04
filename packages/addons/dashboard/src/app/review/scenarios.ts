@@ -1,6 +1,6 @@
 // The review tour's scenarios: the same list, in the same words, as "Scenarios" in REVIEW.md (a test keeps the two
 // in step). Each step may say where "Go" takes you: a page, as which person, in which workspace, and on which demo
-// dataset. Without `viewer` / `workspace`, Go puts you back as Severin in DEMO, so every step starts from a known place.
+// dataset. Without `viewer` / `workspace`, Go puts you back as Anna Test in DEMO, so every step starts from a known place.
 
 export type TourPerson = 'p_sev' | 'p_mara' | 'p_tom'
 export type TourDataset = 'normal' | 'busy'
@@ -8,7 +8,7 @@ export type TourDataset = 'normal' | 'busy'
 export interface TourGo {
   /** A route of the app, e.g. `/ticket/DEMO-0043`. The `/settings/addons` stops are the demo (mock) Addons manager; on a real host that URL redirects to /addons. */
   path: string
-  /** Who you look at it as (default Severin, the owner). */
+  /** Who you look at it as (default Anna Test, the owner). */
   viewer?: TourPerson
   /** Which workspace (default DEMO). */
   workspace?: 'DEMO' | 'INT' | 'CLI'
@@ -32,7 +32,7 @@ export interface TourScenario {
   steps: TourStep[]
 }
 
-export const PERSON_NAME: Record<TourPerson, string> = { p_sev: 'Severin', p_mara: 'Mara', p_tom: 'Tom' }
+export const PERSON_NAME: Record<TourPerson, string> = { p_sev: 'Anna Test', p_mara: 'Mara', p_tom: 'Tom' }
 
 const S = (n: number, title: string, summary: string, steps: Omit<TourStep, 'id'>[]): TourScenario => ({
   n,
@@ -42,7 +42,7 @@ const S = (n: number, title: string, summary: string, steps: Omit<TourStep, 'id'
 })
 
 export const SCENARIOS: TourScenario[] = [
-  S(1, 'Owner morning', 'Severin starts the day: read, answer, approve, decide, move a card.', [
+  S(1, 'Owner morning', 'Anna Test starts the day: read, answer, approve, decide, move a card.', [
     { title: 'Read what needs you', detail: 'Today: the groups, the oldest and blocking items first, the Agents column.', go: { path: '/' } },
     { title: 'Answer a question on DEMO-0043', detail: 'Questions tab: pick an option, Send answer, sign.', go: { path: '/ticket/DEMO-0043' } },
     { title: 'Approve a plan gate', detail: 'Approvals group on Today: Review, read what you sign, Approve plan.', go: { path: '/' } },
@@ -79,7 +79,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Activity filters', detail: 'Filters apply as you choose them (Busy day: Activity is installed there).', go: { path: '/addon/activity/activity', viewer: 'p_tom', dataset: 'busy' } },
     { title: 'No error toasts from normal use', detail: 'Click around; nothing should answer with a red toast.', go: { path: '/settings/members', viewer: 'p_tom' } },
   ]),
-  S(6, 'Owner admin', 'Severin runs the workspace: people, gates, addons, grants.', [
+  S(6, 'Owner admin', 'Anna Test runs the workspace: people, gates, addons, grants.', [
     { title: 'Add a member', detail: 'Members → Add member: pick a person (Enter picks, a second Enter adds).', go: { path: '/settings/members' } },
     { title: 'Change a role', detail: 'The Role of a member; the last owner cannot be demoted.', go: { path: '/settings/members' } },
     { title: 'Change a gate policy', detail: 'Gates: count, approvers, "Affects N open tickets"; each change is signed.', go: { path: '/settings/gates' } },
@@ -190,7 +190,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Preflight', detail: 'Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked.', go: { path: '/agents?tab=mandates' } },
     { title: 'Issue a mandate', detail: 'Show the mandate anyway (preview), then Issue a mandate…: "Steers the whole workspace in your name", what it may do (approve waiting agents and gates including code review, land on main (owners may since 11 Oct; never more than its owner), first send to a linked workspace, publish publicly, restore/purge, unblock tickets, enable factories and start their runs including Deliver, issue grants), what stays yours (settings, addons, members and roles, devices, relay pairing, secrets and connections, protected paths, another mandate), a length up to 30 days; "Sign mandate (preview — nothing is signed)".', go: { path: '/agents?tab=mandates' } },
     { title: 'Renew', detail: 'Renew… in the mandate: pick a new length (up to 30 days) from now; revision 2, same scope, no total renewal ceiling. Weekly check-in due on the named day; Still OK is preview-only. After 3 unconfirmed days it pauses, not revokes.', go: { path: '/agents?tab=mandates' } },
-    { title: 'The banner', detail: 'One calm line on every page: Mandate md_3 · for Severin · whole workspace · 10 decisions · until Tue. Details opens the tab; × hides it for this session.', go: { path: '/board' } },
+    { title: 'The banner', detail: 'One calm line on every page: Mandate md_3 · for Anna Test · whole workspace · 10 decisions · until Tue. Details opens the tab; × hides it for this session.', go: { path: '/board' } },
     { title: 'Decided for you', detail: 'Today, below the real queue: one folded row. Open it for up to 3 decisions (a grant, a factory run, a permit … with Looks right, Veto), the refused items (protected path, your veto, an addon install and a second mandate, both refused) and Show all; "Revoke mandate and void" sits in its header.', go: { path: '/' } },
     { title: 'Stop', detail: 'Stop in the banner (optionally also stop agents): "Stopping…", then "Stopped at #1842".', go: { path: '/agents?tab=mandates' } },
     { title: 'Revoke and void', detail: 'Lists the 8 decisions it would void and the 1 on landed work it only lists for review.', go: { path: '/agents?tab=mandates' } },
@@ -198,7 +198,7 @@ export const SCENARIOS: TourScenario[] = [
   ]),
   S(20, 'Factory full run', 'Owner decision 10 Oct evening (D61 option): one signed request, the factory goes to Preview or all the way to Deliver, with a hold window and Stop.', [
     { title: 'A run on hold', detail: 'Demo data → Busy day, then AI Factory: "Delivering in 28 min · Publish campaign to the newsletter list" above the tabs with Stop delivery, the same line in the shell, and a needs-you item on Today.', go: { path: '/addon/factory/factory' } },
-    { title: 'Stop the delivery', detail: 'Stop in the shell line (or Stop delivery on the page): core\'s prompt names the run, the destination and the end of the window; Send answer. "Stopped by Severin …: nothing went out." Full runs now offers Deliver now… and Deliver with a new hold…: choose, then sign the run, destination and new hold; no work is redone.', go: { path: '/addon/factory/factory' } },
+    { title: 'Stop the delivery', detail: 'Stop in the shell line (or Stop delivery on the page): core\'s prompt names the run, the destination and the end of the window; Send answer. "Stopped by Anna Test …: nothing went out." Full runs now offers Deliver now… and Deliver with a new hold…: choose, then sign the run, destination and new hold; no work is redone.', go: { path: '/addon/factory/factory' } },
     { title: 'Request a full run', detail: 'Full runs tab: Goal, "How far may the factory go on its own?" → All the way to Deliver, What Deliver means (required), Hold window (0 no hold / 15 min default / 30 min / 1 h / 4 h / 24 h) → Review request → Sign and start (or Fill in a demo request). The prompt lists every value in core lines; zero says “No hold: delivers as soon as its checks pass”.', go: { path: '/addon/factory/factory' } },
     { title: 'Watch the steps', detail: 'Plan, then Requirements / Build and test / Validate / Evidence per child, then Preview: each reads "via the factory full run you signed on … — no person reviewed this step". About 30 s later it holds before Deliver.', go: { path: '/addon/factory/factory' } },
     { title: 'Delivered', detail: 'Simulate: let the hold time pass (demo) ends the hold now: "Delivered: Deploy to production at …". The epic\'s History has the run\'s milestones.', go: { path: '/addon/factory/factory' } },

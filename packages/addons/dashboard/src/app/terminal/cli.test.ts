@@ -60,10 +60,10 @@ describe('Claude Code mirror screen', () => {
     expect(plain(s.live!.frame(3))).toMatch(/Waiting for approval… \(1h 50m\)$/)
   })
   it('ends on the real blocker, from the live ticket state: a question, a gate, the verdict, or nothing', () => {
-    const q = plain(cliScreen(mirror({ ctx: ctx({ move: { who: 'p_sev', why: 'Answer Q2', name: 'Severin' } }) }), 100).text)
+    const q = plain(cliScreen(mirror({ ctx: ctx({ move: { who: 'p_sev', why: 'Answer Q2', name: 'Anna Test' } }) }), 100).text)
     expect(q).toContain('Bash(orch wait)')
-    expect(q).toContain('waiting · Answer Q2 · Severin')
-    expect(q).toContain('Q2 needs an answer from Severin before I go on.')
+    expect(q).toContain('waiting · Answer Q2 · Anna Test')
+    expect(q).toContain('Q2 needs an answer from Anna Test before I go on.')
     expect(q).not.toContain('human_only')
     expect(q.split('\r\n').at(-1)).toMatch(/Waiting for Q2…/)
     // Plan approved, no question: no approval wait.

@@ -16,7 +16,7 @@ vi.mock('@/api/features', async orig => ({ ...(await orig<typeof import('@/api/f
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 const ac: AcceptanceStatus = { id: 'AC2', text: 'The exact criterion', state: 'unproven', evidence: [], proof: 'accepted', accepted: { by: 'p_a', at: '2026-10-19T12:02:00Z' } }
 const ticket = { key: 'DEMO-0001', status: 'open', head: { seq: 1 }, people: { owner: 'p_a', reviewers: ['p_b'] }, acceptance_state: [ac], gates: { verify: { state: 'pending' } } } as TicketDocument
-const viewer = { person: 'p_a', role: 'member', name: () => 'Severin', members: [], ready: true } as Viewer
+const viewer = { person: 'p_a', role: 'member', name: () => 'Anna Test', members: [], ready: true } as Viewer
 const sent = () => JSON.parse(screen.getByTestId('action').textContent!)
 
 describe('manual authority', () => {
@@ -57,7 +57,7 @@ describe('manual authority', () => {
     expect(acState(ticket, ac)).toBe('open')
     expect(acState(ticket, { ...ac, state: 'proven' })).toBe('evidenced')
     render(<ManualAcceptanceReview ticket={{ ...ticket, acceptance_state: [ac, { ...ac, id: 'AC3', accepted_stale: true }] }} name={viewer.name} />)
-    expect(screen.getByText(/accepted manually by/)).toHaveTextContent('AC2: accepted manually by Severin (no automated check)')
+    expect(screen.getByText(/accepted manually by/)).toHaveTextContent('AC2: accepted manually by Anna Test (no automated check)')
     expect(screen.getByText(/accepted for an earlier wording/)).toHaveTextContent('AC3: accepted for an earlier wording, no longer counts')
   })
   it('shows the no-receipt fallback and plain history wording', () => {
@@ -87,7 +87,7 @@ it('renders manual proof with a person icon, local time and stale reacceptance, 
     { ...ac, id: 'AC3', proof: 'pending', accepted: undefined, accepted_stale: true },
   ] }} viewer={viewer} jump={() => {}} sign={() => {}} /></QueryClientProvider>)
   expect(screen.getByRole('img', { name: 'Accepted manually' }).querySelector('svg')).toBeTruthy()
-  expect(view.container).toHaveTextContent(`Accepted manually by Severin · ${fmtDateTime(ac.accepted!.at)} · one click · “Checked it”`)
+  expect(view.container).toHaveTextContent(`Accepted manually by Anna Test · ${fmtDateTime(ac.accepted!.at)} · one click · “Checked it”`)
   expect(view.container).toHaveTextContent('0/2 evidenced')
   expect(screen.getByRole('button', { name: 'Withdraw' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Accept again' })).toBeVisible()

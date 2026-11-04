@@ -25,7 +25,7 @@ describe('terminals page', () => {
     const term = document.querySelector('[data-terminal-session="shell1"]')!
     expect(term).not.toHaveAttribute('aria-readonly')
     await user.type(box, 'pwd{enter}')
-    await waitFor(() => expect(term.textContent).toContain('/Users/severin/energy'), T)
+    await waitFor(() => expect(term.textContent).toContain('/Users/demo/energy'), T)
   })
   it('the agent mirror is view-only: aria-readonly on the container and no typing', async () => {
     const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
@@ -35,7 +35,7 @@ describe('terminals page', () => {
     const term = document.querySelector('[data-terminal-session="agent1"]')!
     expect(term).toHaveAttribute('aria-readonly', 'true')
     await waitFor(() => expect(term.querySelector('textarea')).toHaveAttribute('aria-readonly', 'true'), T)
-    await waitFor(() => expect(term.textContent).toContain('waiting · Answer Q2 · Severin'), T)
+    await waitFor(() => expect(term.textContent).toContain('waiting · Answer Q2 · Anna Test'), T)
     await user.type(term.querySelector('textarea')!, 'ls{enter}')
     await new Promise((r) => setTimeout(r, 150)) // give a (wrongly) accepted keystroke time to run
     expect(term.textContent).not.toContain('dbt_project.yml')

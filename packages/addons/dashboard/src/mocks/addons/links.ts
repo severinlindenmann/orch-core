@@ -123,14 +123,14 @@ const DAY = 86_400_000
 const PAIRING_MS = 10 * 60_000
 const NOW = '2026-10-09T11:30:00Z'
 /** Which of the person's workspaces run on this machine (the rest are elsewhere: the relay is their carrier). */
-const MACHINE: Record<string, string> = { DEMO: "Severin's MacBook Pro", INT: "Severin's MacBook Pro", CLI: 'the client VM' }
+const MACHINE: Record<string, string> = { DEMO: "Anna Test's MacBook Pro", INT: "Anna Test's MacBook Pro", CLI: 'the client VM' }
 const WS_NAME: Record<string, string> = { DEMO: 'DEMO · Acme energy data', INT: 'INT · Internal', CLI: 'CLI · Client VM' }
 const OWNER_KINDS: Request['kind'][] = ['pairing', 'scope']
 
 const at = (iso: string, deltaDays: number) => new Date(Date.parse(iso) + deltaDays * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z')
 const plus = (iso: string, ms: number) => new Date(Date.parse(iso) + ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
 const kindsText = (k: Kind[]) => (k.length ? k.map((x) => KIND_LABEL[x]).join(', ') : 'nothing')
-const ownWs = (prefix: string): Peer => ({ name: WS_NAME[prefix] ?? prefix, ws: prefix, owner: 'Severin' })
+const ownWs = (prefix: string): Peer => ({ name: WS_NAME[prefix] ?? prefix, ws: prefix, owner: 'Anna Test' })
 const carrierOf = (from: string, to: string): Carrier => (MACHINE[from] && MACHINE[from] === MACHINE[to] ? 'local' : 'relay')
 /** A pairing code for the other owner: short-lived, one use, never a credential (it only starts the comparison). */
 const pairingCode = (n: number) => {

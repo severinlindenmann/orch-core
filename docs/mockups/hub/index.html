@@ -338,20 +338,20 @@ details summary{cursor:pointer;color:var(--text-muted);font-size:13px;margin:6px
 <script>
 // ---------------------------------------------------------------- demo data
 const D = {
-  hub: {name:"Acme hub", company:"Acme AG", addr:"100.71.188.237:8100", local:"127.0.0.1:8100", version:"0.1.0 · a7579733", since:"27 Oct 09:04"},
-  me: {id:"sev", name:"Severin", initials:"SV"},
+  hub: {name:"Acme hub", company:"Acme AG", addr:"192.0.2.10:8100", local:"127.0.0.1:8100", version:"0.1.0 · a7579733", since:"27 Oct 09:04"},
+  me: {id:"sev", name:"Anna Test", initials:"AT"},
   ws: [
-    {id:"pr", ver:"0.1.0 · a7579733", name:"Product", prefix:"PR", color:"#2fc6a3", mode:"Everything", online:true, owner:"Severin", people:6, needs:3, host:"MacBook Pro (Severin)", addr:"100.71.188.237:8151", seen:"now", tickets:42, agents:2},
-    {id:"mk", ver:"0.1.0 · a7579733", name:"Marketing", prefix:"MK", color:"#b392f0", mode:"Only what I choose", online:true, owner:"Anna Keller", people:4, needs:1, host:"Mac mini (office)", addr:"100.71.20.11:8151", seen:"now", tickets:18, agents:1},
-    {id:"lg", ver:"0.0.9 · 5c1e02f1", name:"Legal", prefix:"LG", color:"#fbbf24", mode:"Only what I choose", online:false, owner:"Lea Brunner", people:2, needs:0, host:"VPS legal-1", addr:"100.71.44.3:8151", seen:"yesterday 17:55", tickets:9, agents:0},
-    {id:"an", ver:"0.1.0 · a7579733", name:"Anna / personal", prefix:"AK", color:"#60a5fa", mode:"Only what I choose", online:true, owner:"Anna Keller", people:1, needs:0, host:"MacBook Air (Anna)", addr:"100.71.90.7:8151", seen:"4 min ago", tickets:5, agents:0},
-    {id:"su", ver:"0.1.1 · 9d2f4410", name:"Support", prefix:"SU", color:"#f472b6", mode:"Everything", online:true, owner:"Marco Rossi", people:3, needs:0, host:"VPS support-1", addr:"100.71.52.8:8151", seen:"now", tickets:27, agents:3},
-    {id:"fi", ver:"0.0.9 · 5c1e02f1", name:"Finance", prefix:"FI", color:"#4ade80", mode:"Only what I choose", online:true, owner:"Severin", people:2, needs:0, host:"Mac mini (office)", addr:"100.71.20.11:8152", seen:"now", tickets:4, agents:0},
+    {id:"pr", ver:"0.1.0 · a7579733", name:"Product", prefix:"PR", color:"#2fc6a3", mode:"Everything", online:true, owner:"Anna Test", people:6, needs:3, host:"MacBook Pro (Anna Test)", addr:"192.0.2.10:8151", seen:"now", tickets:42, agents:2},
+    {id:"mk", ver:"0.1.0 · a7579733", name:"Marketing", prefix:"MK", color:"#b392f0", mode:"Only what I choose", online:true, owner:"Anna Keller", people:4, needs:1, host:"Mac mini (office)", addr:"192.0.2.11:8151", seen:"now", tickets:18, agents:1},
+    {id:"lg", ver:"0.0.9 · 5c1e02f1", name:"Legal", prefix:"LG", color:"#fbbf24", mode:"Only what I choose", online:false, owner:"Lea Brunner", people:2, needs:0, host:"VPS legal-1", addr:"192.0.2.12:8151", seen:"yesterday 17:55", tickets:9, agents:0},
+    {id:"an", ver:"0.1.0 · a7579733", name:"Anna / personal", prefix:"AK", color:"#60a5fa", mode:"Only what I choose", online:true, owner:"Anna Keller", people:1, needs:0, host:"MacBook Air (Anna)", addr:"192.0.2.13:8151", seen:"4 min ago", tickets:5, agents:0},
+    {id:"su", ver:"0.1.1 · 9d2f4410", name:"Support", prefix:"SU", color:"#f472b6", mode:"Everything", online:true, owner:"Marco Rossi", people:3, needs:0, host:"VPS support-1", addr:"192.0.2.14:8151", seen:"now", tickets:27, agents:3},
+    {id:"fi", ver:"0.0.9 · 5c1e02f1", name:"Finance", prefix:"FI", color:"#4ade80", mode:"Only what I choose", online:true, owner:"Anna Test", people:2, needs:0, host:"Mac mini (office)", addr:"192.0.2.11:8152", seen:"now", tickets:4, agents:0},
   ],
   // workspace profiles: set in each workspace's Settings › Profile, published to the hub (the "routing card" agents read)
   prof: {
     pr: {tags:["shop","engineering","releases"], desc:"Builds and runs the Acme online shop: features, bugs, releases, infrastructure.",
-         handles:["bugs and features of the shop","releases and deployments","API and integrations"], not:["marketing texts","contracts"], accepts:["bug","feature","question"], contact:"Severin, Marco Rossi", lang:"German, English", hours:"Mon–Fri 8–18"},
+         handles:["bugs and features of the shop","releases and deployments","API and integrations"], not:["marketing texts","contracts"], accepts:["bug","feature","question"], contact:"Anna Test, Marco Rossi", lang:"German, English", hours:"Mon–Fri 8–18"},
     mk: {tags:["marketing","content","newsletter"], desc:"Campaigns, newsletter, landing pages and release notes for customers.",
          handles:["release notes","newsletter","landing pages","social posts"], not:["code changes","legal review"], accepts:["content request","review"], contact:"Anna Keller", lang:"German, English, French", hours:"Mon–Fri 9–17"},
     lg: {tags:["legal","contracts","compliance"], desc:"Contracts, licences, GDPR and compliance checks.",
@@ -361,27 +361,27 @@ const D = {
     su: {tags:["support","customers","tickets"], desc:"Answers customer emails and chats; turns real problems into bugs for Product.",
          handles:["customer questions","refund requests","bug reports from customers"], not:["code changes","contracts"], accepts:["question"], contact:"Marco Rossi", lang:"German, English, Italian", hours:"Mon–Sat 8–20"},
     fi: {tags:["finance","invoices","budget"], desc:"Invoices, refunds, budgets and cost reports.",
-         handles:["refunds","invoices","cost reports (e.g. AI usage)"], not:["customer chats"], accepts:["review","question"], contact:"Severin", lang:"German", hours:"Mon–Fri 9–16"},
+         handles:["refunds","invoices","cost reports (e.g. AI usage)"], not:["customer chats"], accepts:["review","question"], contact:"Anna Test", lang:"German", hours:"Mon–Fri 9–16"},
   },
   // allowed directions: [from, to]  (A may send hand-offs / ask B)
   conns: [["pr","mk"],["mk","pr"],["pr","lg"],["mk","lg"],["an","pr"],["an","mk"],["su","pr"],["pr","su"],["su","fi"],["su","mk"],["fi","lg"],["pr","fi"]],
-  pendingWs: [{name:"HR", by:"Severin", made:"today 09:20", expires:"in 18 min"}],
+  pendingWs: [{name:"HR", by:"Anna Test", made:"today 09:20", expires:"in 18 min"}],
   leftWs: [{name:"Old ops", prefix:"OP", left:"20 Oct", by:"Marco Rossi"}],
   people: [
-    {id:"sev", name:"Severin", initials:"SV", role:"Hub admin", groups:["Hub admins","Product team"], signin:"Password + code", devices:["Chrome · MacBook Pro","iPhone 15"], last:"now", status:"active"},
+    {id:"sev", name:"Anna Test", initials:"AT", role:"Hub admin", groups:["Hub admins","Product team"], signin:"Password + code", devices:["Chrome · MacBook Pro","iPhone 15"], last:"now", status:"active"},
     {id:"ak", name:"Anna Keller", initials:"AK", role:"Member", groups:["Marketing","Product team"], signin:"Password + code", devices:["Safari · MacBook Air","iPhone 13 (needs app update)"], last:"4 min ago", status:"active"},
     {id:"mr", name:"Marco Rossi", initials:"MR", role:"Member", groups:["Product team"], signin:"Password + code", devices:["Firefox · ThinkPad"], last:"2 h ago", status:"active"},
     {id:"lb", name:"Lea Brunner", initials:"LB", role:"Member", groups:["Legal"], signin:"Password + code", devices:["Edge · Windows"], last:"yesterday", status:"active"},
     {id:"tw", name:"Tom Weber (IT)", initials:"TW", role:"IT contact", groups:["Hub admins"], signin:"Not set up yet", devices:[], last:"never", status:"invited"},
   ],
   groups: [
-    {name:"Hub admins", members:["Severin","Tom Weber (IT)"], desc:"Manage the hub, every workspace (admin)", grants:{pr:"admin",mk:"admin",lg:"admin",an:"-",su:"admin",fi:"admin"}},
-    {name:"Product team", members:["Severin","Anna Keller","Marco Rossi"], desc:"", grants:{pr:"edit",mk:"read",lg:"-",an:"-",su:"read",fi:"-"}},
+    {name:"Hub admins", members:["Anna Test","Tom Weber (IT)"], desc:"Manage the hub, every workspace (admin)", grants:{pr:"admin",mk:"admin",lg:"admin",an:"-",su:"admin",fi:"admin"}},
+    {name:"Product team", members:["Anna Test","Anna Keller","Marco Rossi"], desc:"", grants:{pr:"edit",mk:"read",lg:"-",an:"-",su:"read",fi:"-"}},
     {name:"Marketing", members:["Anna Keller"], desc:"", grants:{pr:"read",mk:"edit",lg:"-",an:"-",su:"read",fi:"-"}},
     {name:"Legal", members:["Lea Brunner"], desc:"", grants:{pr:"read",mk:"read",lg:"edit",an:"-",su:"-",fi:"read"}},
   ],
   approvals: [
-    {id:1, ws:"pr", kind:"Add-on install", title:"Install Model routing 1.0.0 in Product", by:"Severin (from Mission Control)", when:"09:41",
+    {id:1, ws:"pr", kind:"Add-on install", title:"Install Model routing 1.0.0 in Product", by:"Anna Test (from Mission Control)", when:"09:41",
      lines:["Add-on: model-routing · version 1.0.0 · from orch-marketplace (official)","After installation: turned off. You turn it on later in Add-ons.","Can read: ticket titles and task text of Product"], sig:"addon.grant"},
     {id:2, ws:"pr", kind:"Gate", title:"PR-0142 · Deploy release 2.4 to the shop", by:"agent (Claude) on PR-0142", when:"09:12",
      lines:["Ticket PR-0142 moves past the gate 'deploy'","Proof attached: tests green (412), preview link checked by Marco"], sig:"gate.pass"},
@@ -394,27 +394,27 @@ const D = {
   ],
   handoffs: [
     {from:"pr", to:"mk", title:"Write release notes for 2.4", ref:"PR-0142 → MK-0034", when:"09:30", state:"Delivered", by:"Marco Rossi"},
-    {from:"pr", to:"lg", title:"Check the licence of the new map library", ref:"PR-0139 → (waiting)", when:"yesterday 17:58", state:"Waiting", by:"Severin", why:"Waiting for Legal to come online since yesterday 17:55"},
+    {from:"pr", to:"lg", title:"Check the licence of the new map library", ref:"PR-0139 → (waiting)", when:"yesterday 17:58", state:"Waiting", by:"Anna Test", why:"Waiting for Legal to come online since yesterday 17:55"},
     {from:"mk", to:"pr", title:"Landing page form sends twice", ref:"MK-0029 → PR-0147", when:"yesterday 11:02", state:"Delivered", by:"Anna Keller"},
     {from:"an", to:"pr", title:"Idea: dark mode for the shop", ref:"AK-0004 → PR-0149", when:"Mon 15:10", state:"Delivered", by:"Anna Keller"},
   ],
   services: [
-    {id:"hub", name:"Hub", what:"This console, sign-in, approvals, workspace links", addr:"100.71.188.237:8100 · link 8105", ver:"0.1.0 · a7579733", state:"running", up:"1 h 12 min", last:"just now", cpu:"0.4 %", mem:"62 MB"},
-    {id:"relay", name:"Relay", what:"Phone alerts (push) and phone answers", addr:"100.71.188.237:8101", ver:"0.1.0 · a7579733", state:"running", up:"1 h 12 min", last:"12 s ago", cpu:"0.1 %", mem:"41 MB", extra:"2 phones · 14 pushes today"},
-    {id:"publish", name:"Publish", what:"Share files and pages outside the company", addr:"100.71.188.237:8102", ver:"0.2.0 · a7579733", state:"running", up:"1 h 12 min", last:"40 s ago", cpu:"0.0 %", mem:"35 MB", extra:"3 links active"},
+    {id:"hub", name:"Hub", what:"This console, sign-in, approvals, workspace links", addr:"192.0.2.10:8100 · link 8105", ver:"0.1.0 · a7579733", state:"running", up:"1 h 12 min", last:"just now", cpu:"0.4 %", mem:"62 MB"},
+    {id:"relay", name:"Relay", what:"Phone alerts (push) and phone answers", addr:"192.0.2.10:8101", ver:"0.1.0 · a7579733", state:"running", up:"1 h 12 min", last:"12 s ago", cpu:"0.1 %", mem:"41 MB", extra:"2 phones · 14 pushes today"},
+    {id:"publish", name:"Publish", what:"Share files and pages outside the company", addr:"192.0.2.10:8102", ver:"0.2.0 · a7579733", state:"running", up:"1 h 12 min", last:"40 s ago", cpu:"0.0 %", mem:"35 MB", extra:"3 links active"},
     {id:"edge", name:"Edge (public address)", what:"Optional: a public https address for phones outside your private network", addr:"not set up", ver:"-", state:"off", up:"-", last:"-", cpu:"-", mem:"-"},
   ],
   phones: [
-    {who:"Severin", dev:"iPhone 15", app:"orch 0.1.0 (261026)", push:"working", paired:"27 Oct", last:"2 min ago"},
+    {who:"Anna Test", dev:"iPhone 15", app:"orch 0.1.0 (261026)", push:"working", paired:"27 Oct", last:"2 min ago"},
     {who:"Anna Keller", dev:"iPhone 13", app:"orch 0.0.9", push:"needs app update", paired:"21 Oct", last:"yesterday", warn:"Has not said which keys it can read: One click in Anna's workspaces is blocked until the app is updated"},
   ],
   browsers: [
-    {who:"Severin", dev:"Chrome · MacBook Pro", reg:"today 09:15", last:"now", me:true},
+    {who:"Anna Test", dev:"Chrome · MacBook Pro", reg:"today 09:15", last:"now", me:true},
     {who:"Anna Keller", dev:"Safari · MacBook Air", reg:"22 Oct", last:"4 min ago"},
     {who:"Marco Rossi", dev:"Firefox · ThinkPad", reg:"23 Oct", last:"2 h ago"},
   ],
   links: [
-    {what:"hello.txt", ws:"pr", ref:"PR-0001", by:"Severin", made:"today 09:50", exp:"in 7 days", views:2, state:"active"},
+    {what:"hello.txt", ws:"pr", ref:"PR-0001", by:"Anna Test", made:"today 09:50", exp:"in 7 days", views:2, state:"active"},
     {what:"Release notes 2.4 (page)", ws:"mk", ref:"MK-0034", by:"Anna Keller", made:"today 09:44", exp:"in 30 days", views:11, state:"active"},
     {what:"Contract draft v3.pdf", ws:"lg", ref:"LG-0007", by:"Lea Brunner", made:"Fri 14:02", exp:"in 2 days", views:1, state:"active", pw:true},
     {what:"Logo pack.zip", ws:"mk", ref:"MK-0020", by:"Anna Keller", made:"12 Oct", exp:"expired", views:24, state:"expired"},
@@ -424,7 +424,7 @@ const D = {
     {name:"Release notes 2.4", ws:"mk", ref:"MK-0034", by:"Anna Keller", kind:"Landing page", url:"acme.example/releases/2-4", access:"Public", ver:"v3 · today 09:44", visits:412, state:"running"},
     {name:"Customer FAQ assistant", ws:"su", ref:"SU-0011", by:"Marco Rossi", kind:"Web app", url:"apps/faq", access:"Public", ver:"v7 · Fri", visits:1290, state:"running"},
     {name:"Event sign-up (Nov meetup)", ws:"mk", ref:"MK-0027", by:"Anna Keller", kind:"Form app", url:"apps/meetup-signup", access:"Password", ver:"v2 · 20 Oct", visits:58, state:"stopped"},
-    {name:"Budget dashboard", ws:"fi", ref:"FI-0003", by:"Severin", kind:"Dashboard", url:"apps/budget", access:"People in Finance", ver:"v1 · Mon", visits:9, state:"running"},
+    {name:"Budget dashboard", ws:"fi", ref:"FI-0003", by:"Anna Test", kind:"Dashboard", url:"apps/budget", access:"People in Finance", ver:"v1 · Mon", visits:9, state:"running"},
   ],
   addons: [
     {name:"Model routing", ver:"1.0.0", src:"orch-marketplace (official)", allowed:"All workspaces", used:"Product (installing)", state:"allowed"},
@@ -440,7 +440,7 @@ const D = {
     {name:"Customer tone (support)", kind:"Skill", share:["su","mk"], by:"Marco Rossi", upd:"Fri", uses:44},
   ],
   mcp: [
-    {name:"GitHub", how:"Remote", where:"https://api.githubcopilot.com/mcp/", auth:"GitHub token (read only)", state:"connected", share:["pr","mk"], by:"Severin", upd:"24 Oct", uses:86,
+    {name:"GitHub", how:"Remote", where:"https://api.githubcopilot.com/mcp/", auth:"GitHub token (read only)", state:"connected", share:["pr","mk"], by:"Anna Test", upd:"24 Oct", uses:86,
      tools:[["search_code","read",true],["get_issue","read",true],["list_pull_requests","read",true],["create_issue","write",false],["merge_pull_request","write",false]]},
     {name:"Google Drive", how:"Remote", where:"https://drive.mcp.example/acme", auth:"Sign-in per person", state:"needs sign-in", share:"all", by:"Anna Keller", upd:"20 Oct", uses:41,
      tools:[["search_files","read",true],["read_file","read",true],["create_file","write",true]]},
@@ -450,30 +450,30 @@ const D = {
      tools:[["navigate","read",true],["click","write",true],["screenshot","read",true]]},
   ],
   secrets: [
-    {name:"GitHub token (read only)", share:["pr","mk"], by:"Severin", upd:"24 Oct", exp:"in 83 days", uses:12},
+    {name:"GitHub token (read only)", share:["pr","mk"], by:"Anna Test", upd:"24 Oct", exp:"in 83 days", uses:12},
     {name:"Shop staging password", share:["pr"], by:"Marco Rossi", upd:"19 Oct", exp:"-", uses:5},
     {name:"Newsletter API key", share:["mk"], by:"Anna Keller", upd:"2 Oct", exp:"in 5 days", uses:2},
-    {name:"Company OpenAI key", share:"all", by:"Severin", upd:"1 Oct", exp:"-", uses:220},
+    {name:"Company OpenAI key", share:"all", by:"Anna Test", upd:"1 Oct", exp:"-", uses:220},
   ],
   spaces: [
     {name:"Company wiki", kind:"Wiki", purpose:"How we work: policies, onboarding, who to ask.", items:"38 pages",
      use:[["pr","edits"],["mk","edits"],["su","reads"],["lg","reads"],["fi","reads"]],
-     hist:[["agent","Marketing's agent","added the page 'Q4 launch plan'","2 h ago"],["person","Severin","changed 'Expenses policy'","today 08:30"],["agent","Support's agent","fixed a link in 'Refund rules'","yesterday"]]},
+     hist:[["agent","Marketing's agent","added the page 'Q4 launch plan'","2 h ago"],["person","Anna Test","changed 'Expenses policy'","today 08:30"],["agent","Support's agent","fixed a link in 'Refund rules'","yesterday"]]},
     {name:"Templates", kind:"Files", purpose:"Offer, invoice and contract templates everyone starts from.", items:"12 files",
      use:[["pr","reads"],["mk","reads"],["su","reads"],["fi","edits"],["lg","edits"]],
-     hist:[["person","Lea Brunner","replaced 'NDA template.docx'","Fri"],["person","Severin","added 'Invoice 2026.xlsx'","20 Oct"]]},
+     hist:[["person","Lea Brunner","replaced 'NDA template.docx'","Fri"],["person","Anna Test","added 'Invoice 2026.xlsx'","20 Oct"]]},
     {name:"Product ↔ Marketing launches", kind:"Board", purpose:"One board for every release: dates, owners, what is ready.", items:"6 cards",
      use:[["pr","edits"],["mk","edits"]],
      hist:[["agent","Product's agent","moved 'Release 2.4' to Ready","09:30"],["person","Anna Keller","added 'Newsletter 2.4'","yesterday"]]},
   ],
   activity: [
-    {t:"09:52", who:"Severin", what:"approved", obj:"Usage add-on on in Product", ws:"pr"},
-    {t:"09:50", who:"Severin", what:"shared", obj:"hello.txt (link, 7 days)", ws:"pr"},
-    {t:"09:41", who:"Severin", what:"requested", obj:"Install Model routing in Product", ws:"pr"},
+    {t:"09:52", who:"Anna Test", what:"approved", obj:"Usage add-on on in Product", ws:"pr"},
+    {t:"09:50", who:"Anna Test", what:"shared", obj:"hello.txt (link, 7 days)", ws:"pr"},
+    {t:"09:41", who:"Anna Test", what:"requested", obj:"Install Model routing in Product", ws:"pr"},
     {t:"09:30", who:"Marco Rossi", what:"handed over", obj:"PR-0142 → Marketing: release notes", ws:"pr"},
-    {t:"09:20", who:"Severin", what:"made a connect link", obj:"for a new workspace (Finance)", ws:null},
-    {t:"09:15", who:"Severin", what:"registered", obj:"this browser (Chrome · MacBook Pro)", ws:null},
-    {t:"09:05", who:"Severin", what:"connected", obj:"Product (Everything)", ws:"pr"},
+    {t:"09:20", who:"Anna Test", what:"made a connect link", obj:"for a new workspace (Finance)", ws:null},
+    {t:"09:15", who:"Anna Test", what:"registered", obj:"this browser (Chrome · MacBook Pro)", ws:null},
+    {t:"09:05", who:"Anna Test", what:"connected", obj:"Product (Everything)", ws:"pr"},
     {t:"yesterday 17:55", who:"system", what:"lost contact with", obj:"Legal", ws:"lg"},
     {t:"yesterday 11:02", who:"Anna Keller", what:"handed over", obj:"MK-0029 → Product", ws:"mk"},
   ],
@@ -591,7 +591,7 @@ function openApproval(id){
   const opts = a.options ? `<div class="field" style="margin-top:10px"><label>Your answer</label>${a.options.map((o,i) => `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;color:var(--text)"><input type="radio" name="opt" ${i===0?"checked":""}> ${esc(o)}</label>`).join("")}</div>` : "";
   dialog(`${wsb(a.ws)} ${esc(a.kind)}`,
     `<div class="signbox"><div class="h">${esc(a.title)}</div><div class="small muted">${esc(W(a.ws).name)} · asked by ${esc(a.by)} · ${esc(a.when)}</div><ul class="small" style="margin:8px 0 0;padding-left:18px">${a.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>${opts}
-     <details><summary>What you sign</summary><pre class="mono small" style="white-space:pre-wrap;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--border)">op: ${esc(a.sig)}\nworkspace: ${esc(W(a.ws).name)} (${esc(a.ws)}…)\nsigner: Severin · browser key Chrome · MacBook Pro\nreview: sha256:7c1e…a90b</pre></details>
+     <details><summary>What you sign</summary><pre class="mono small" style="white-space:pre-wrap;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--border)">op: ${esc(a.sig)}\nworkspace: ${esc(W(a.ws).name)} (${esc(a.ws)}…)\nsigner: Anna Test · browser key Chrome · MacBook Pro\nreview: sha256:7c1e…a90b</pre></details>
      <p class="small muted" style="margin:10px 0 0">You approve with the key held by this browser. Nobody else can approve as you.</p>`,
     `<button class="btn" data-close>Cancel</button>${a.kind === "Question" ? "" : `<button class="btn dan" data-decide="${a.id}" data-how="refuse">Refuse</button>`}<button class="btn pri" data-decide="${a.id}" data-how="ok">${a.kind === "Question" ? "Send answer" : "Approve"}</button>`);
 }
@@ -792,7 +792,7 @@ function newSpace(step, st = {}){
 P.services = () => {
   const down = D.services.filter((s) => s.state === "stopped");
   return `<h1>Services</h1><p class="lead">Every part of this orch install, how they connect, and whether they work. Workspaces connect to the hub; the hub sends phone alerts through Relay and outside links through Publish.</p>${note("services")}
-  ${down.length ? `<div class="ban w">${ic("bl")}<div class="tx"><b>${esc(down.map(s=>s.name).join(", "))} stopped</b><div class="s">${down[0].id === "relay" ? "Phones get no alerts until it runs again." : "Shared links do not open until it runs again."}</div></div><button class="btn sm pri" data-svc="${down[0].id}|start">Start</button></div>` : `<div class="ban g">${ic("ck")}<div class="tx"><b>Everything runs</b><div class="s">Last check just now · on this server: 100.71.188.237 (private network), 192.168.60.30 (office network)</div></div><button class="btn sm" data-toast="Checked again: all answer">Check now</button></div>`}
+  ${down.length ? `<div class="ban w">${ic("bl")}<div class="tx"><b>${esc(down.map(s=>s.name).join(", "))} stopped</b><div class="s">${down[0].id === "relay" ? "Phones get no alerts until it runs again." : "Shared links do not open until it runs again."}</div></div><button class="btn sm pri" data-svc="${down[0].id}|start">Start</button></div>` : `<div class="ban g">${ic("ck")}<div class="tx"><b>Everything runs</b><div class="s">Last check just now · on this server: 192.0.2.10 (private network), 192.0.2.15 (office network)</div></div><button class="btn sm" data-toast="Checked again: all answer">Check now</button></div>`}
   <div class="card"><div class="hd">How it connects</div><div class="flow">
     <div class="wsgrid">${D.ws.map((w) => `<div class="node ${w.online ? "ok" : "off"}" style="padding:6px 10px"><b class="small">${esc(w.name)}</b><span class="s">${w.online ? "online" : "offline"}</span></div>`).join("")}</div>
     <div class="arrow">link<br>──▶<br>8105</div>
@@ -826,8 +826,8 @@ function doSvc(id, how){
 }
 function openLogs(id){
   const s = svc(id);
-  const lines = {hub:["09:52:10 approval signed: addon.grant (Product)","09:41:33 link: Product sent request addon.grant","09:20:02 connect link made (expires 09:50)","09:15:47 browser registered: Severin · Chrome","09:05:12 workspace connected: Product (full)"],
-    relay:["09:52:11 push sent to Severin iPhone 15 (ok)","09:41:34 push sent to Severin iPhone 15 (ok)","08:12:00 phone Anna iPhone 13: app 0.0.9 (update needed)"],
+  const lines = {hub:["09:52:10 approval signed: addon.grant (Product)","09:41:33 link: Product sent request addon.grant","09:20:02 connect link made (expires 09:50)","09:15:47 browser registered: Anna Test · Chrome","09:05:12 workspace connected: Product (full)"],
+    relay:["09:52:11 push sent to Anna Test iPhone 15 (ok)","09:41:34 push sent to Anna Test iPhone 15 (ok)","08:12:00 phone Anna iPhone 13: app 0.0.9 (update needed)"],
     publish:["09:50:20 link made: hello.txt (7 days)","09:44:02 link made: Release notes 2.4","09:44:40 opened: Release notes 2.4 (external)"]}[id] || [];
   dialog(`Logs · ${esc(s.name)}`, `<pre class="mono small" style="white-space:pre-wrap;background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--border);margin:0">${lines.map(esc).join("\n")}</pre><p class="small muted">Last hour. No secrets or contents are logged.</p>`,
     `<button class="btn" data-toast="Copied for IT (mockup)">Copy for IT</button><button class="btn" data-close>Close</button>`);
@@ -853,9 +853,9 @@ const pubApps = () => `<div style="display:flex;margin-bottom:12px"><span style=
 function openApp(i){
   const a = D.apps[i];
   dialog(`${wsb(a.ws)} ${esc(a.name)}`,
-    `<dl class="facts"><dt>Kind</dt><dd>${esc(a.kind)}</dd><dt>Address</dt><dd class="mono">http://100.71.188.237:8102/${esc(a.url)}</dd><dt>Built in</dt><dd>${esc(W(a.ws).name)} · ${esc(a.ref)} · ${esc(a.by)}</dd><dt>Visits</dt><dd>${a.visits} (last 30 days)</dd></dl>
+    `<dl class="facts"><dt>Kind</dt><dd>${esc(a.kind)}</dd><dt>Address</dt><dd class="mono">http://192.0.2.10:8102/${esc(a.url)}</dd><dt>Built in</dt><dd>${esc(W(a.ws).name)} · ${esc(a.ref)} · ${esc(a.by)}</dd><dt>Visits</dt><dd>${a.visits} (last 30 days)</dd></dl>
      <h2>Who can open it</h2><div class="seg">${["Public","Password","Company only","People in " + W(a.ws).name].map((o) => `<button class="${a.access === o ? "on" : ""}">${esc(o)}</button>`).join("")}</div>
-     <h2>Versions</h2><div class="card"><div class="row"><div class="tx"><b>${esc(a.ver)}</b> <span class="tag g">live</span><div class="s">approved by Severin</div></div></div><div class="row"><div class="tx">previous version<div class="s">approved by Severin</div></div><button class="btn sm" data-toast="Mockup: rollback asks for approval">Roll back</button></div></div>`,
+     <h2>Versions</h2><div class="card"><div class="row"><div class="tx"><b>${esc(a.ver)}</b> <span class="tag g">live</span><div class="s">approved by Anna Test</div></div></div><div class="row"><div class="tx">previous version<div class="s">approved by Anna Test</div></div><button class="btn sm" data-toast="Mockup: rollback asks for approval">Roll back</button></div></div>`,
     `<button class="btn dan" data-toast="Mockup: app removed, its address stops working">Remove</button><span style="flex:1"></span>${a.state === "running" ? `<button class="btn" data-toast="Mockup: app stopped">Stop</button>` : ""}<button class="btn" data-close>Close</button>`);
 }
 const pubLinks = () => `
@@ -867,7 +867,7 @@ P.addons = () => `<h1>Add-ons</h1><p class="lead">Which add-ons workspaces may i
   ${D.addons.filter(a=>a.state==="requested").map((a) => `<div class="ban w">${ic("pz")}<div class="tx"><b>${esc(a.req)} asks to allow ${esc(a.name)} ${esc(a.ver)}</b><div class="s">Not from the official marketplace: ${esc(a.src)}</div></div><button class="btn sm dan" data-toast="Refused; Anna is told (mockup)">Refuse</button><button class="btn sm pri" data-toast="Allowed for Marketing (mockup; signed by you)">Allow for Marketing</button></div>`).join("")}
   <div class="card tw"><table><tr><th>Add-on</th><th>Source</th><th>Allowed in</th><th>Installed in</th><th></th></tr>
   ${D.addons.map((a) => `<tr><td><b>${esc(a.name)}</b> <span class="mono small faint">${esc(a.ver)}</span></td><td class="small">${esc(a.src)}</td><td class="small">${esc(a.allowed)}</td><td class="small">${esc(a.used)}</td><td style="text-align:right">${a.state === "allowed" ? `<button class="btn sm" data-toast="Mockup: pick workspaces">Change</button>` : a.state === "builtin" ? `<span class="tag">Built in</span>` : `<span class="tag w">Requested</span>`}</td></tr>`).join("")}</table></div>
-  <div class="card"><div class="hd">Marketplaces</div><div class="row"><div class="tx"><b>orch-marketplace</b> <span class="tag g">official · signed</span><div class="s">github.com/severinlindenmann/orch-marketplace · 9 add-ons</div></div></div><div class="row"><div class="tx"><b>Community add-ons</b> <span class="tag">blocked</span><div class="s">Allowed only one by one, after review</div></div><span class="sw" data-toggle></span></div></div>`;
+  <div class="card"><div class="hd">Marketplaces</div><div class="row"><div class="tx"><b>orch-marketplace</b> <span class="tag g">official · signed</span><div class="s">git.example.test/demo/orch-marketplace · 9 add-ons</div></div></div><div class="row"><div class="tx"><b>Community add-ons</b> <span class="tag">blocked</span><div class="s">Allowed only one by one, after review</div></div><span class="sw" data-toggle></span></div></div>`;
 
 P.skills = () => `<h1>Skills</h1><p class="lead">What the company gives its agents: knowledge (skills), tools (MCP servers) and credentials (secrets). Each one goes to all workspaces or only the ones you pick.</p>${note("skills")}
   <h2>MCP servers <span class="small muted" style="font-weight:400">tools agents can use</span></h2><div class="card">${D.mcp.map((m, i) => `<div class="row"><span class="av">${ic("pz")}</span><div class="tx"><b>${esc(m.name)}</b> ${m.state === "connected" ? `<span class="tag g">connected</span>` : `<span class="tag w">${esc(m.state)}</span>`} <span class="tag">${esc(m.how)}</span><div class="s mono">${esc(m.where)}</div><div class="s">sign-in: ${esc(m.auth)} · ${m.tools.filter((t) => t[2]).length} of ${m.tools.length} tools on${m.tools.some((t) => t[1] === "write" && t[2]) ? " · <span style='color:var(--warning)'>can change things</span>" : " · read only"} · used ${m.uses}× this month</div><div style="margin-top:4px">${shareChips(m.share)}</div></div><button class="btn sm" data-mcptools="${i}">Tools</button><button class="btn sm" data-share="mcp|${i}">Share with…</button>${m.state !== "connected" ? `<button class="btn sm pri" data-toast="Mockup: each person signs in once; the hub keeps the token">Sign in</button>` : ""}</div>`).join("")}<div class="row"><button class="btn sm" data-mcpnew="1">${ic("pl")} Add an MCP server</button></div></div>
@@ -980,7 +980,7 @@ function saveShare(kind, i){
 
 P.settings = () => `<h1>Hub settings</h1><p class="lead">How this hub is reached, how people sign in, backups and updates.</p>${note("settings")}
   <div class="card"><div class="hd">General</div><div class="cb"><div class="field"><label>Hub name</label><input class="input" value="${esc(D.hub.name)}"></div><div class="field"><label>Company</label><input class="input" value="${esc(D.hub.company)}"></div></div></div>
-  <div class="card"><div class="hd">Address</div><div class="cb"><dl class="facts"><dt>Private network (VPN)</dt><dd class="mono">http://${esc(D.hub.addr)}</dd><dt>On this server</dt><dd class="mono">http://${esc(D.hub.local)} <span class="faint">(on the server itself, use this one)</span></dd><dt>Office network</dt><dd class="mono">http://192.168.60.30:8100</dd><dt>Public (Edge)</dt><dd>not set up</dd></dl><div style="margin-top:12px"><button class="btn" data-toast="Mockup: change address; workspaces get the new address through their link">Change address</button></div></div></div>
+  <div class="card"><div class="hd">Address</div><div class="cb"><dl class="facts"><dt>Private network (VPN)</dt><dd class="mono">http://${esc(D.hub.addr)}</dd><dt>On this server</dt><dd class="mono">http://${esc(D.hub.local)} <span class="faint">(on the server itself, use this one)</span></dd><dt>Office network</dt><dd class="mono">http://192.0.2.15:8100</dd><dt>Public (Edge)</dt><dd>not set up</dd></dl><div style="margin-top:12px"><button class="btn" data-toast="Mockup: change address; workspaces get the new address through their link">Change address</button></div></div></div>
   <div class="card"><div class="hd">Sign-in</div><div class="row"><div class="tx"><b>Name + password + 6-digit code</b><div class="s">For everyone</div></div><span class="sw on" data-toggle></span></div><div class="row"><div class="tx"><b>Passkey (Touch ID / Face ID)</b><div class="s">Later</div></div><span class="sw" data-toggle></span></div><div class="row"><div class="tx"><b>Company login (Microsoft Entra / Google)</b><div class="s">Later</div></div><span class="tag">later</span></div></div>
   <div class="card"><div class="hd">Backup</div><div class="row"><div class="tx"><b>Last backup today 03:00</b><div class="s">Encrypted, kept 14 days on this server · copy to another place not set up</div></div><button class="btn sm" data-toast="Backup made (mockup)">Back up now</button><button class="btn sm" data-toast="Mockup: restore asks for the recovery words">Restore</button></div></div>
   <div class="card" style="border-color:rgba(248,113,113,.35)"><div class="hd" style="color:var(--danger)">Danger zone</div><div class="row"><div class="tx"><b>Remove this hub</b><div class="s">Disconnects every workspace and removes hub, relay and publish from this server (orch host prune). Workspaces keep working on their own.</div></div><button class="btn sm dan" data-toast="Mockup: asks for your signature and the hub name typed… (or one click?)">Remove hub</button></div></div>`;
@@ -1007,7 +1007,7 @@ P.requirements = () => {
 // ---------------------------------------------------------------- dialogs from actions
 const ACT = {
   connect: () => dialog("Connect a workspace", `<p>Open this link in the workspace's Mission Control (Settings › Hub › Connect). It works once, for 30 minutes.</p>
-    <div class="signbox mono small">http://100.71.188.237:8105/#join=k3m9…w2 <span class="faint">(demo)</span></div>
+    <div class="signbox mono small">http://192.0.2.10:8105/#join=k3m9…w2 <span class="faint">(demo)</span></div>
     <div class="field" style="margin-top:12px"><label>Suggested mode</label><div class="seg"><button class="on">Only what I choose</button><button>Everything</button></div></div>
     <p class="small muted">The workspace owner confirms the mode with one click in Mission Control.</p>`,
     `<button class="btn" data-close>Close</button><button class="btn pri" data-toast="Link copied (mockup)">Copy link</button>`),
@@ -1180,7 +1180,7 @@ const SK = {
     blocked:{tool:"mcp-shop", act:"refund_order", n:3},
     what:"Answers customers kindly and looks up their order first; never changes an order.", yes:"A customer writes to Support", no:"Internal mail, newsletters",
     steps:["Read the customer’s message","Look up the order in the shop database","Draft the answer in Acme’s voice","A person sends it"], checks:true},
-  "deploy-shop":{t:"Put shop changes live", from:"pr", owner:"Severin", rev:"20 Oct", runs:9, wrong:0, last:"today", use:{"mcp-github":"reads","sc-deploy":"changes"},
+  "deploy-shop":{t:"Put shop changes live", from:"pr", owner:"Anna Test", rev:"20 Oct", runs:9, wrong:0, last:"today", use:{"mcp-github":"reads","sc-deploy":"changes"},
     stuck:{n:2, of:9, at:"check the shop answers"},
     what:"Puts a merged change live on the shop after the checks pass.", yes:"A merged change should go live", no:"Anything not merged yet",
     steps:["Check on GitHub that the checks are green","Run deploy.sh","Open the shop and check it answers"]},
@@ -1193,7 +1193,7 @@ const SK = {
   "web-research":{t:"Web research", from:"mk", owner:"", rev:"1 Mar", runs:0, wrong:0, last:"March", use:{"mcp-browser":"reads"},
     what:"Looks things up on the web and sums them up with sources.", yes:"Questions about public facts", no:"Customer data",
     steps:["Search","Read 3–5 sources","Sum up with links"]},
-  "ai-cost-report":{t:"AI cost report", from:"fi", owner:"Severin", rev:"27 Oct", runs:5, wrong:0, last:"27 Oct", use:{"sc-cost":"changes"}, sysMode:{ai:"reads"},
+  "ai-cost-report":{t:"AI cost report", from:"fi", owner:"Anna Test", rev:"27 Oct", runs:5, wrong:0, last:"27 Oct", use:{"sc-cost":"changes"}, sysMode:{ai:"reads"},
     what:"Builds the monthly AI cost report per workspace and saves it to Drive.", yes:"Month end, or someone asks about AI cost", no:"Other costs",
     steps:["Read the usage from the AI provider","Split it by workspace","Save the report to Drive › Finance"]},
 };

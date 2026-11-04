@@ -51,7 +51,7 @@ type Ctx = Pick<AddonCtx, 'store' | 'ws' | 'viewer'>
 type Node = Record<string, unknown>
 
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
-/** "Claude Code for Severin", or a person's name. */
+/** "Claude Code for Anna Test", or a person's name. */
 const whoLabel = (c: Ctx, actor: string) => (actor.includes(':') ? `${agentLabel(actor)} for ${nameOf(c, actor.split(':')[2])}` : nameOf(c, actor))
 /** A deadline (a time of day) and when something happened (the one formatter). */
 const timeOfDay = (iso: string) => fmtClock(iso)

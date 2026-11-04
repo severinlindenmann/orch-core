@@ -44,11 +44,11 @@ export interface DropFixtureOptions {
   cursorResetAlways?: boolean
 }
 
-export const ME: DropAuthor = { person: 'p_severin', person_name: 'Severin', device: 'd_mac', origin: 'person' }
-export const PHONE: DropAuthor = { person: 'p_severin', person_name: 'Severin', device: 'd_phone_1', origin: 'phone' }
+export const ME: DropAuthor = { person: 'p_severin', person_name: 'Anna Test', device: 'd_mac', origin: 'person' }
+export const PHONE: DropAuthor = { person: 'p_severin', person_name: 'Anna Test', device: 'd_phone_1', origin: 'phone' }
 /** Phone shares (Drop A2). Device ids and labels are fixtures, not real. */
-export const PHONE_SHARE = { device: 'd_fixture_phone_1', label: 'Severin’s iPhone' }
-export const AGENT: DropAuthor = { person: 'p_severin', person_name: 'Severin', device: 'd_mac', origin: 'agent' }
+export const PHONE_SHARE = { device: 'd_fixture_phone_1', label: 'Anna Test’s iPhone' }
+export const AGENT: DropAuthor = { person: 'p_severin', person_name: 'Anna Test', device: 'd_mac', origin: 'agent' }
 
 const T0 = Date.parse('2026-10-09T11:30:00Z')
 let serial = 0

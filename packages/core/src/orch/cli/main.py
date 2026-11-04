@@ -412,6 +412,12 @@ def main(
 
     render.new_nonce()
     workspace = Workspace(env, now, files=Files.direct())
+    if args[:3] == ["instructions", "hook", "session-start"] and not env.get("ORCH_SESSION"):
+        from orch.cli.session_env import hand_session
+
+        session_id = hand_session(env, workspace, now)  # W28: a hand-started agent's own session id
+        if session_id:
+            env = {**env, "ORCH_SESSION": session_id}
     own_records = records is None  # opened here, so closed here (its pinned root fd)
     try:
         if hooks is None or records is None:

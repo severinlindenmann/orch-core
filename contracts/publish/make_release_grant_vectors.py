@@ -24,7 +24,7 @@ def build():
     ws, hub, app = "11" * 16, "22" * 16, "33" * 16
     data = b"<h1>Team report</h1>"
     meta = {
-        "name": "Team report", "kind": "page", "access": "group",
+        "app_id": app, "new": False, "name": "Team report", "kind": "page", "access": "group",
         "audience": "group:" + "44" * 16, "slug": "team-report",
         "reach": ["https://api.example.com"],
         "files": [{"path": "index.html", "size": len(data),
@@ -34,7 +34,7 @@ def build():
     meta_hash = digest(b"orch/v2/app-meta|" + cj(meta))  # §11.4's meta_hash, unchanged
     release = {
         "v": 1, "op": "commit", "staged_id": "pa_" + "55" * 16,
-        "workspace_id": ws, "hub_id": hub, "app_id": app,
+        "workspace_id": ws, "hub_id": hub, "app_id": app, "new": False,
         "meta_hash": meta_hash, "access": meta["access"],
         "audience": meta["audience"], "meta": meta,
     }
@@ -82,7 +82,7 @@ def build():
             # Keep reach_hash correct so only meta_hash causes this refusal.
             case["body"]["reach_hash"] = digest(b"orch/v2/app-reach|" + cj(case["meta"]["reach"]))
         cases.append(case)
-    return {
+    result = {
         "doc": "Protocol 11.3 RG-1 to RG-9, 4 Nov 2026. Synthetic ids; no real keys. "
                "Commit cases assume valid request approval and exercise stored-meta verification only.",
         "status": "pending", "pending_reason": "Spec-only amendment: release fields, commit meta_hash checking and RG-9 start custody are not implemented",
@@ -113,21 +113,18 @@ def build():
                      "RG-9 permits a separate matching start approval from the same grant after commit.",
         }, {
             "name": "release_new_app_start_ok", "status": "pending",
-            "release": {**copy.deepcopy(release), "app_id": None},
+            "release": copy.deepcopy(release),
             "initial_state": {"exists": False, "slug": meta["slug"]},
             "presses": 1,
-            "allocation": {"app_id": app, "slug": meta["slug"], "fresh": True,
-                           "verified_from": "pinned publish destination"},
             "requests": [
                 {"at_ms_from_press": 1000, "nonce": "aa" * 16, "body": copy.deepcopy(body)},
                 {"at_ms_from_press": 2000, "nonce": "bb" * 16,
                  "body": {**copy.deepcopy(body), "op": "start"}},
             ],
-            "commit_result": {"verified_from": "pinned publish destination",
-                              "app_id": app, "version": 7, "meta_hash": meta_hash},
+            "signer_commit_approval_signed": True,
             "expect": {"commit_approvals": 1, "start_approvals": 1,
                        "running": True, "current_version": 7},
-            "scope": "RG-9: fresh slug-only release; successful matching commit immediately precedes "
+            "scope": "RG-9: preallocated app id and new: true; signer signs commit approval before "
                      "start, version remains current, both approvals have valid independent 120 s "
                      "windows/nonces within the original 600000 ms grant life; no second press.",
         }, {
@@ -156,6 +153,63 @@ def build():
                      "A valid signature alone does not prove a fresh press or create a grant.",
         }],
     }
+
+
+    new_meta = {**copy.deepcopy(meta), "new": True}
+    new_hash = digest(b"orch/v2/app-meta|" + cj(new_meta))
+    new_release = {**copy.deepcopy(release), "new": True, "meta": new_meta, "meta_hash": new_hash}
+    for case in result["state_cases"]:
+        for request in case.get("requests", []):
+            request["method"] = "POST"
+            request["target"] = f"/v1/ws/{ws}/apps/{app}/" + request["body"]["op"]
+        if case["name"] in {"release_new_app_start_ok", "first_commit_new_app_stays_stopped"}:
+            case["release"] = copy.deepcopy(new_release)
+            case["meta_put"] = {"meta": copy.deepcopy(new_meta), "expect": {"error": None, "running": False}}
+            if "meta" in case:
+                case["meta"] = copy.deepcopy(new_meta)
+                case["body"]["meta_hash"] = new_hash
+            for request in case.get("requests", []):
+                request["body"]["meta_hash"] = new_hash
+    result["create_cases"] = []
+    for name, is_new, initial, error in [
+        ("new_app_id_exists_refused", True, {"app_ids": [app], "slugs": []}, "app_exists"),
+        ("new_app_slug_taken_refused", True, {"app_ids": ["99" * 16], "slugs": [meta["slug"]]}, "slug_taken"),
+        ("existing_app_unknown_refused", False, {"app_ids": [], "slugs": []}, "not_found"),
+    ]:
+        result["create_cases"].append({"name": name, "status": "pending",
+            "release": copy.deepcopy(new_release if is_new else release),
+            "meta": copy.deepcopy(new_meta if is_new else meta), "initial_state": initial,
+            "method": "PUT", "target": f"/v1/ws/{ws}/apps/{app}/versions/7",
+            "expect": {"error": error, "state_unchanged": True}})
+    result["start_cases"] = []
+    for name, current, mismatch in [
+        ("start_version_not_current", 8, False),
+        ("start_no_current_version", None, False),
+        ("start_meta_hash_mismatch", 7, True),
+    ]:
+        start_body = {**copy.deepcopy(body), "op": "start", "meta_hash": new_hash}
+        if mismatch:
+            start_body["meta_hash"] = digest(b"different approved meta")
+        result["start_cases"].append({"name": name, "status": "pending",
+            "body": start_body, "meta": copy.deepcopy(new_meta), "stored_files": stored,
+            "method": "POST", "target": f"/v1/ws/{ws}/apps/{app}/start",
+            "initial_state": {"running": False, "current_version": current},
+            "approval": "otherwise valid owner approval; signer has signed this grant's commit approval",
+            "expect": {"error": "meta_mismatch" if mismatch else "version_not_current", "running": False}})
+    for field in ("app_id", "new"):
+        invalid = copy.deepcopy(event)
+        del invalid["release"][field]
+        result["release_note_cases"].append({"name": f"release_missing_{field}_refused",
+            "event": invalid, "event_canonical_utf8": cj(invalid).decode(), "expect": {"ok": False}})
+    for name, field, value in [("release_null_app_id_refused", "app_id", None),
+                               ("release_non_boolean_new_refused", "new", 1)]:
+        invalid = copy.deepcopy(event)
+        invalid["release"][field] = value
+        result["release_note_cases"].append({"name": name, "event": invalid,
+            "event_canonical_utf8": cj(invalid).decode(), "expect": {"ok": False}})
+    for category in ("create", "start", "release_note"):
+        result["required"][category] = [c["name"] for c in result[category + "_cases"]]
+    return result
 
 
 if __name__ == "__main__":

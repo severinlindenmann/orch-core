@@ -247,7 +247,19 @@ def test_release_grant_note(c):
 
 
 @pytest.mark.parametrize("c", RG_VEC["state_cases"], ids=lambda c: c["name"])
-@pytest.mark.skip(reason="Pending orch-publish replay of RG-8 commit running-state preservation")
+@pytest.mark.skip(reason="Pending orch-publish replay of RG-8/RG-9 commit and start state transitions")
 def test_release_grant_state(c):
     # Requires the commit handler/state transition, not only P.check_release.
+    pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["create_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending atomic new-app meta PUT creation and conflict checks")
+def test_release_grant_create(c):
+    pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["start_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending start current-version and RG-3 stored-meta checks")
+def test_release_grant_start(c):
     pass

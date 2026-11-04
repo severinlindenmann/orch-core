@@ -269,12 +269,6 @@ def test_stop_blocks_once_naming_the_first_gap_and_its_command(ws):
     assert "approve" not in doc["reason"] and "close" not in doc["reason"]
 
 
-def test_stop_is_silent_when_the_harness_says_it_already_blocked_once(ws):
-    _claimed(ws)
-    _lacking(ws)
-    assert _stop(ws, active=True) == (0, "", "")
-
-
 @pytest.mark.parametrize("payload", ["", "not json", "[]", "{}", '{"stop_hook_active": "no"}'])
 def test_stop_is_silent_when_it_cannot_prove_the_loop_guard(ws, payload):
     _claimed(ws)
@@ -406,10 +400,15 @@ def test_w33_while_a_complete_gate_waits_the_stop_hook_keeps_the_agent_waiting_t
     assert _stop(ws, active=True) == (0, "", "")  # said once, then silent
 
 
-def test_w33_a_gap_still_blocks_only_once_per_stop(ws):
+def test_w33_a_gap_blocks_three_times_with_the_orch_ask_line_then_says_why(ws):
     _claimed(ws)
-    _lacking(ws)
-    assert json.loads(_stop(ws)[1])["decision"] == "block"
+    gate = _lacking(ws)
+    for active in (False, True, True):
+        doc = json.loads(_stop(ws, active=active)[1])
+        assert doc["decision"] == "block"
+        assert "orch ask" in doc["reason"] and "never this terminal" in doc["reason"]
+    doc = json.loads(_stop(ws, active=True)[1])
+    assert "decision" not in doc and f"{gate} gate of DEMO-0001 still lacks" in doc["systemMessage"]
     assert _stop(ws, active=True) == (0, "", "")
 
 
@@ -481,3 +480,25 @@ def test_submit_hint_says_show_when_only_an_artifact_is_missing():
     with pytest.raises(OrchError) as e:
         submit.build(None, p, {})
     assert e.value.hint == "orch wait"
+
+
+def test_w33_a_planted_link_or_negative_count_buys_no_blocks(ws):
+    gate = _complete_gate(ws)
+    sessions = ws.root / ".orch" / ".state" / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    session = ws.env()["ORCH_SESSION"]
+    import re as _re
+
+    name = _re.sub(r"[^A-Za-z0-9_-]", "_", session)[:120] + ".stops.json"
+    (sessions / name).write_text(json.dumps({f"DEMO-0001:{gate}": -50}))
+    blocks = 0
+    for _ in range(6):
+        out = _stop(ws, active=True)[1]
+        blocks += bool(out) and json.loads(out).get("decision") == "block"
+    assert blocks == 3
+    (sessions / name).unlink()
+    target = ws.root / "elsewhere.json"
+    target.write_text("{}")
+    (sessions / name).symlink_to(target)
+    assert _stop(ws, active=True) == (0, "", "")  # a link: silent, nothing written through it
+    assert target.read_text() == "{}"

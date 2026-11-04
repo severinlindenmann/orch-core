@@ -82,10 +82,12 @@ def _bump_stops(ctx: Context, ws: Any, key: str) -> int:
         marker_path(records_dir(layout), ctx.session).name.replace(".waiting.json", ".stops.json")
     )
     try:
+        if files.lexists(path) and path.is_symlink():
+            return GATE_WAIT_BLOCKS + 2  # Opus W33: never write through a planted link
         counts = json.loads(files.read_text(path)) if files.lexists(path) else {}
         if not isinstance(counts, dict):
             counts = {}
-        n = int(counts.get(key, 0)) + 1
+        n = max(0, int(counts.get(key, 0))) + 1  # Opus W33: a planted negative count cannot buy more blocks
         counts = {k: v for k, v in counts.items() if isinstance(v, int)} | {key: n}
         files.mkdir(path.parent, parents=True)
         files.write_text(path, json.dumps(counts, sort_keys=True))
@@ -122,8 +124,6 @@ def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
                 if gaps:
                     gate = g
                     break
-            if gaps and active:
-                return _silent("stop")  # a gap blocks at most once per stop (the harness says it already did)
             if not gaps:
                 if any(views.gate_missing(v, g) for g in gates):
                     continue  # it lacks only what has no one-line command (an artifact): let the agent stop
@@ -148,9 +148,17 @@ def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
                 raw = json.dumps({"decision": "block", "reason": reason})
                 return Result(data={"event": "stop", "head": "", "raw": raw})
             names = ", ".join(m.replace("_", " ") for m, _ in gaps)
+            # W33: the same bounded rule as a complete gate (its own count), then one plain line, then silent
+            n = _bump_stops(ctx, ws, f"{v.key}:{gate}:gaps")
+            if n > GATE_WAIT_BLOCKS + 1:
+                return _silent("stop")
+            if n == GATE_WAIT_BLOCKS + 1:
+                note = f"orch: the {gate} gate of {v.key} still lacks: {names}, and the agent stopped. Open the ticket."
+                return Result(data={"event": "stop", "head": "", "raw": json.dumps({"systemMessage": note})})
             reason = (
                 f"The {gate} gate of {v.key} still lacks: {names}. Fill it in ({gaps[0][1]}; then the rest),"
-                " then run orch wait."
+                " then run orch wait. If you need the person's input, ask with orch ask: the person sees only the"
+                " dashboard, never this terminal."
             )
             raw = json.dumps({"decision": "block", "reason": reason})
             return Result(data={"event": "stop", "head": "", "raw": raw})

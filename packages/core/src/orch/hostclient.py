@@ -46,7 +46,16 @@ from typing import Any
 from orch.ops import Operation, Result
 from orch.ops.errors import OrchError
 
-__all__ = ["HostFailure", "Target", "dry_text", "execute", "locate", "result_from", "workspace_socket"]
+__all__ = [
+    "HostFailure",
+    "Target",
+    "direct_reason",
+    "dry_text",
+    "execute",
+    "locate",
+    "result_from",
+    "workspace_socket",
+]
 
 #: registry ops the host does not serve (``dispatch.NOT_SERVED``): they stay local, the direct-mode guard decides
 LOCAL_OPS = frozenset({"help", "describe", "import.v1"})
@@ -140,6 +149,34 @@ def locate(
     if type(host_uid) is not int:
         raise _unavailable("the host registry entry has no host UID")
     return Target(wid, host_uid, workspace_socket(env, sd, host_uid, wid), "person", sd, entry)
+
+
+def direct_reason(env: Mapping[str, str], workspace: Any, *, uid: int | None = None, state: Path | None = None) -> str:
+    """W00: one plain reason why :func:`locate` found no host for ``workspace``, from the same lookups (the message a
+    host-launched agent stops with instead of a silent direct mode). Never raises: it only words a refusal."""
+    sd: Path | None = None
+    try:
+        from orch.host.custody import read_json
+        from orch.host.registry import registry_path
+        from orch.ops.runtime import state_dir
+
+        if workspace.root is None:
+            return "no orch workspace was found from this folder"
+        wid = ((workspace.config or {}).get("workspace") or {}).get("id")
+        if not isinstance(wid, str) or not WS_ID.fullmatch(wid):
+            return "this workspace has no id in its config"
+        uid = os.getuid() if uid is None else uid
+        sd = Path(state) if state is not None else state_dir(env, workspace.files)
+        doc = read_json(registry_path(sd), uid)
+        if doc is None:
+            return f"the host registry is missing in {sd}"
+        if not any(i.get("workspace_id") == wid for i in doc["workspaces"]):
+            return f"this workspace ({wid}) is not registered with the host in {sd}"
+        return f"the host does not serve this workspace from {sd}"
+    except Exception:  # noqa: BLE001 - a reason is only words: it never fails the call
+        return (
+            f"the host registry could not be read in {sd}" if sd is not None else "the host registry could not be read"
+        )
 
 
 def _same_root(registered: str, found: Path) -> bool:

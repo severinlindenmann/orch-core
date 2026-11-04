@@ -344,7 +344,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = fal
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
-  const busy = runLive || phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open'
+  const busy = runLive || phase.kind === 'starting' || phase.kind === 'working' || phase.kind === 'waiting' || phase.kind === 'open' || phase.kind === 'unreachable'
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
   const p = primaryAction(av, { start: start.startable && !blocked && !busy })
   if (signing)
@@ -417,7 +417,7 @@ export function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: 
 }
 
 /** The newest agent run of this ticket, if any. */
-function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; state: string; started_at: string }> | undefined, key: string): ProgressRun | null {
+function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; state: string; started_at: string; contacted?: boolean }> | undefined, key: string): ProgressRun | null {
   const mine = (Array.isArray(runs) ? runs : []).filter((r) => r.ticket === key && r.kind === 'agent')
   const newest = mine.reduce<(typeof mine)[number] | null>((a, r) => (!a || Date.parse(r.started_at) > Date.parse(a.started_at) ? r : a), null)
   return newest as ProgressRun | null
@@ -528,6 +528,17 @@ export function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phas
           <Button type="button" size="sm" onClick={() => openDockOn(phase.run)}>
             Open agent
           </Button>
+        </>
+      )}
+      {phase.kind === 'unreachable' && (
+        <>
+          <Pill tone="warning">The agent has not reached orch</Pill>
+          <span className="text-[13px] text-text">If its terminal says it cannot reach the orch host, stop it and start it again.</span>
+          {phase.run && (
+            <Button type="button" size="sm" variant="outline" onClick={() => openDockOn(phase.run!)}>
+              Open agent
+            </Button>
+          )}
         </>
       )}
       {phase.kind === 'failed' && (
@@ -676,7 +687,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
 
       <BlockedByConnection ticket={ticket} />
       {/* run17 P06: a finished ticket has no agent line; a ticket that waits for you says so once (the card), unless the agent idles at its prompt */}
-      {ticket.status !== 'done' && ticket.status !== 'closed' && !ticket.closed && (phase.kind !== 'needs' || !!wait) && phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
+      {ticket.status !== 'done' && ticket.status !== 'closed' && !ticket.closed && (phase.kind !== 'needs' || !!wait) && phase.kind !== 'starting' && phase.kind !== 'failed' && phase.kind !== 'waiting' && phase.kind !== 'open' && phase.kind !== 'unreachable' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} needsYou={phase.kind === 'needs'} liveRun={run?.state === 'running' || run?.state === 'starting'} />}
     </header>
   )
 }

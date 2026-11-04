@@ -422,3 +422,25 @@ it('the combined approval could not be prepared: the separate approve cards come
     expect(card).not.toHaveTextContent('internal')
   } finally { unblockBoth(doc.key); setFeatures(null) }
 })
+
+it.each([false, true])('the combined card lets you read both documents (signing: %s)', async (signing) => {
+  const { setFeatures } = await import('@/api/features')
+  const doc = await both()
+  const jump = vi.fn()
+  render(<TicketProgress ticket={structuredClone(doc)} viewer={viewer as never} sign={vi.fn()} jump={jump} signing={signing} />)
+  const card = screen.getByTestId('next-step')
+  expect(within(card).getByRole('button', { name: 'Read them' })).toBeEnabled()
+  await userEvent.setup().click(within(card).getByRole('button', { name: 'Read them' }))
+  expect(jump).toHaveBeenCalledWith({ tab: 'overview', id: 'sec-requirements' })
+  setFeatures(null)
+})
+
+
+it('W06: no plan approval while the plan is not written, even when the host lists nothing missing', async () => {
+  const doc = await both()
+  doc.gates.requirements = { ...doc.gates.requirements, state: 'approved' }
+  doc.body = { ...doc.body, plan: '' }
+  show(doc)
+  expect(screen.queryByRole('button', { name: 'Approve plan' })).toBeNull()
+  expect(screen.queryByTestId('next-step')?.textContent ?? '').not.toContain('Plan ready')
+})

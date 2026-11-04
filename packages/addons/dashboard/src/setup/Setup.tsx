@@ -10,13 +10,13 @@ import {
   type Review,
   type Progress,
 } from '../api/setup'
-import { Inline, Name, Raw } from '../components/sign/visible'
+import { Inline, Name, Raw, plain } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
 /** The plain meaning of One click, behind "What does this mean?"; the full risk sentence stays in the review step. */
-const clickMeaningCopy =
-  'Anything running as you on this computer, including your agents, could approve for you. Choose a password if the computer is shared.'
+const clickMeaning = (here: string) =>
+  `Anything running as you on ${here}, including your agents, could approve for you. Choose a password if the computer is shared.`
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
   'If setup stops before it finishes, you get new words next time.'
@@ -138,7 +138,25 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
   return { lines, unknown, odd: oddLines }
 }
-type Fact = { label: string; value: string }
+/** W36: the plain lines of a review row, from the host's own text: the headline and the sentences that are not table rows.
+ * An indented line is a row (a field) and a bare label before an indented block is its title ("Fields", "Changes"): both
+ * are only in the technical details, which show every line. */
+export function plainLines(lines: string[]): string[] {
+  // A block title is a short bare label ("Fields", "Changes"); any sentence, even one that introduces a block, stays plain.
+  const title = (line: string, i: number) => /^\s/.test(lines[i + 1] ?? '') && /^[A-Za-z][A-Za-z ]{0,39}$/.test(line)
+  return lines.filter((line, i) => i === 0 || (line.trim() !== '' && !/^\s/.test(line) && !title(line, i)))
+}
+/** One host row in the technical details: its indent is the host's layout (shown as a left margin, not as marker characters). */
+function Row({ line }: { line: string }) {
+  const indent = /^ */.exec(line)?.[0].length ?? 0
+  return (
+    <p style={indent ? { paddingLeft: `${indent * 0.5}em` } : undefined}>
+      <Raw>{indent && line.trim() !== '' ? line.slice(indent) : line}</Raw>
+    </p>
+  )
+}
+/** `explain` is the row's one small Explain link (P69): it quotes the toggle the person used on the earlier step. */
+type Fact = { label: string; value: string; explain?: string }
 const addonSentence = (id: string, fallback: string): string => ({
   'start-agent': 'You can start agents from the dashboard.',
   terminals: 'You can use the Command window, an optional advanced tool.',
@@ -147,39 +165,52 @@ const addonSentence = (id: string, fallback: string): string => ({
 }[id] ?? fallback)
 /** The short card of a review (plain words only): from the review's own items and flags, never the chosen profile. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review, host?: string, newWorkspace = false): Fact[] {
+export function reviewFacts(review: Review, host?: string, newWorkspace = false, here = 'this computer', hostname?: string, addons: SetupState['addons'] = []): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
-  if (host) facts.push({ label: 'Computer', value: host })
+  // the raw host name next to a different friendly name, so the approval names one computer
+  if (host) facts.push({ label: 'Computer', value: hostname && hostname !== host ? `${host} (${hostname})` : host })
   if (ws) {
     // P06: the owner, the ticket prefix, the git copy and the history are not decisions: they stay in the
     // Details fold (the workspace's own lines and the flag texts)
     facts.push({ label: 'Workspace', value: ws.workspace_name ?? ws.name })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  const approve = has('custody') ? `You approve with One click on ${host || 'this computer'}.` : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
+  const approve = has('custody') ? `You approve with One click on ${here}.` : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
   const grant = review.items.find((item) => item.id === 'runner_grant' && item.type === 'grant.issued')?.fields
   const settings = review.items.filter((item) => item.type === 'settings.changed')
     .map((item) => item.fields?.set as Record<string, unknown> | undefined)
   const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
   // Only an applied runner grant permits agents to start; a duration setting alone does not.
   let agents = newWorkspace ? 'Agents may not work on their own.' : "Agents' access stays as it is."
-  const where = host || 'this computer'
+  let agentsExplain = newWorkspace ? '“Allow agents to work” is off. Agents cannot start until you allow it.' : undefined
+  const where = here
   if (grant) {
     // any applied runner grant says agents may work; an unexpected shape never reads as "may not"
     const time = typeof grant.hours === 'number' ? ` for ${duration(grant.hours)}` : ''
     agents = grant.scope === 'workable' && grant.verbs === 'agent'
       ? `Agents may work on their own on ${where}${time}.`
       : `Agents get access on ${where}${time}, with rights that setup does not usually give. Check them before you continue.`
+    agentsExplain = `“Allow agents to work” is on${typeof grant.hours === 'number' ? `. “How long can agents work on their own?” is set to ${duration(grant.hours)}` : ''}. Access begins when setup finishes; it does not start a task.`
   } else if (typeof hours === 'number') {
     agents = `Agent access time is set to ${duration(hours)}. This alone lets no agent start.`
   }
   for (const item of review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard')) {
-    facts.push({ label: item.title, value: addonSentence(item.id.replace(/^addon:/, ''), item.title) })
+    const id = item.id.replace(/^addon:/, '')
+    const toggle = addons.find((a) => a.id === id)
+    facts.push({ label: item.title, value: addonSentence(id, item.title), ...(toggle ? { explain: `“${toggle.title}” is on. ${toggle.desc}` } : {}) })
   }
-  facts.push({ label: 'Agents', value: agents })
-  if (approve) facts.push({ label: 'How you approve', value: approve })
+  facts.push({ label: 'Agents', value: agents, ...(agentsExplain ? { explain: agentsExplain } : {}) })
+  if (approve) {
+    facts.push({
+      label: 'How you approve',
+      value: approve,
+      explain: has('custody')
+        ? `You chose “One click on ${here}”. Anything running as you on ${here} could approve too, so only continue on a computer you trust.`
+        : 'You chose “Password”. Type your password each time.',
+    })
+  }
   return facts
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
@@ -199,7 +230,7 @@ export function defaultWorkspaceName(name: string): string {
 export function approvalSummary(
   profile: { agent_hours: number; agent_grant?: boolean; records?: boolean },
   access: 'none' | number,
-  opts: { records: boolean; trust?: boolean; host?: string },
+  opts: { records: boolean; trust?: boolean; here?: string },
 ): string {
   const out = [
     access === 'none'
@@ -209,7 +240,7 @@ export function approvalSummary(
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
   if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open your project folder without asking.' : 'AI helpers ask before they open your project folder.')
-  return out.join(' ').replaceAll('this computer', opts.host || 'this computer')
+  return out.join(' ').replaceAll('this computer', plain(opts.here ?? 'this computer'))
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
@@ -274,7 +305,9 @@ function FinishChoices({
   onContinue,
   onOpen,
   cancel,
+  here,
 }: {
+  here: string
   state: SetupState
   current: Current
   profile: Profile
@@ -321,7 +354,7 @@ function FinishChoices({
           <dt>Agents can start here</dt>
           <dd>{yesNo(current.runner.enabled)}</dd>
           <dt>You approve with</dt>
-          <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
+          <dd>{current.method === 'click' ? <>One click on {here === 'this computer' ? here : <Inline>{here}</Inline>}</> : 'Terminal'}</dd>
         </dl>
       </details>
       {!state.complete && (canAdd.length > 0 || offersGrant || offersClick) ? (
@@ -635,7 +668,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       } catch {
         if (active) {
           // P43: a dropped tunnel in plain words; `host` is read from the latest render through the ref
-          setError(`The connection${hostRef.current ? ` to ${hostRef.current}` : ''} dropped. If you reach it through an ssh tunnel, check that the terminal running the tunnel is still open. Also check your setup terminal. We keep trying.`)
+          setError(`The connection${hostRef.current ? ` to ${plain(hostRef.current)}` : ''} dropped. If you reach it through an ssh tunnel, check that the terminal running the tunnel is still open. Also check your setup terminal. We keep trying.`)
           timer = setTimeout(() => void poll(), 2500)
         }
       }
@@ -714,6 +747,11 @@ export function Setup({ api }: { api: SetupAPI }) {
     'your project folder'
   )
   const host = state?.host || undefined
+  // P68: the name came from the host (the computer's account) and has not been edited
+  const nameFromAccount = !!state?.suggested.name?.trim() && state.mode !== 'finish' && profile.name === state.suggested.name
+  // A remote (ssh) setup: "this computer" would read as the person's own laptop, so the One-click sentences name the machine
+  const here = state?.remote ? state.host || state.hostname || 'the other computer' : 'this computer'
+  const hereNode = state?.remote ? <Inline>{here}</Inline> : here // a machine's name passes through Inline
   hostRef.current = host
   // Print: the tick comes from the browser's own afterprint event (display only)
   useEffect(() => {
@@ -848,17 +886,17 @@ export function Setup({ api }: { api: SetupAPI }) {
       />
       <span>
         <strong>
-          {method === 'click' ? `One click on ${host || 'this computer'}` : 'Password'}
+          {method === 'click' ? <>One click on {hereNode}</> : 'Password'}
           {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
         </strong>
         <small>
           {method === 'terminal'
-            ? `Type your password each time. Safest if others use ${host || 'this computer'}.`
+            ? <>Type your password each time. Safest if others use {hereNode}.</>
             : state.click_available
               ? 'No typing. Best on your own computer.'
-              : clickOffText(state.click_reason).replace('this computer', host || 'this computer')}
+              : clickOffText(state.click_reason)}
         </small>
-        {method === 'click' && state.click_available && <small>Anything running as you on {host || 'this computer'} could approve too.</small>}
+        {method === 'click' && state.click_available && <small>Anything running as you on {hereNode} could approve too.</small>}
         {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
       </span>
     </label>
@@ -913,10 +951,10 @@ export function Setup({ api }: { api: SetupAPI }) {
       : step === 0 && state?.complete
         ? 'Setup is complete'
         : step === 0
-        ? state?.mode === 'finish' ? 'Finish setting up your workspace' : 'Set up your workspace'
+        ? state?.mode === 'finish' ? 'Finish setting up your workspace' : state?.remote && state.host ? `Set up on ${plain(state.host)}` : 'Set up your workspace'
         : [
             '',
-            'You',
+            'Let’s make this workspace yours',
             'What may agents do here?',
             'How do you want to approve things?',
             'Your recovery words',
@@ -970,8 +1008,17 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <>
                   <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
                   {state.host && (
+                    // P43: over ssh the page is on one computer and the workspace on another; the draft names the second one
                     <p data-testid="setup-computer">
-                      Setting up on <strong><Inline>{state.host}</Inline></strong>. Your workspace and your agents run on that computer.
+                      {state.remote ? (
+                        <>
+                          Workspace computer: <strong><Inline>{state.host}</Inline></strong>. Your workspace files stay on <Inline>{state.host}</Inline>. Your AI helpers run there, not on the computer you’re using to view this page.
+                        </>
+                      ) : (
+                        <>
+                          Setting up on <strong><Inline>{state.host}</Inline></strong>. Your workspace and your agents run on that computer.
+                        </>
+                      )}
                     </p>
                   )}
                   <p>We will set this up in {folder}.</p>
@@ -982,11 +1029,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </details>
                   <p>{profile.addons.includes('worktrees') ? 'With work copies on, agents change their own copies until you merge them.' : 'Agents change the files in this folder directly.'}</p>
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
-                  <p>Everything stays on {host ? <Inline>{host}</Inline> : 'this computer'} unless you choose to connect your phone.</p>
+                  <p>Everything stays on this computer unless you choose to connect your phone.</p>
                 </>
               )}
               {state.mode === 'finish' && state.current ? (
                 <FinishChoices
+                  here={here}
                   state={state}
                   current={state.current}
                   profile={profile}
@@ -1003,8 +1051,8 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 1 && (
             <>
               <label>
-                Name of the person who will use this workspace
-                <input autoComplete="name" value={profile.name} onChange={(e) => {
+                Who will use this workspace?
+                <input autoComplete="name" aria-describedby={nameFromAccount ? 'name-from-account' : undefined} value={profile.name} onChange={(e) => {
                     const name = e.target.value
                     // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
                     const patch: Partial<Profile> = { name }
@@ -1015,25 +1063,33 @@ export function Setup({ api }: { api: SetupAPI }) {
                   }}
                 />
               </label>
+              {nameFromAccount && <small id="name-from-account" className="name-note">Filled in from this computer’s account name. You can change it.</small>}
               {!showWorkspaceFields && (
-                <div className="ws-summary">
-                  <span data-testid="ws-summary" aria-live="polite">
-                    {profile.name.trim() ? (
-                      <>
-                        Your workspace: <strong><Inline>{profile.workspace_name}</Inline></strong>{' '}
-                        {[1, 2].map((n) => (
-                          <span className="chip" key={n}>
-                            {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
-                          </span>
-                        ))}
-                      </>
-                    ) : (
-                      'The workspace is named after that person.'
-                    )}
-                  </span>
-                  <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>
-                    Change
-                  </button>
+                <div className="ws-summary" data-testid="ws-summary" aria-live="polite">
+                  {profile.name.trim() ? (
+                    <>
+                      <div className="ws-row">
+                        <span>Workspace name: <strong><Inline>{profile.workspace_name}</Inline></strong></span>
+                        <button type="button" className="link" aria-label="Change workspace name" onClick={() => setShowWorkspaceFields(true)}>Change</button>
+                      </div>
+                      <div className="ws-row">
+                        <span>
+                          Ticket prefix: <strong>{profile.prefix.trim() || 'MW'}</strong>{' '}
+                          {[1, 2].map((n) => (
+                            <span className="chip" key={n}>
+                              {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
+                            </span>
+                          ))}
+                        </span>
+                        <button type="button" className="link" aria-label="Change ticket prefix" onClick={() => setShowWorkspaceFields(true)}>Change</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span>The workspace is named after that person.</span>
+                      <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>Change</button>
+                    </>
+                  )}
                 </div>
               )}
               {showWorkspaceFields && (
@@ -1087,7 +1143,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 2 && (
             <>
               <label className="toggle">
-                <span>Allow agents to work<small>Turning this on lets agents start on {host || 'this computer'} for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
+                <span>Allow agents to work<small>Turning this on lets agents start on {hereNode} for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
                 <input type="checkbox" role="switch" checked={access !== 'none'} disabled={!state.agent_hours.length}
                   onChange={(e) => chooseAccess(e.target.checked ? (state.agent_hours.includes(72) ? 72 : state.agent_hours[0]) : 'none')} />
               </label>
@@ -1171,13 +1227,13 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <details className="click-risk" data-testid="click-risk">
                   <summary>What does this mean?</summary>
                   <p>
-                    <Inline>{clickMeaningCopy.replace('this computer', host || 'this computer')}</Inline>
+                    <Inline>{clickMeaning(here)}</Inline>
                   </p>
                 </details>
               )}
               {/* Keep optional settings together; a parent AI helper setting may need "Trust anyway". */}
               <p className="approval-summary" data-testid="approval-summary">
-                {approvalSummary(profile, access, { host, records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
+                {approvalSummary(profile, access, { here, records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
               </p>
               <details className="approval-more" data-testid="approval-more" open={!state.click_available || !!parentConfig || undefined}>
                 <summary>Change these settings</summary>
@@ -1204,7 +1260,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <label className="toggle">
                   <span>
                     Keep a history of this workspace
-                    <small>Saved on {host || 'this computer'} automatically. Nothing is uploaded.</small>
+                    <small>Saved on this computer automatically. Nothing is uploaded.</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1310,11 +1366,28 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 5 && review && (
             <>
+              {review.workspace && (
+                // P13: the folder by its plain name; the full path is behind Details; orch's own files are "orch's settings"
+                <div className="review-folder" data-testid="review-folder">
+                  <p>Project folder: <strong><Inline>{review.workspace.dir.split('/').filter(Boolean).pop() || state.dir_name || 'your project folder'}</Inline></strong></p>
+                  <p>
+                    Your existing files stay as they are; setup only adds orch’s settings and a few lines to AGENTS.md, CLAUDE.md and .gitignore.{review.items.some((i) => i.id === 'addon:worktrees') ? ' Agents work in separate work copies.' : ''}
+                  </p>
+                </div>
+              )}
               <dl className="current review-facts review-summary">
-                {reviewFacts(review, host, state.mode !== 'finish').map((f, i) => (
+                {reviewFacts(review, host, state.mode !== 'finish', here, state.hostname, state.addons).map((f, i) => (
                   <Fragment key={i}>
                     <dt>{f.label}</dt>
-                    <dd><Inline>{f.value}</Inline></dd>
+                    <dd>
+                      <Inline>{f.value}</Inline>
+                      {f.explain && (
+                        <details className="info">
+                          <summary>Explain</summary>
+                          <small><Inline>{f.explain}</Inline></small>
+                        </details>
+                      )}
+                    </dd>
                   </Fragment>
                 ))}
                 {summary.odd.length > 0 && (
@@ -1356,59 +1429,93 @@ export function Setup({ api }: { api: SetupAPI }) {
               <details className="review-technical">
                 <summary>Details</summary>
                 <p>Times and IDs are filled in when you sign.</p>
-                {review.workspace && (
-                  <section className="review-item">
-                    <h3>New workspace</h3>
-                    {review.workspace.lines.map((line, i) => (
-                      <p key={i}>
-                        <Raw>{line}</Raw>
-                      </p>
-                    ))}
-                  </section>
-                )}
-                {review.items.map((item) => (
-                  <section className="review-item" key={item.id}>
-                    <h3>
-                      <Raw>{item.title}</Raw>
-                    </h3>
-                    {rowLines(item.lines, item.placeholders).map((line, i) => (
-                      <p key={i}>
-                        <Raw>{line}</Raw>
-                      </p>
-                    ))}
-                    {item.note && (
+                {/* W36: per step the plain headline and summary lines first; every signed row, hash and value is behind
+                    "Technical details" (moved, never dropped: WYSIWYS) */}
+                <div className="review-plain">
+                  {review.workspace && (
+                    <section className="review-item">
+                      <h3>New workspace</h3>
+                      <p data-testid="review-folder-path">Full project folder path: <Raw>{review.workspace.dir}</Raw></p>
+                      {review.workspace.lines.filter((line) => line !== `Folder: ${review.workspace?.dir}`).map((line, i) => (
+                        <p key={i}>
+                          <Name>{line}</Name>
+                        </p>
+                      ))}
+                    </section>
+                  )}
+                  {review.items.map((item) => {
+                    const [headline, ...rest] = plainLines(rowLines(item.lines, item.placeholders))
+                    return (
+                      <section className="review-item" key={item.id}>
+                        <h3>
+                          <Name>{headline ?? item.title}</Name>
+                        </h3>
+                        {rest.map((line, i) => (
+                          <p key={i}>
+                            <Name>{line}</Name>
+                          </p>
+                        ))}
+                        {item.note && (
+                          <p>
+                            <Name>{item.note}</Name>
+                          </p>
+                        )}
+                      </section>
+                    )
+                  })}
+                  {review.flags.filter((f) => f.detail).map((f) => (
+                    <section className="review-item" key={`flag-${f.id}`}>
                       <p>
-                        <Raw>{item.note}</Raw>
+                        <Name>{f.text}</Name>
                       </p>
-                    )}
-                    {rowLines(item.details, item.placeholder_details).map((line, i) => (
-                      <p key={`d${i}`}>
-                        <Raw>{line}</Raw>
-                      </p>
-                    ))}
-                  </section>
-                ))}
-                {review.flags.filter((f) => f.detail).map((f) => (
-                  <section className="review-item" key={`detail-${f.id}`}>
-                    {f.id === 'git' && (
+                    </section>
+                  ))}
+                </div>
+                <details className="review-raw">
+                  <summary>Technical details</summary>
+                  {review.items.map((item) => (
+                    <section className="review-item" key={item.id}>
+                      <h3>
+                        <Raw>{item.title}</Raw>
+                      </h3>
+                      {rowLines(item.lines, item.placeholders).map((line, i) => (
+                        <Row key={i} line={line} />
+                      ))}
+                      {item.note && (
+                        <p>
+                          <Raw>{item.note}</Raw>
+                        </p>
+                      )}
+                      {rowLines(item.details, item.placeholder_details).map((line, i) => (
+                        <Row key={`d${i}`} line={line} />
+                      ))}
+                    </section>
+                  ))}
+                  {review.flags.filter((f) => f.detail).map((f) => (
+                    <section className="review-item" key={`detail-${f.id}`}>
                       <p>
-                        <Raw>{f.text}</Raw>
+                        <Raw>{f.detail ?? ''}</Raw>
                       </p>
-                    )}
-                    <p>
-                      <Raw>{f.detail ?? ""}</Raw>
-                    </p>
-                  </section>
-                ))}
-                {review.runner_grant && (
-                  <section className="review-item">
-                    <h3>Runner access</h3>
-                    <p>
-                      {review.runner_grant.hours} hours · <Raw>{review.runner_grant.scope}</Raw>
-                    </p>
-                    <p>{review.runner_grant.holder}</p>
-                  </section>
-                )}
+                    </section>
+                  ))}
+                  {review.runner_grant && (
+                    <section className="review-item">
+                      <h3>Runner access</h3>
+                      <p>
+                        {review.runner_grant.hours} hours · <Raw>{review.runner_grant.scope}</Raw>
+                      </p>
+                      <p>{review.runner_grant.holder}</p>
+                    </section>
+                  )}
+                  {state.hostname && (
+                    <section className="review-item">
+                      <h3>This computer</h3>
+                      <p>
+                        Host name: <Raw>{state.hostname}</Raw>
+                      </p>
+                    </section>
+                  )}
+                </details>
               </details>
               {review.tty_confirm && (
                 <div className="inset">
@@ -1584,6 +1691,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </p>
               </details>
             </div>
+          )}
+          {progress?.done && !progress.error && (review?.workspace?.workspace_name || profile.workspace_name) && (
+            // P75: which workspace is ready, in the normal interface font
+            <p className="ws-ready" data-testid="ready-workspace"><Inline>{review?.workspace?.workspace_name ?? profile.workspace_name}</Inline></p>
           )}
           {progress?.done && !progress.error && !unreachable && (
             <button className="primary open-workspace" disabled={busy} onClick={() => void act(finish)}>

@@ -167,11 +167,35 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
     return out
 
 
+def account_name() -> str:
+    """The full name of the OS account running setup (the first GECOS field), or "" when it has none or is just the
+    login name: a login name is rarely how a person wants to be called (B11 finding 19), a full name is (P68)."""
+    import pwd
+
+    try:
+        entry = pwd.getpwuid(os.getuid())
+    except KeyError:
+        return ""
+    name = "".join(c for c in entry.pw_gecos.split(",")[0] if c.isprintable()).strip()[:80]
+    return "" if name.lower() == entry.pw_name.lower() else name
+
+
+def _prefix_from(name: str) -> str:
+    """The ticket prefix the dashboard derives from a name (Setup.tsx suggestPrefix): first letters, capitals."""
+    words = re.findall(r"[A-Z0-9]+", name.upper())
+    p = ("".join(w[0] for w in words) if len(words) >= 2 else (words[0][:4] if words else ""))[:8]
+    return p if re.fullmatch(r"[A-Z][A-Z0-9]{1,7}", p) else "MW"
+
+
 def suggest(env: dict[str, str], directory: Path) -> dict[str, str]:
     """Defaults to start from (the user changes them): a workspace named "My workspace", prefix MW, until a person
-    name is known (the dashboard then offers "<name>'s workspace"). The person's
-    name is left empty: a login name is rarely how a person wants to be called (B11 finding 19)."""
-    return {"name": "", "workspace_name": "My workspace", "prefix": "MW"}
+    name is known. The person's name is the OS account's full name when it has one (P68, shown as "filled in from this
+    computer's account name"), with the workspace name and prefix the dashboard would derive from it; never the login
+    name, so otherwise it stays empty."""
+    name = account_name()
+    if not name:
+        return {"name": "", "workspace_name": "My workspace", "prefix": "MW"}
+    return {"name": name, "workspace_name": f"{name}'s workspace", "prefix": _prefix_from(name)}
 
 
 def _inside(child: Path, parent: Path) -> bool:

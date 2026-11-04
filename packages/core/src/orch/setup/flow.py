@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 from orch import childenv
 
-from . import claude_folder
+from . import claude_folder, computer
 from . import facts as facts_mod
 from . import review as review_mod
 from .protocol import AGENT_HOURS, METHODS, SetupError, validate_profile
@@ -244,9 +244,11 @@ class SetupFlow:
             "mode": self.mode,
             "dir": self.dir,
             "dir_name": Path(self.dir).name if self.dir else "",
-            "host": socket.gethostname()[
-                :80
-            ],  # P43: names the computer being set up (over ssh it is not the one in front of you)
+            # P43/W35: the computer's friendly name (empty when the OS has none: the page says "this computer"); the raw
+            # host name stays a separate field the page keeps under Details
+            "host": computer.friendly_name(_platform()) or "",
+            "hostname": socket.gethostname()[:80],
+            "remote": is_headless(self.e.env),  # over ssh "this computer" is not the one in front of the person
             "suggested": sug,
             "addons": [a.view() for a in self.addons.values()],
             "methods": list(METHODS),

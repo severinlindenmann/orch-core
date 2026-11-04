@@ -17,15 +17,37 @@ from .test_finish import fake_signer as _fs  # noqa: F401
 INFO = {a.id: a for a in catalog()}
 
 
-def test_name_is_not_prefilled_from_the_login(tmp):
+def _state(tmp, monkeypatch, account):
     from orch.setup.flow import SetupFlow
 
     from .conftest import make_env
 
+    monkeypatch.setattr(fx, "account_name", lambda: account)
     f = SetupFlow(make_env(tmp))
     f.launch(str(tmp.work))
-    st = f.dispatch("GET", "state", {}, None)[1]
+    return f.dispatch("GET", "state", {}, None)[1]
+
+
+def test_name_is_not_prefilled_from_the_login(tmp, monkeypatch):
+    """No full name on the account (only a login name): nothing is prefilled (B11 finding 19)."""
+    st = _state(tmp, monkeypatch, "")
     assert st["suggested"]["name"] == "" and st["suggested"]["prefix"]
+
+
+def test_p68_the_accounts_full_name_is_suggested_with_its_workspace_name_and_prefix(tmp, monkeypatch):
+    sug = _state(tmp, monkeypatch, "Anna Test")["suggested"]
+    assert sug["name"] == "Anna Test" and sug["workspace_name"] == "Anna Test's workspace" and sug["prefix"] == "AT"
+
+
+def test_p68_account_name_reads_the_first_gecos_field(monkeypatch):
+    import pwd
+
+    entry = pwd.struct_passwd(("anna", "x", 501, 20, "Anna Test,Room 1,,", "/home/anna", "/bin/sh"))
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: entry)
+    assert fx.account_name() == "Anna Test"
+    entry2 = pwd.struct_passwd(("anna", "x", 501, 20, "", "/home/anna", "/bin/sh"))
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: entry2)
+    assert fx.account_name() == ""
 
 
 def test_finish_state_has_current_values_and_words_and_never_custody(tmp):

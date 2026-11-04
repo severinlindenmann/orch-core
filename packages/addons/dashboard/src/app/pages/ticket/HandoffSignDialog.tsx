@@ -33,14 +33,14 @@ function titleOf(a: HumanAction, ticketTitle: string): string {
 }
 
 /** The ONE toast after the signature says the outcome, not the mechanism. */
-function doneToastOf(a: HumanAction): string {
+export function doneToastOf(a: HumanAction): string {
   switch (a.kind) {
     case 'approve_both':
-      return 'Requirements and plan approved'
+      return 'You approved the requirements and plan'
     case 'answer':
       return 'Answer sent'
     case 'approve':
-      return `${gateActionName(a.gate)} approved`
+      return `You approved the ${a.gate}`
     case 'verdict':
       return 'Verdict recorded'
     case 'request_changes':
@@ -133,6 +133,11 @@ export function HandoffSignDialog({
     if (open) open()
     else void navigate({ to: '/ticket/$key', params: { key: ticket.key } })
   }
+  // "View plan": the ticket's Overview, scrolled to the plan.
+  const viewPlan = () => {
+    void navigate({ to: '/ticket/$key', params: { key: ticket.key }, search: {} })
+    setTimeout(() => document.getElementById('sec-plan')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }), 150)
+  }
   // The request names the content it is bound to; if the page's ticket moved on since, say so (the signer refuses it).
   const now = liveHash(ticket, action)
   const warning = (r: HandoffRequest) => {
@@ -150,6 +155,7 @@ export function HandoffSignDialog({
       ws={ws}
       action={request}
       doneToast={doneToastOf(action)}
+      doneAction={action.kind === 'approve_both' || (action.kind === 'approve' && action.gate === 'plan') ? { label: 'View plan', onClick: viewPlan } : undefined}
       confirmLabel={confirmLabel}
       autoStart={action.kind === 'approve' || action.kind === 'approve_both' ? press.current.left : undefined}
       armOnStart

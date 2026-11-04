@@ -188,6 +188,13 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
     case 'quick_start':
     case 'new_sequence':
       return workspaceRequest('new', { type: 'ticket.created', ticket: { key: 'DEMO-0099', type: body.action === 'quick_start' ? 'chore' : body.type, title: body.title } })
+    case 'approve':
+    case 'approve_both':
+      return workspaceRequest('approve', { type: 'gate.approved', gate: body.gate ?? 'plan' })
+    case 'answer':
+      return workspaceRequest('answer', { type: 'question.answered', question: body.question })
+    case 'request_changes':
+      return workspaceRequest('request_changes', { type: 'gate.changes_requested', gate: body.gate })
     case 'details':
       return workspaceRequest('set', { type: 'ticket.updated', ticket: body.key, labels: body.labels })
     case 'close':

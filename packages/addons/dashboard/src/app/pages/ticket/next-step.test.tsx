@@ -361,6 +361,7 @@ it('both written and open: one "Ready for your approval" card whose button signs
   show(doc, sign)
   const card = screen.getByTestId('next-step')
   expect(card).toHaveTextContent('Ready for your approval')
+  expect(card).not.toHaveTextContent('one signature')
   const user = userEvent.setup()
   await user.click(within(card).getByRole('button', { name: 'Approve requirements and plan' }))
   expect(sign).toHaveBeenLastCalledWith({ kind: 'approve_both', pressed: false }) // a synthetic click is no press: nothing is signed by it

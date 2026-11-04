@@ -137,6 +137,9 @@ def hand_session(env: Any, ws: Any, now: Any) -> str | None:
     # never a shell profile a hostile repository's settings could name
     if os.path.basename(os.path.dirname(os.path.dirname(path))) != "session-env":
         return None
+    # Opus W28 delta: no ".." part and no symlinked folder on the way (O_NOFOLLOW guards only the last part)
+    if ".." in path.split(os.sep) or os.path.realpath(path) != path:
+        return None
     try:
         if ws.root is None:
             return None

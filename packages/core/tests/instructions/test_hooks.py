@@ -479,7 +479,7 @@ def test_w28_a_session_that_has_an_id_keeps_it(ws, tmp_path):
     assert envfile.read_text() == "export X=1\n"
 
 
-@pytest.mark.parametrize("kind", ["unset", "missing", "symlink", "dir", "profile", "fifo"])
+@pytest.mark.parametrize("kind", ["unset", "missing", "symlink", "dir", "profile", "fifo", "dotdot", "linked_folder"])
 def test_w28_no_usable_env_file_writes_nothing(ws, tmp_path, kind):
     import os
 
@@ -500,6 +500,15 @@ def test_w28_no_usable_env_file_writes_nothing(ws, tmp_path, kind):
     elif kind == "fifo":
         os.mkfifo(folder / "pipe")
         env["CLAUDE_ENV_FILE"] = str(folder / "pipe")
+    elif kind == "dotdot":  # <cfg>/session-env/../settings.json
+        (tmp_path / ".zshrc").write_text("")
+        env["CLAUDE_ENV_FILE"] = str(tmp_path / "session-env" / ".." / ".zshrc")
+        kind = "profile"
+    elif kind == "linked_folder":  # session-env/<link to home>/.zshrc
+        (tmp_path / ".zshrc").write_text("")
+        (tmp_path / "session-env" / "lnk").symlink_to(tmp_path)
+        env["CLAUDE_ENV_FILE"] = str(tmp_path / "session-env" / "lnk" / ".zshrc")
+        kind = "profile"
     code, out, _ = hook(ws, "session-start", **env)
     assert code == 0 and out.startswith("ok session-start ")
     assert target.read_text() == "" and not (folder / "nope.sh").exists()

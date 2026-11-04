@@ -215,8 +215,8 @@
    }
   }
  ],
- "doc": "Protocol 11.3 RG-1 to RG-8, 4 Nov 2026. Synthetic ids; no real keys. Commit cases assume valid request approval and exercise stored-meta verification only.",
- "pending_reason": "Spec-only amendment: release fields and the commit meta_hash check are not implemented",
+ "doc": "Protocol 11.3 RG-1 to RG-9, 4 Nov 2026. Synthetic ids; no real keys. Commit cases assume valid request approval and exercise stored-meta verification only.",
+ "pending_reason": "Spec-only amendment: release fields, commit meta_hash checking and RG-9 start custody are not implemented",
  "release_note_cases": [
   {
    "event": {
@@ -310,7 +310,9 @@
   ],
   "state": [
    "commit_to_stopped_app_stays_stopped",
-   "first_commit_new_app_stays_stopped"
+   "first_commit_new_app_stays_stopped",
+   "release_new_app_start_ok",
+   "release_existing_app_start_refused"
   ]
  },
  "state_cases": [
@@ -359,7 +361,7 @@
     "ticket": "01J9ZP00000000000000000001"
    },
    "name": "commit_to_stopped_app_stays_stopped",
-   "scope": "orch-publish commit state transition, even with valid approval; only app.start with its own approval starts the app. The signer state check uses its own last signed commit/start/stop approval for that app; a stopped indication only warns in the signer's own review and never refuses: This app was stopped the last time this computer approved it; publishing keeps it stopped. orch-publish preserves running state regardless of that check.",
+   "scope": "orch-publish commit state transition, even with valid approval; only app.start with its own approval starts the app. The signer state check uses its own last signed app.start/app.stop approval for that app; commit approvals do not change the persistent signer-owned advisory record; an absent record shows no warning; a stopped indication only warns in the signer's own review and never refuses: This app was stopped the last time this computer approved it; publishing keeps it stopped. orch-publish preserves running state regardless of that check.",
    "status": "pending",
    "stored_files": {
     "index.html": [
@@ -412,7 +414,7 @@
     "ticket": "01J9ZP00000000000000000001"
    },
    "name": "first_commit_new_app_stays_stopped",
-   "scope": "New app creation is stopped and first commit preserves that state; the commit press does not approve app.start. Start approval design is pending.",
+   "scope": "New app creation is stopped and first commit preserves that state; RG-9 permits a separate matching start approval from the same grant after commit.",
    "status": "pending",
    "stored_files": {
     "index.html": [
@@ -420,6 +422,170 @@
      "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441"
     ]
    }
+  },
+  {
+   "allocation": {
+    "app_id": "33333333333333333333333333333333",
+    "fresh": true,
+    "slug": "team-report",
+    "verified_from": "pinned publish destination"
+   },
+   "commit_result": {
+    "app_id": "33333333333333333333333333333333",
+    "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+    "verified_from": "pinned publish destination",
+    "version": 7
+   },
+   "expect": {
+    "commit_approvals": 1,
+    "current_version": 7,
+    "running": true,
+    "start_approvals": 1
+   },
+   "initial_state": {
+    "exists": false,
+    "slug": "team-report"
+   },
+   "name": "release_new_app_start_ok",
+   "presses": 1,
+   "release": {
+    "access": "group",
+    "app_id": null,
+    "audience": "group:44444444444444444444444444444444",
+    "hub_id": "22222222222222222222222222222222",
+    "meta": {
+     "access": "group",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "First release",
+     "name": "Team report",
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+    "op": "commit",
+    "staged_id": "pa_55555555555555555555555555555555",
+    "v": 1,
+    "workspace_id": "11111111111111111111111111111111"
+   },
+   "requests": [
+    {
+     "at_ms_from_press": 1000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+      "op": "commit",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+     "at_ms_from_press": 2000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+      "op": "start",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "nonce": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+   ],
+   "scope": "RG-9: fresh slug-only release; successful matching commit immediately precedes start, version remains current, both approvals have valid independent 120 s windows/nonces within the original 600000 ms grant life; no second press.",
+   "status": "pending"
+  },
+  {
+   "expect": {
+    "commit_approvals": 1,
+    "current_version": 7,
+    "running": false,
+    "start_approvals": 0,
+    "start_refused": true
+   },
+   "initial_state": {
+    "current_version": 6,
+    "exists": true,
+    "running": false
+   },
+   "name": "release_existing_app_start_refused",
+   "presses": 1,
+   "release": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "hub_id": "22222222222222222222222222222222",
+    "meta": {
+     "access": "group",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "First release",
+     "name": "Team report",
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+    "op": "commit",
+    "staged_id": "pa_55555555555555555555555555555555",
+    "v": 1,
+    "workspace_id": "11111111111111111111111111111111"
+   },
+   "requests": [
+    {
+     "at_ms_from_press": 1000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+      "op": "commit",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "nonce": "cccccccccccccccccccccccccccccccc"
+    },
+    {
+     "at_ms_from_press": 2000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+      "op": "start",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "nonce": "dddddddddddddddddddddddddddddddd"
+    }
+   ],
+   "scope": "RG-8: an existing-app release never grants start authority, even after a successful matching commit with otherwise valid timestamps and distinct nonces.",
+   "status": "pending"
   }
  ],
  "status": "pending"

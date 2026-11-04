@@ -83,11 +83,12 @@ def build():
             case["body"]["reach_hash"] = digest(b"orch/v2/app-reach|" + cj(case["meta"]["reach"]))
         cases.append(case)
     return {
-        "doc": "Protocol 11.3 RG-1 to RG-8, 4 Nov 2026. Synthetic ids; no real keys. "
+        "doc": "Protocol 11.3 RG-1 to RG-9, 4 Nov 2026. Synthetic ids; no real keys. "
                "Commit cases assume valid request approval and exercise stored-meta verification only.",
-        "status": "pending", "pending_reason": "Spec-only amendment: release fields and the commit meta_hash check are not implemented",
+        "status": "pending", "pending_reason": "Spec-only amendment: release fields, commit meta_hash checking and RG-9 start custody are not implemented",
         "required": {"commit": [c["name"] for c in cases], "release_note": ["release_note_fields"],
-                     "state": ["commit_to_stopped_app_stays_stopped", "first_commit_new_app_stays_stopped"]},
+                     "state": ["commit_to_stopped_app_stays_stopped", "first_commit_new_app_stays_stopped",
+                               "release_new_app_start_ok", "release_existing_app_start_refused"]},
         "commit_cases": cases,
         "state_cases": [{
             "name": "commit_to_stopped_app_stays_stopped", "status": "pending",
@@ -97,8 +98,9 @@ def build():
             "expect": {"error": None, "running": False, "current_version": 7},
             "scope": "orch-publish commit state transition, even with valid approval; "
                      "only app.start with its own approval starts the app. "
-                     "The signer state check uses its own last signed commit/start/stop approval for that app; "
-                     "a stopped indication only warns in the signer's own review and never refuses: "
+                     "The signer state check uses its own last signed app.start/app.stop approval for that app; "
+                     "commit approvals do not change the persistent signer-owned advisory record; "
+                     "an absent record shows no warning; a stopped indication only warns in the signer's own review and never refuses: "
                      "This app was stopped the last time this computer approved it; publishing keeps it stopped. "
                      "orch-publish preserves running state regardless of that check.",
         }, {
@@ -108,7 +110,40 @@ def build():
             "approval": "otherwise valid owner approval for this exact commit request",
             "expect": {"error": None, "running": False, "current_version": 7},
             "scope": "New app creation is stopped and first commit preserves that state; "
-                     "the commit press does not approve app.start. Start approval design is pending.",
+                     "RG-9 permits a separate matching start approval from the same grant after commit.",
+        }, {
+            "name": "release_new_app_start_ok", "status": "pending",
+            "release": {**copy.deepcopy(release), "app_id": None},
+            "initial_state": {"exists": False, "slug": meta["slug"]},
+            "presses": 1,
+            "allocation": {"app_id": app, "slug": meta["slug"], "fresh": True,
+                           "verified_from": "pinned publish destination"},
+            "requests": [
+                {"at_ms_from_press": 1000, "nonce": "aa" * 16, "body": copy.deepcopy(body)},
+                {"at_ms_from_press": 2000, "nonce": "bb" * 16,
+                 "body": {**copy.deepcopy(body), "op": "start"}},
+            ],
+            "commit_result": {"verified_from": "pinned publish destination",
+                              "app_id": app, "version": 7, "meta_hash": meta_hash},
+            "expect": {"commit_approvals": 1, "start_approvals": 1,
+                       "running": True, "current_version": 7},
+            "scope": "RG-9: fresh slug-only release; successful matching commit immediately precedes "
+                     "start, version remains current, both approvals have valid independent 120 s "
+                     "windows/nonces within the original 600000 ms grant life; no second press.",
+        }, {
+            "name": "release_existing_app_start_refused", "status": "pending",
+            "release": copy.deepcopy(release),
+            "initial_state": {"exists": True, "running": False, "current_version": 6},
+            "presses": 1,
+            "requests": [
+                {"at_ms_from_press": 1000, "nonce": "cc" * 16, "body": copy.deepcopy(body)},
+                {"at_ms_from_press": 2000, "nonce": "dd" * 16,
+                 "body": {**copy.deepcopy(body), "op": "start"}},
+            ],
+            "expect": {"commit_approvals": 1, "start_approvals": 0,
+                       "start_refused": True, "running": False, "current_version": 7},
+            "scope": "RG-8: an existing-app release never grants start authority, even after a "
+                     "successful matching commit with otherwise valid timestamps and distinct nonces.",
         }],
         "release_note_cases": [{
             "name": "release_note_fields", "event": event,

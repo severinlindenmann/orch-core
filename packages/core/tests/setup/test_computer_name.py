@@ -51,3 +51,10 @@ def test_name_is_trimmed_and_cleaned():
         computer.friendly_name("darwin", run=lambda a, t: "A\x00B\x1b[0m" + "x" * 200, read=lambda p: None)
         == "AB[0m" + "x" * 75
     )
+
+
+def test_c1_and_bidi_controls_are_stripped():
+    assert (
+        computer.friendly_name("darwin", run=lambda a, t: "Lu\u0085me\u202eevil\u200b\u2066x", read=lambda p: None)
+        == "Lumeevilx"
+    )

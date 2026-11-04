@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { agentsCan, answers, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { agentsCan, answers, groupProgress, plainLines, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -103,6 +103,7 @@ function fake(
     os?: string
     host?: string
     hostname?: string
+    remote?: boolean
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -122,6 +123,7 @@ function fake(
         ...(options.os ? { os: options.os } : {}),
         ...(options.host ? { host: options.host } : {}),
         ...(options.hostname ? { hostname: options.hostname } : {}),
+        ...(options.remote ? { remote: true } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
         ...(options.complete ? { complete: true } : {}),
@@ -2074,7 +2076,7 @@ async function toReview(api: SetupAPI) {
   await screen.findByRole('heading', { name: 'Review your setup' })
 }
 
-test('W35: the friendly name is shown once (Computer row); sentences say this computer; the raw host name only in Details', async () => {
+test('W35: the friendly name is shown once (Computer row); sentences say this computer; the raw host name only on the Computer row and in Details', async () => {
   const { api } = withReview({
     flags: [{ id: 'custody', text: 'Approvals on this machine need one click.' }],
     items: [{ id: 'runner_grant', title: 'Agent access', lines: ['Agent access'], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [] }],
@@ -2084,11 +2086,12 @@ test('W35: the friendly name is shown once (Computer row); sentences say this co
   expect(summary).toHaveTextContent('ComputerLume’s MacBook')
   expect(summary).toHaveTextContent('Agents may work on their own on this computer for 3 days.')
   expect(summary).toHaveTextContent('You approve with One click on this computer.')
-  expect(summary.textContent!.split('Lume’s MacBook').length).toBe(2) // once
+  expect(summary).toHaveTextContent('ComputerLume’s MacBook (lumes-Virtual-Machine.local)') // both names where they differ
+  expect(summary.textContent!.split('Lume’s MacBook').length).toBe(2) // the friendly name once
   const technical = document.querySelector('.review-technical')!
-  const outside = (document.body.textContent ?? '').replace(technical.textContent ?? '', '')
-  expect(outside).not.toContain('lumes-Virtual-Machine')
   expect(technical.textContent).toContain('lumes-Virtual-Machine.local')
+  // the raw name is never in a sentence: only the Computer row and Details
+  expect((document.body.textContent ?? '').replace(technical.textContent ?? '', '').split('lumes-Virtual-Machine').length).toBe(2)
 })
 
 test('W35: without a friendly name there is no Computer row and no raw host name outside Details', async () => {
@@ -2131,4 +2134,44 @@ test('W36: Details shows each step as its headline and plain lines; rows, hashes
   for (const raw of ['package_sha256: sha256:6e98390', 'capabilities: ["serve_http"]', 'type: addon.granted', 'set: {"grant_hours":72}', 'add-on: dashboard', 'grant_hours: 72'])
     expect(tech.textContent).toContain(raw)
   expect(fold.textContent).not.toContain('—') // no visible-space markers in front of rows
+})
+
+test('W36: plainLines drops only bare block titles and rows; every other unindented sentence stays', () => {
+  expect(
+    plainLines([
+      'Turn on Dashboard', '', 'Fields', '  add-on: dashboard', '',
+      'Removes write permission from these folders, where you own them:', '  ~/ws-a', '', 'Only continue if you trust it.',
+    ]),
+  ).toEqual(['Turn on Dashboard', 'Removes write permission from these folders, where you own them:', 'Only continue if you trust it.'])
+})
+
+test('W36: a signed item note shows in the plain part of Details, not only in Technical details', async () => {
+  const { api } = withReview({
+    items: [{ id: 'runner_grant', title: 'Agent access', lines: ['Agent access', '', 'Fields', '  hours: 72'], details: [], volatile: [], type: 'grant.issued',
+      fields: { hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [],
+      note: 're-issues agent access; an earlier grant was not confirmed (or was revoked)' }],
+  })
+  await toReview(api)
+  expect(document.querySelector('.review-plain')).toHaveTextContent('re-issues agent access; an earlier grant was not confirmed (or was revoked)')
+})
+
+test('W35: a remote (ssh) setup names the computer in the One click sentences and shows both names on the Computer row', async () => {
+  const opts = { host: 'Lume’s MacBook', hostname: 'lumes-vm.local', remote: true, suggested: { method: 'click', agent_hours: 72, agent_grant: true } }
+  render(<Setup api={fake(opts).api} />)
+  await approval()
+  expect(screen.getByRole('radio', { name: /One click on Lume’s MacBook/ })).toBeInTheDocument()
+  expect(screen.getByRole('radio', { name: /One click on Lume’s MacBook/ }).closest('label')).toHaveTextContent('Anything running as you on Lume’s MacBook could approve too.')
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent(/Your history stays on \u2068Lume’s MacBook\u2069\./) // plain(): isolated name
+  cleanup()
+  const { api } = withReview({ flags: [{ id: 'custody', text: 'Approvals need one click.' }] }, opts)
+  await toReview(api)
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent('ComputerLume’s MacBook (lumes-vm.local)')
+  expect(summary).toHaveTextContent('You approve with One click on Lume’s MacBook.')
+})
+
+test('W35: a remote setup without a friendly name names the host name', async () => {
+  render(<Setup api={fake({ hostname: 'web', remote: true, suggested: { method: 'click' } }).api} />)
+  await approval()
+  expect(screen.getByRole('radio', { name: /One click on web/ })).toBeInTheDocument()
 })

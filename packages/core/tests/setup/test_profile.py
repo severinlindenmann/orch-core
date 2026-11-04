@@ -32,6 +32,7 @@ def test_state_lists_the_contract_fields(flow, monkeypatch):
     # P43/W35: the page names the computer by its friendly name; the raw host name is a separate field (Details only)
     assert out["host"] == "Test Box"
     assert out["hostname"] == socket.gethostname()[:80]
+    assert isinstance(out["remote"], bool)
     ids = [a["id"] for a in out["addons"]]
     assert "focus" not in ids  # Optional: only offered later in Settings > Add-ons.
     assert ids[0] == "dashboard" and {"start-agent", "terminals", "worktrees", "quick"} <= set(ids)

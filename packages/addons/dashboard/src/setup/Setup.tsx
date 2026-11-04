@@ -10,13 +10,13 @@ import {
   type Review,
   type Progress,
 } from '../api/setup'
-import { Inline, Name, Raw } from '../components/sign/visible'
+import { Inline, Name, Raw, plain } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
 /** The plain meaning of One click, behind "What does this mean?"; the full risk sentence stays in the review step. */
-const clickMeaningCopy =
-  'Anything running as you on this computer, including your agents, could approve for you. Choose a password if the computer is shared.'
+const clickMeaning = (here: string) =>
+  `Anything running as you on ${here}, including your agents, could approve for you. Choose a password if the computer is shared.`
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
   'If setup stops before it finishes, you get new words next time.'
@@ -139,10 +139,12 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   return { lines, unknown, odd: oddLines }
 }
 /** W36: the plain lines of a review row, from the host's own text: the headline and the sentences that are not table rows.
- * An indented line is a row (a field), and a line that opens an indented block is its title ("Fields", "Changes"): both are
- * only in the technical details, which show every line. */
+ * An indented line is a row (a field) and a bare label before an indented block is its title ("Fields", "Changes"): both
+ * are only in the technical details, which show every line. */
 export function plainLines(lines: string[]): string[] {
-  return lines.filter((line, i) => i === 0 || (line.trim() !== '' && !/^\s/.test(line) && !/^\s/.test(lines[i + 1] ?? '')))
+  // A block title is a short bare label ("Fields", "Changes"); any sentence, even one that introduces a block, stays plain.
+  const title = (line: string, i: number) => /^\s/.test(lines[i + 1] ?? '') && /^[A-Za-z][A-Za-z ]{0,39}$/.test(line)
+  return lines.filter((line, i) => i === 0 || (line.trim() !== '' && !/^\s/.test(line) && !title(line, i)))
 }
 /** One host row in the technical details: its indent is the host's layout (shown as a left margin, not as marker characters). */
 function Row({ line }: { line: string }) {
@@ -162,25 +164,26 @@ const addonSentence = (id: string, fallback: string): string => ({
 }[id] ?? fallback)
 /** The short card of a review (plain words only): from the review's own items and flags, never the chosen profile. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review, host?: string, newWorkspace = false): Fact[] {
+export function reviewFacts(review: Review, host?: string, newWorkspace = false, here = 'this computer', hostname?: string): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
   // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
-  if (host) facts.push({ label: 'Computer', value: host })
+  // the raw host name next to a different friendly name, so the approval names one computer
+  if (host) facts.push({ label: 'Computer', value: hostname && hostname !== host ? `${host} (${hostname})` : host })
   if (ws) {
     // P06: the owner, the ticket prefix, the git copy and the history are not decisions: they stay in the
     // Details fold (the workspace's own lines and the flag texts)
     facts.push({ label: 'Workspace', value: ws.workspace_name ?? ws.name })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  const approve = has('custody') ? 'You approve with One click on this computer.' : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
+  const approve = has('custody') ? `You approve with One click on ${here}.` : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
   const grant = review.items.find((item) => item.id === 'runner_grant' && item.type === 'grant.issued')?.fields
   const settings = review.items.filter((item) => item.type === 'settings.changed')
     .map((item) => item.fields?.set as Record<string, unknown> | undefined)
   const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
   // Only an applied runner grant permits agents to start; a duration setting alone does not.
   let agents = newWorkspace ? 'Agents may not work on their own.' : "Agents' access stays as it is."
-  const where = 'this computer'
+  const where = here
   if (grant) {
     // any applied runner grant says agents may work; an unexpected shape never reads as "may not"
     const time = typeof grant.hours === 'number' ? ` for ${duration(grant.hours)}` : ''
@@ -214,7 +217,7 @@ export function defaultWorkspaceName(name: string): string {
 export function approvalSummary(
   profile: { agent_hours: number; agent_grant?: boolean; records?: boolean },
   access: 'none' | number,
-  opts: { records: boolean; trust?: boolean },
+  opts: { records: boolean; trust?: boolean; here?: string },
 ): string {
   const out = [
     access === 'none'
@@ -224,7 +227,7 @@ export function approvalSummary(
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
   if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open your project folder without asking.' : 'AI helpers ask before they open your project folder.')
-  return out.join(' ')
+  return out.join(' ').replaceAll('this computer', plain(opts.here ?? 'this computer'))
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
@@ -289,7 +292,9 @@ function FinishChoices({
   onContinue,
   onOpen,
   cancel,
+  here,
 }: {
+  here: string
   state: SetupState
   current: Current
   profile: Profile
@@ -336,7 +341,7 @@ function FinishChoices({
           <dt>Agents can start here</dt>
           <dd>{yesNo(current.runner.enabled)}</dd>
           <dt>You approve with</dt>
-          <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
+          <dd>{current.method === 'click' ? <>One click on {here === 'this computer' ? here : <Inline>{here}</Inline>}</> : 'Terminal'}</dd>
         </dl>
       </details>
       {!state.complete && (canAdd.length > 0 || offersGrant || offersClick) ? (
@@ -650,7 +655,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       } catch {
         if (active) {
           // P43: a dropped tunnel in plain words; `host` is read from the latest render through the ref
-          setError(`The connection${hostRef.current ? ` to ${hostRef.current}` : ''} dropped. If you reach it through an ssh tunnel, check that the terminal running the tunnel is still open. Also check your setup terminal. We keep trying.`)
+          setError(`The connection${hostRef.current ? ` to ${plain(hostRef.current)}` : ''} dropped. If you reach it through an ssh tunnel, check that the terminal running the tunnel is still open. Also check your setup terminal. We keep trying.`)
           timer = setTimeout(() => void poll(), 2500)
         }
       }
@@ -729,6 +734,9 @@ export function Setup({ api }: { api: SetupAPI }) {
     'your project folder'
   )
   const host = state?.host || undefined
+  // A remote (ssh) setup: "this computer" would read as the person's own laptop, so the One-click sentences name the machine
+  const here = state?.remote ? state.host || state.hostname || 'the other computer' : 'this computer'
+  const hereNode = state?.remote ? <Inline>{here}</Inline> : here // a machine's name passes through Inline
   hostRef.current = host
   // Print: the tick comes from the browser's own afterprint event (display only)
   useEffect(() => {
@@ -863,17 +871,17 @@ export function Setup({ api }: { api: SetupAPI }) {
       />
       <span>
         <strong>
-          {method === 'click' ? 'One click on this computer' : 'Password'}
+          {method === 'click' ? <>One click on {hereNode}</> : 'Password'}
           {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
         </strong>
         <small>
           {method === 'terminal'
-            ? `Type your password each time. Safest if others use this computer.`
+            ? <>Type your password each time. Safest if others use {hereNode}.</>
             : state.click_available
               ? 'No typing. Best on your own computer.'
               : clickOffText(state.click_reason)}
         </small>
-        {method === 'click' && state.click_available && <small>Anything running as you on this computer could approve too.</small>}
+        {method === 'click' && state.click_available && <small>Anything running as you on {hereNode} could approve too.</small>}
         {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
       </span>
     </label>
@@ -1002,6 +1010,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               {state.mode === 'finish' && state.current ? (
                 <FinishChoices
+                  here={here}
                   state={state}
                   current={state.current}
                   profile={profile}
@@ -1102,7 +1111,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 2 && (
             <>
               <label className="toggle">
-                <span>Allow agents to work<small>Turning this on lets agents start on this computer for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
+                <span>Allow agents to work<small>Turning this on lets agents start on {hereNode} for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
                 <input type="checkbox" role="switch" checked={access !== 'none'} disabled={!state.agent_hours.length}
                   onChange={(e) => chooseAccess(e.target.checked ? (state.agent_hours.includes(72) ? 72 : state.agent_hours[0]) : 'none')} />
               </label>
@@ -1186,13 +1195,13 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <details className="click-risk" data-testid="click-risk">
                   <summary>What does this mean?</summary>
                   <p>
-                    <Inline>{clickMeaningCopy}</Inline>
+                    <Inline>{clickMeaning(here)}</Inline>
                   </p>
                 </details>
               )}
               {/* Keep optional settings together; a parent AI helper setting may need "Trust anyway". */}
               <p className="approval-summary" data-testid="approval-summary">
-                {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
+                {approvalSummary(profile, access, { here, records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
               </p>
               <details className="approval-more" data-testid="approval-more" open={!state.click_available || !!parentConfig || undefined}>
                 <summary>Change these settings</summary>
@@ -1326,7 +1335,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 5 && review && (
             <>
               <dl className="current review-facts review-summary">
-                {reviewFacts(review, host, state.mode !== 'finish').map((f, i) => (
+                {reviewFacts(review, host, state.mode !== 'finish', here, state.hostname).map((f, i) => (
                   <Fragment key={i}>
                     <dt>{f.label}</dt>
                     <dd><Inline>{f.value}</Inline></dd>
@@ -1396,6 +1405,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                             <Name>{line}</Name>
                           </p>
                         ))}
+                        {item.note && (
+                          <p>
+                            <Name>{item.note}</Name>
+                          </p>
+                        )}
                       </section>
                     )
                   })}

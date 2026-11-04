@@ -9,6 +9,8 @@ export interface SetupState {
   host?: string
   /** The raw host name (technical details only; the page never uses it in a sentence). */
   hostname?: string
+  /** Setup runs over ssh (headless): "this computer" is then not the one in front of the person. */
+  remote?: boolean
   suggested: { name: string; workspace_name: string; prefix: string; method?: 'terminal' | 'click'; agent_hours?: number; agent_grant?: boolean }
   addons: {
     id: string

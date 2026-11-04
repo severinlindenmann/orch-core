@@ -7,6 +7,7 @@ The raw host name is a separate field the page keeps under Details."""
 from __future__ import annotations
 
 import subprocess
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 
@@ -28,8 +29,13 @@ def _read(path: Path) -> str | None:
         return None
 
 
+def _unsafe(ch: str) -> bool:
+    """C0, DEL, C1 controls, and the zero-width / bidi format characters that can hide or reorder text."""
+    return unicodedata.category(ch) in ("Cc", "Cf") or ch in "\u2028\u2029"
+
+
 def _clean(raw: str) -> str | None:
-    name = "".join(ch for ch in raw if ch >= " " and ch != "\x7f").strip()[:80].strip()
+    name = "".join(ch for ch in raw if not _unsafe(ch)).strip()[:80].strip()
     if not name or name.lower().endswith(".local"):
         return None
     return name

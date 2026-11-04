@@ -248,6 +248,7 @@ class SetupFlow:
             # host name stays a separate field the page keeps under Details
             "host": computer.friendly_name(_platform()) or "",
             "hostname": socket.gethostname()[:80],
+            "remote": is_headless(self.e.env),  # over ssh "this computer" is not the one in front of the person
             "suggested": sug,
             "addons": [a.view() for a in self.addons.values()],
             "methods": list(METHODS),

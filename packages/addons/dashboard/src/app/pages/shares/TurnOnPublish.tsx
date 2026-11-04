@@ -34,8 +34,6 @@ export function turnOnSpec(
     title: 'Turn on Publish',
     doneToast: '', // W5 P12: no early toast; the flow says the rest
     confirmLabel: 'Sign and turn on',
-    // B11: the share itself still waits for its own press; the toast must not read as if something was published
-    doneToast: 'Publish is on.',
     action: { action: 'addon_enable', name: 'publish', publish: { server: where.server, share: where.share } },
     prepareOnOpen: true,
     // W5 P12: a line is shown only when the host's review does not already state it (each fact once)

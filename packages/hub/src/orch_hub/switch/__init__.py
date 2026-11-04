@@ -65,7 +65,7 @@ def owner_fallback_names(registry: Any, access: Any) -> dict[str, str]:
     return out
 
 
-def workspace_rows(registry: Any, access: Any, user: str) -> list[dict[str, Any]]:
+def workspace_rows(registry: Any, access: Any, user: str, router: Any = None) -> list[dict[str, Any]]:
     """Workspaces the user has a part in: full mode by the role the access model gives; selective by being the
     admin-aliased owner (spec 8a: hub groups and hub-admins get no role there)."""
     out = []
@@ -74,7 +74,7 @@ def workspace_rows(registry: Any, access: Any, user: str) -> list[dict[str, Any]
     for ws in sorted(registry.pins()):
         st = registry.binding_state(ws)
         mode = registry.last_mode(ws)
-        if st is None or mode not in ("full", "selective"):
+        if st is None or st["status"] != "bound" or mode not in ("full", "selective"):
             continue
         if mode == "selective":
             if registry.owner_alias(ws) != user:
@@ -94,7 +94,7 @@ def workspace_rows(registry: Any, access: Any, user: str) -> list[dict[str, Any]
                 "owner_name": people.get(registry.owner_alias(ws)),
                 "mode": mode,
                 "role": role,
-                "online": st["status"] == "bound",
+                "online": bool(router and router.is_online(ws)),
                 "hub_reads": "everything" if mode == "full" else "shared items and summaries",
                 "can_start": mode == "full" and role_rank(role) >= role_rank("edit"),
             }
@@ -215,9 +215,11 @@ class SwitchService:
 
     # --- the rail ----------------------------------------------------------------------------------------------------
 
-    def rail_rows(self, registry: Any, access: Any, user: str, current: str | None = None) -> list[dict[str, Any]]:
+    def rail_rows(
+        self, registry: Any, access: Any, user: str, current: str | None = None, router: Any = None
+    ) -> list[dict[str, Any]]:
         rows = []
-        for w in workspace_rows(registry, access, user):
+        for w in workspace_rows(registry, access, user, router):
             ws = w["workspace_id"]
             n = 0
             if self.badge is not None:

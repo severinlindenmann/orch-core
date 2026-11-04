@@ -168,6 +168,9 @@ class Router:
         return live
 
     def is_online(self, ws: str) -> bool:
+        # A transport may remain open after signed leave; it no longer represents a member.
+        if self._reg.mode(ws) is None:
+            return False
         with self._lock:
             live = self._live.get(ws)
             return live is not None and not live.dead

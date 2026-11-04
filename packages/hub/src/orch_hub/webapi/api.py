@@ -251,6 +251,7 @@ class WebDeps:
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
     #: one-time first-admin token (``orch install hub`` writes it, ``POST /setup`` consumes it); None = no setup route
     setup_token_file: Path | None = None
+    router: Any = None  # live workspace links; absent means offline
     #: switch tickets and the rail (``orch_hub.switch.SwitchService``); None = those routes answer ``unavailable``
     switch: Any = None
     #: relay/publish health for the Services page (``orch_hub.services.Services``); None = ``unavailable``
@@ -964,7 +965,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     # --- the hub's own data: what this user may see ------------------------------------------------------------------
 
     def _workspaces(self, user: str) -> list[dict[str, Any]]:
-        rows = workspace_rows(self.d.registry, self.d.access, user)
+        rows = workspace_rows(self.d.registry, self.d.access, user, self.d.router)
         for row in rows:
             row["last_seen"] = self._last_seen(row["workspace_id"])
         return rows
@@ -1319,7 +1320,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
 
     def _h_rail(self, c: Ctx, p: dict, q: dict, b: dict | None):
         sw = self._switch()
-        rows = sw.rail_rows(self.d.registry, self.d.access, c.user_id)
+        rows = sw.rail_rows(self.d.registry, self.d.access, c.user_id, router=self.d.router)
         for row in rows:
             row["last_seen"] = self._last_seen(row["workspace_id"])
         return (
@@ -2163,6 +2164,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                     "owner_name": people.get(reg.owner_alias(ws)),
                     "mode": reg.last_mode(ws),
                     "status": st["status"] if st else None,
+                    "online": bool(st and st["status"] == "bound" and self.d.router and self.d.router.is_online(ws)),
                     "left_ms": reg.unbound_ms(ws) if st and st["status"] == "unbound" else None,
                     **workspace_status(reg, ws),
                     "owner_alias": reg.owner_alias(ws),
@@ -2309,7 +2311,9 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         reg = self.d.registry
         states = [reg.binding_state(w) for w in reg.pins()]
         joined = [st for st in states if st is not None and st["status"] in ("bound", "unbound")]
-        online = sum(1 for st in joined if st["status"] == "bound")
+        online = sum(
+            1 for ws in reg.pins() if reg.mode(ws) is not None and self.d.router and self.d.router.is_online(ws)
+        )
         return 200, {
             **self.d.services.snapshot(),
             "workspaces": {"count": len(joined), "online": online},

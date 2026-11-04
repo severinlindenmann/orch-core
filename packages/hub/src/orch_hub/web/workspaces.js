@@ -30,7 +30,7 @@ export function privateRows(mine, admin) {
   if (!Array.isArray(admin)) return [];
   const have = new Set((mine ?? []).map((w) => w.workspace_id));
   return admin.filter((w) => w && w.status === "bound" && !have.has(w.workspace_id)).map((w) => ({
-    workspace_id: w.workspace_id, name: w.name, owner_name: w.owner_name, mode: w.mode, online: w.online ?? w.status === "bound", last_seen_ms: w.last_seen_ms,
+    workspace_id: w.workspace_id, name: w.name, owner_name: w.owner_name, mode: w.mode, online: w.online === true, last_seen_ms: w.last_seen_ms,
     version: w.version, commit: w.commit, version_state: w.version_state, private: true }));
 }
 
@@ -230,7 +230,11 @@ export function joinedBannerView(row, actions = {}) {
 export function workspacesView(data, now = Date.now()) {
   const actions = data.actions ?? {};
   const connectBox = h("div");
-  const joined = data.joined ?? [];
+  const leftIds = new Set((data.admin ?? []).filter((w) => w.status === "unbound").map((w) => w.workspace_id));
+  const current = data.workspaces.filter((w) => !leftIds.has(w.workspace_id));
+  const shown = [...current, ...privateRows(current, data.admin)];
+  const connectedIds = new Set(shown.map((w) => w.workspace_id));
+  const joined = (data.joined ?? []).filter((w) => connectedIds.has(w.workspace_id));
   for (const row of joined) connectBox.append(joinedBannerView(row, actions));
   // The node with the connect link (or the person picker); the link is made here, only when a button asks for it.
   const connectNode = async () => {
@@ -256,7 +260,6 @@ export function workspacesView(data, now = Date.now()) {
   });
   const waitingFor = new Map();
   for (const r of data.handoffs) if (r.status === "waiting" && r.to.workspace_id) waitingFor.set(r.to.workspace_id, (waitingFor.get(r.to.workspace_id) ?? 0) + 1);
-  const shown = [...data.workspaces, ...privateRows(data.workspaces, data.admin)];
   const list = shown.length ? h("div", { class: "scroll" }, h("table", { class: "tbl ws-table" },
     h("thead", {}, h("tr", {}, ["Workspace", "Status", "Actions"].map((label) => h("th", { scope: "col", text: label })))),
     h("tbody", {}, shown.map((w) => {

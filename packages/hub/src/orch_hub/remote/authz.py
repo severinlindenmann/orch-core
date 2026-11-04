@@ -35,11 +35,11 @@ class Authz:
         self._ch, self._rail, self._rows = channels, rail, rows
 
     @classmethod
-    def from_hub(cls, channels: Any, registry: Any, access: Any) -> Authz:
+    def from_hub(cls, channels: Any, registry: Any, access: Any, router: Any = None) -> Authz:
         from ..switch import workspace_rows
 
         def rows(user: str) -> list[dict[str, Any]]:
-            return workspace_rows(registry, access, user)
+            return workspace_rows(registry, access, user, router)
 
         return cls(channels, lambda user: [w["workspace_id"] for w in rows(user)], rows)
 

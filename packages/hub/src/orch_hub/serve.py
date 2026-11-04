@@ -441,6 +441,7 @@ def serve(
                 access=access,
                 channels=channels,
                 registry=registry,
+                router=router,
                 audit=audit,
                 activity=activity,
                 changes=changes,
@@ -514,7 +515,7 @@ def serve(
     # R4 (#1592): remote access streams. The hub forwards opaque Noise frames and judges only abuse limits (D87); the
     # rail rule and the remote-scope token decide who may open. Registry counts every stream_open by outcome.
     stream_router, remote_endpoint = wire_remote(
-        channels, registry, access, hub_id=keys.hub_id, count_op=registry.count_op
+        channels, registry, access, hub_id=keys.hub_id, count_op=registry.count_op, link_router=router
     )
     server = LinkServer.from_keys(
         keys,

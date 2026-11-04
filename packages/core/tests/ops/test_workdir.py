@@ -86,3 +86,59 @@ def test_codebase_rule_is_the_primary_repo_and_one_helper(ws):
     assert not has_codebase(store(["b"]), view([]))
     assert not has_codebase(store(["b"]), view(["a", "b"]))  # undeclared primary: a work folder, whatever follows
     assert has_codebase(store(["b"]), view(["b", "a"]))
+
+
+def test_handoff_nudges_for_at_most_three_unfiled_results(ws, cli):
+    import shlex
+
+    claimed(cli)
+    folder = ws.root / ".orch-work" / "DEMO-0001"
+    for name in ("a.txt", "b space.txt", "c.txt", "d.txt"):
+        (folder / name).write_text("result")
+    r = cli("handoff", "-m", "ready for checking")
+    assert r.code == 0, r.err
+    hints = [line for line in r.out.splitlines() if line.startswith("hint: work-folder")]
+    assert len(hints) == 1
+    for name in ("a.txt", "b space.txt", "c.txt"):
+        assert f"orch artifact add {shlex.quote(str(folder / name))} --ref DEMO-0001" in hints[0]
+    assert "d.txt" not in hints[0]
+    assert ws.view("1").claim is None
+
+
+def test_handoff_has_no_nudge_when_all_files_are_results(ws, cli):
+    claimed(cli)
+    out = ws.root / ".orch-work" / "DEMO-0001" / "hello.txt"
+    out.write_text("hello")
+    assert cli("artifact", "add", str(out)).code == 0
+    r = cli("handoff", "-m", "ready")
+    assert r.code == 0, r.err
+    assert "hint: work-folder" not in r.out
+
+
+def test_handoff_has_no_workdir_nudge_for_a_codebase(ws, cli):
+    claimed(cli)
+    out = ws.root / ".orch-work" / "DEMO-0001" / "hello.txt"
+    out.write_text("hello")
+    ws.store.append(
+        ws.person_event(ws.owner, "workspace", "settings.changed", set={"repos": {"proj": {"path": str(ws.root)}}}),
+        log="workspace",
+    )
+    assert cli("set", "1", 'links={"repos":["proj"],"branches":{}}').code == 0
+    r = cli("handoff", "-m", "ready")
+    assert r.code == 0, r.err
+    assert "hint: work-folder" not in r.out
+
+
+def test_submit_nudges_for_unfiled_workdir_results(ws, cli):
+    from tests.ops.test_task_ac import fill_and_approve
+
+    claimed(cli)
+    fill_and_approve(ws, cli)
+    assert cli("section", "set", "verification", "-m", "run the tests").code == 0
+    assert cli("task", "done", "T1", "--run").code == 0
+    out = ws.root / ".orch-work" / "DEMO-0001" / "hello.txt"
+    out.write_text("hello")
+    r = cli("submit")
+    assert r.code == 0, r.err
+    assert ws.view("1").status == "testing"
+    assert "hint: work-folder" in r.out and "hello.txt" in r.out

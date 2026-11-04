@@ -4,13 +4,32 @@ artifacts (``orch artifact add``). The host decides the same way for a launch (`
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Any
 
-from orch.layout import LayoutError, ensure_workdir, workdir_stat
+from orch.layout import LayoutError, ensure_workdir, workdir_files, workdir_stat
 from orch.store import observe
 
-__all__ = ["has_codebase", "workdir_of"]
+__all__ = ["has_codebase", "result_hint", "workdir_of"]
+
+
+def result_hint(store: Any, view: Any) -> list[str]:
+    """A non-blocking reminder to file work-folder outputs before review."""
+    if has_codebase(store, view):
+        return []
+    filed = {a.name for a in view.artifacts}
+    try:
+        files, _ = workdir_files(store.layout, view.key, limit=3, accept=lambda name: name not in filed)
+    except (LayoutError, OSError):
+        return []
+    if not files:
+        return []
+    commands = "; ".join(
+        f"orch artifact add {shlex.quote(str(store.layout.workdir(view.key) / name))} --ref {view.key}"
+        for name, _ in files
+    )
+    return [f"hint: work-folder files are not results yet; add them with: {commands}"]
 
 
 def has_codebase(store: Any, view: Any) -> bool:

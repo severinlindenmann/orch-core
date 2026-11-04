@@ -61,6 +61,8 @@ _FENCE_LIKE = re.compile(r"^(?:[~`]+$|[~`]{3,})")
 HEADER = (
     "These are the rules of the orch workspace this ticket belongs to, passed as plain text (AGENTS.orch.md first,"
     " then AGENTS.md). Imports written inside them are not followed.\n"
+    "A ticket without a codebase: every file the ticket asks for is a result. "
+    "Add it with `orch artifact add <file>` before you hand off.\n"
 )
 
 

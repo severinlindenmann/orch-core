@@ -530,18 +530,29 @@ it('Agent access: the runner grant is marked from grant.list label (H11c-2); ano
   expect(other).toHaveTextContent('Label tests')
 })
 
-it('UP-2: an active runner grant the runner no longer holds says so; one it holds stays Active', async () => {
+it('W17: an older runner grant the runner no longer holds is folded into the card of the one it holds, with Stop it', async () => {
   state.host.workspaces[0].features = [...state.host.workspaces[0].features, 'agent_start']
   state.host.workspaces[0].grants = [grant(GRANT_A, OWNER, { label: 'runner' }), grant(GRANT_B, OWNER, { label: 'runner' })]
   vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: { id: GRANT_B, scope: 'workable', until: '2099-01-01T00:00:00Z' } } })
   show('/w/DEMO/settings/grants')
+  const held = (await screen.findByText(GRANT_B, {}, T)).closest('[data-testid="grant-card"]') as HTMLElement
+  await waitFor(() => expect(screen.getAllByTestId('grant-card')).toHaveLength(1), T)
+  expect(held).toHaveTextContent('Active')
+  expect(within(held).getByTestId('grant-superseded')).toHaveTextContent('An older access of yours is not in use any more.')
+  expect(within(held).getByRole('button', { name: 'Stop it' })).toBeInTheDocument()
+  expect(screen.queryByTestId('grant-not-held')).not.toBeInTheDocument()
+})
+
+it('W17: a lone runner grant the runner no longer holds says Not in use and offers Give agents access right there (no top bar)', async () => {
+  state.host.workspaces[0].features = [...state.host.workspaces[0].features, 'agent_start']
+  state.host.workspaces[0].grants = [grant(GRANT_A, OWNER, { label: 'runner' })]
+  vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
+  show('/w/DEMO/settings/grants')
   const lost = (await screen.findByText(GRANT_A, {}, T)).closest('[data-testid="grant-card"]') as HTMLElement
   await waitFor(() => expect(within(lost).getByTestId('grant-not-held')).toBeInTheDocument(), T)
   expect(lost).toHaveTextContent('Not in use')
-  expect(lost).not.toHaveTextContent('Active')
-  const held = screen.getByText(GRANT_B).closest('[data-testid="grant-card"]') as HTMLElement
-  expect(within(held).queryByTestId('grant-not-held')).not.toBeInTheDocument()
-  expect(held).toHaveTextContent('Active')
+  expect(lost).not.toHaveTextContent(/top bar/i)
+  expect(within(lost).getByRole('button', { name: 'Give agents access' })).toBeInTheDocument()
 })
 
 it('host strings with bidi characters are shown escaped, not applied', async () => {

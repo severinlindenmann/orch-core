@@ -26,7 +26,7 @@ export interface HandoffSpec {
    * Prepare only, never armed: Sign stays the person's own press. */
   prepareOnOpen?: boolean
   /** Lines kept in the review's main view above the host's review (e.g. where files go, by name). */
-  lead?: ReactNode
+  lead?: ReactNode | ((content: import('@/api/signing').SignContent | undefined) => ReactNode)
 }
 
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void | Promise<unknown>): { ask: (spec: HandoffSpec) => void; dialog: ReactNode; inline: boolean } {

@@ -1,3 +1,4 @@
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { ShareDelivery } from './ShareDelivery'
 import { SendSharesReview } from '../settings/hub/SendShares'
 import { FocusButton } from '../focus/FocusButton'
@@ -21,7 +22,7 @@ import { StartAgentSplit } from '@/app/terminal/real/StartAgentSplit'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
-import { hubQueries, hubServed } from '@/api/hub'
+import { usePeopleShare } from '../shares/peopleShare'
 import { ShareTicketDialog } from './ShareTicketDialog'
 import { ShareFlow } from '../shares/ShareFlow'
 import { TurnOnPublish } from '../shares/TurnOnPublish'
@@ -173,6 +174,8 @@ export interface ShareTicket {
   shown: boolean
   /** The hub already has this ticket: the item stops sharing instead. */
   shared: boolean
+  label?: string | null
+  stop?: () => void
   state?: string
   send: () => void
   run: () => void
@@ -188,19 +191,17 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
   const { workspaces } = useWorkspace()
   const home = workspaceOfTicket(ticket.key, workspaces)
   const ws = home?.id
-  const served = !!ws && viewer.role === 'owner' && hubServed(ws)
-  const status = useQuery({ ...hubQueries.status(ws ?? ''), enabled: served })
-  const hubbed = served && (status.data?.mode === 'selective' || status.data?.mode === 'full') && !!status.data.joined
-  const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: hubbed })
+  const share = usePeopleShare(ws, ticket, viewer.role === 'owner')
+  const hubbed = share.joined
   const [open, setOpen] = useState<'share' | 'stop' | 'send' | null>(null)
   const shown = hubbed && !!share.data?.available && ticket.status !== 'closed'
-  const shared = !!share.data?.tickets.includes(ticket.key)
+  const shared = !!share.label
   const node = open && home ? (
     open === 'send' ? <SendSharesReview workspace={home} onClose={() => setOpen(null)} /> : open === 'share'
       ? <ShareTicketDialog key="share" ws={home.id} workspace={home} ticket={ticket.key} title={ticket.title} onClose={() => setOpen(null)} />
       : <StopSharing key="stop" ws={home.id} workspace={home} ticket={ticket.key} onClose={() => setOpen(null)} />
   ) : null
-  return { shown, shared, state: share.data?.tickets_state?.[ticket.key], send: () => setOpen('send'), run: () => setOpen(shared ? 'stop' : 'share'), node }
+  return { shown, shared, label: share.label, state: share.data?.tickets_state?.[ticket.key], send: () => setOpen('send'), run: () => setOpen('share'), stop: () => setOpen('stop'), node }
 }
 
 export interface ShareFiles {
@@ -258,12 +259,14 @@ function Next() {
 
 /** The header's Actions menu lists EVERY action the viewer has, the primary one included (tagged "next"). */
 export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFiles, signing = false, agentBusy = false }: { /** an agent run lives or waits: Start agent is off, like the primary button */ agentBusy?: boolean; ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; /** Absent: no Share files item. */ shareFiles?: ShareFiles; signing?: boolean }) {
+  const [choosingShare, setChoosingShare] = useState(false)
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av, { start: start.startable })
   const isNext = (k: string) => (primary?.kind === 'approve' ? `approve:${primary.gate}` : primary?.kind === 'answer' ? `answer:${primary.question}` : primary?.kind) === k
   const needs = av.approve.length > 0 || av.verdict || av.answer.length > 0
   const other = av.requestChanges.length > 0 || start.shown || !!share?.shown || !!shareFiles?.shown
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="outline" disabled={signing}>
@@ -322,20 +325,19 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
             Change agent or model…
           </DropdownMenuItem>
         )}
-        {shareFiles?.shown && (
-          <DropdownMenuItem onSelect={shareFiles.run} data-testid="share-files-item">
-            <Share2 />
-            Share files…
-          </DropdownMenuItem>
-        )}
-        {share?.shown && (
-          <DropdownMenuItem onSelect={share.run} data-testid="share-ticket-item">
-            <Share2 />
-            {share.shared ? 'Stop sharing' : 'Share with the hub'}
-          </DropdownMenuItem>
-        )}
+        {/* W5 challenge: with only one possible choice the menu item opens it directly (no one-button chooser) */}
+        {(shareFiles?.shown || share?.shown) && <DropdownMenuItem onSelect={() => (share?.shown && shareFiles?.shown ? setChoosingShare(true) : share?.shown ? share.run() : shareFiles?.run())}><Share2 />Share…</DropdownMenuItem>}
+        {share?.shown && share.shared && <DropdownMenuItem onSelect={share.stop ?? share.run}>Stop sharing</DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
+    {choosingShare && <Dialog open onOpenChange={setChoosingShare}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Share</DialogTitle><DialogDescription className="sr-only">Choose how to share this ticket</DialogDescription></DialogHeader>
+        {share?.shown && <Button variant="outline" onClick={() => { setChoosingShare(false); share.run() }}>Share with a colleague</Button>}
+        {shareFiles?.shown && <Button variant="outline" onClick={() => { setChoosingShare(false); shareFiles.run() }}>Make a link to a file</Button>}
+      </DialogContent>
+    </Dialog>}
+    </>
   )
 }
 
@@ -635,7 +637,10 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
             Restricted
           </Pill>
         )}
-        {share.shared && <ShareDelivery state={share.state} onSend={share.send} />}
+        {/* W5 P17 names the people once it is sent; X3 says what is still on its way (Waiting / Not sent yet + Send now / refused) */}
+        {share.shared && (share.state === undefined || share.state === 'sent'
+          ? <span data-testid="shared-chip"><Pill>{share.label ?? 'Shared with the hub'}</Pill></span>
+          : <ShareDelivery state={share.state} onSend={share.send} />)}
       </div>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">

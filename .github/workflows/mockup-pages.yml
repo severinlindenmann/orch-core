@@ -2,7 +2,7 @@ name: Visual mockup Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/mockup-pages]  # feat branch: one-off first deploy (owner 4 Nov), removed before merge
     paths:
       - 'packages/addons/dashboard/**'
       - 'docs/mockups/**'

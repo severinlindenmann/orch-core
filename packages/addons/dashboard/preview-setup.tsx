@@ -5,10 +5,10 @@ import { createRoot } from 'react-dom/client'
 import { Setup, mount } from './src/setup/Setup'
 import { SetupAPI, SetupError } from './src/api/setup'
 const params = new URLSearchParams(location.search)
-// ?host=NAME: setup over ssh on another computer (P43); ?grant: the review issues this computer's runner grant
+// ?host=NAME: the computer's friendly name (W35; without it the page says "this computer"); the raw host name is only in Details; ?grant: the review issues this computer's runner grant
 const host = params.get('host') ?? undefined
 const state = {
-  phase: 'profile', mode: 'new', dir: '/Users/demo/project', dir_name: 'project', ...(host ? { host } : {}),
+  phase: 'profile', mode: 'new', dir: '/Users/demo/project', dir_name: 'project', ...(host ? { host } : {}), hostname: 'lumes-Virtual-Machine.local',
   suggested: { name: 'Demo', prefix: 'TST', method: 'click', agent_hours: 72, agent_grant: true },
   addons: [
     { id: 'dashboard', title: 'Dashboard', desc: 'Browser', required: true, default: true, kind: 'addon', capabilities: [] },
@@ -24,7 +24,8 @@ const state = {
 const review = {
   review_id: 'r', digest: 'd', fingerprint: ['a', 'b', 'c'],
   items: [
-    { id: 'settings', title: 'Settings', lines: [], details: [], volatile: [], type: 'settings.changed', fields: { set: { grant_hours: 72 } }, placeholders: [], placeholder_details: [] },
+    { id: 'settings', title: 'Workspace settings', lines: ['Change the workspace settings', '', 'Changes', '  grant_hours: 72', '', 'Agents may get access for up to 3 days (members; the runner too).'], details: ['set: {"grant_hours":72}', 'type: settings.changed'], volatile: [], type: 'settings.changed', fields: { set: { grant_hours: 72 } }, placeholders: [], placeholder_details: [] },
+    { id: 'addon:dashboard', title: 'Dashboard', lines: ['Turn on Dashboard: it says it will serve web pages from this computer', '', 'Fields', '  add-on: dashboard', '  version: 0.1.0', '', 'An add-on runs its own code on this computer as you; turn it on only if you trust it.'], details: ['artifact_kinds: []', 'capabilities: ["serve_http"]', 'name: dashboard', 'package_sha256: sha256:6e98390f0b1c0a3b5e7d2f9a4c8b1d6e3f5a7c9b2d4e6f8a0b1c3d5e7f9a1b2c', 'type: addon.granted', 'version: 0.1.0'], volatile: [], type: 'addon.granted', fields: { name: 'dashboard', version: '0.1.0', capabilities: ['serve_http'] }, placeholders: [], placeholder_details: [] },
     // the item the server applies when agents may start on this computer (P44/P69: Review reads it, not the profile)
     ...(params.has('grant') ? [{ id: 'runner_grant', title: "Agent access for this computer's runner", lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [] }] : []),
   ],

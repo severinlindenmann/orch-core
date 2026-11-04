@@ -21,14 +21,17 @@ def err(fn, *a, **k) -> SetupError:
     return e.value
 
 
-def test_state_lists_the_contract_fields(flow):
+def test_state_lists_the_contract_fields(flow, monkeypatch):
+    monkeypatch.setattr("orch.setup.flow.computer.friendly_name", lambda platform: "Test Box")
     st, out = get(flow, "state")
     assert st == 200
     for k in ("phase", "mode", "dir", "dir_name", "suggested", "addons", "methods", "click_available", "click_reason",
               "agent_hours", "relay", "missing"):  # fmt: skip
         assert k in out
     assert out["phase"] == "profile" and out["mode"] == "new" and out["agent_hours"] == [8, 24, 72, 168]
-    assert out["host"] == socket.gethostname()[:80]  # P43: the page names the computer being set up
+    # P43/W35: the page names the computer by its friendly name; the raw host name is a separate field (Details only)
+    assert out["host"] == "Test Box"
+    assert out["hostname"] == socket.gethostname()[:80]
     ids = [a["id"] for a in out["addons"]]
     assert "focus" not in ids  # Optional: only offered later in Settings > Add-ons.
     assert ids[0] == "dashboard" and {"start-agent", "terminals", "worktrees", "quick"} <= set(ids)

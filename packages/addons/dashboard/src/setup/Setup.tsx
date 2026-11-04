@@ -138,6 +138,21 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
   return { lines, unknown, odd: oddLines }
 }
+/** W36: the plain lines of a review row, from the host's own text: the headline and the sentences that are not table rows.
+ * An indented line is a row (a field), and a line that opens an indented block is its title ("Fields", "Changes"): both are
+ * only in the technical details, which show every line. */
+export function plainLines(lines: string[]): string[] {
+  return lines.filter((line, i) => i === 0 || (line.trim() !== '' && !/^\s/.test(line) && !/^\s/.test(lines[i + 1] ?? '')))
+}
+/** One host row in the technical details: its indent is the host's layout (shown as a left margin, not as marker characters). */
+function Row({ line }: { line: string }) {
+  const indent = /^ */.exec(line)?.[0].length ?? 0
+  return (
+    <p style={indent ? { paddingLeft: `${indent * 0.5}em` } : undefined}>
+      <Raw>{indent && line.trim() !== '' ? line.slice(indent) : line}</Raw>
+    </p>
+  )
+}
 type Fact = { label: string; value: string }
 const addonSentence = (id: string, fallback: string): string => ({
   'start-agent': 'You can start agents from the dashboard.',
@@ -158,14 +173,14 @@ export function reviewFacts(review: Review, host?: string, newWorkspace = false)
     facts.push({ label: 'Workspace', value: ws.workspace_name ?? ws.name })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  const approve = has('custody') ? `You approve with One click on ${host || 'this computer'}.` : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
+  const approve = has('custody') ? 'You approve with One click on this computer.' : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
   const grant = review.items.find((item) => item.id === 'runner_grant' && item.type === 'grant.issued')?.fields
   const settings = review.items.filter((item) => item.type === 'settings.changed')
     .map((item) => item.fields?.set as Record<string, unknown> | undefined)
   const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
   // Only an applied runner grant permits agents to start; a duration setting alone does not.
   let agents = newWorkspace ? 'Agents may not work on their own.' : "Agents' access stays as it is."
-  const where = host || 'this computer'
+  const where = 'this computer'
   if (grant) {
     // any applied runner grant says agents may work; an unexpected shape never reads as "may not"
     const time = typeof grant.hours === 'number' ? ` for ${duration(grant.hours)}` : ''
@@ -199,7 +214,7 @@ export function defaultWorkspaceName(name: string): string {
 export function approvalSummary(
   profile: { agent_hours: number; agent_grant?: boolean; records?: boolean },
   access: 'none' | number,
-  opts: { records: boolean; trust?: boolean; host?: string },
+  opts: { records: boolean; trust?: boolean },
 ): string {
   const out = [
     access === 'none'
@@ -209,7 +224,7 @@ export function approvalSummary(
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
   if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open your project folder without asking.' : 'AI helpers ask before they open your project folder.')
-  return out.join(' ').replaceAll('this computer', opts.host || 'this computer')
+  return out.join(' ')
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
@@ -848,17 +863,17 @@ export function Setup({ api }: { api: SetupAPI }) {
       />
       <span>
         <strong>
-          {method === 'click' ? `One click on ${host || 'this computer'}` : 'Password'}
+          {method === 'click' ? 'One click on this computer' : 'Password'}
           {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
         </strong>
         <small>
           {method === 'terminal'
-            ? `Type your password each time. Safest if others use ${host || 'this computer'}.`
+            ? `Type your password each time. Safest if others use this computer.`
             : state.click_available
               ? 'No typing. Best on your own computer.'
-              : clickOffText(state.click_reason).replace('this computer', host || 'this computer')}
+              : clickOffText(state.click_reason)}
         </small>
-        {method === 'click' && state.click_available && <small>Anything running as you on {host || 'this computer'} could approve too.</small>}
+        {method === 'click' && state.click_available && <small>Anything running as you on this computer could approve too.</small>}
         {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
       </span>
     </label>
@@ -982,7 +997,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </details>
                   <p>{profile.addons.includes('worktrees') ? 'With work copies on, agents change their own copies until you merge them.' : 'Agents change the files in this folder directly.'}</p>
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
-                  <p>Everything stays on {host ? <Inline>{host}</Inline> : 'this computer'} unless you choose to connect your phone.</p>
+                  <p>Everything stays on this computer unless you choose to connect your phone.</p>
                 </>
               )}
               {state.mode === 'finish' && state.current ? (
@@ -1087,7 +1102,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 2 && (
             <>
               <label className="toggle">
-                <span>Allow agents to work<small>Turning this on lets agents start on {host || 'this computer'} for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
+                <span>Allow agents to work<small>Turning this on lets agents start on this computer for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
                 <input type="checkbox" role="switch" checked={access !== 'none'} disabled={!state.agent_hours.length}
                   onChange={(e) => chooseAccess(e.target.checked ? (state.agent_hours.includes(72) ? 72 : state.agent_hours[0]) : 'none')} />
               </label>
@@ -1171,13 +1186,13 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <details className="click-risk" data-testid="click-risk">
                   <summary>What does this mean?</summary>
                   <p>
-                    <Inline>{clickMeaningCopy.replace('this computer', host || 'this computer')}</Inline>
+                    <Inline>{clickMeaningCopy}</Inline>
                   </p>
                 </details>
               )}
               {/* Keep optional settings together; a parent AI helper setting may need "Trust anyway". */}
               <p className="approval-summary" data-testid="approval-summary">
-                {approvalSummary(profile, access, { host, records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
+                {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
               </p>
               <details className="approval-more" data-testid="approval-more" open={!state.click_available || !!parentConfig || undefined}>
                 <summary>Change these settings</summary>
@@ -1204,7 +1219,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <label className="toggle">
                   <span>
                     Keep a history of this workspace
-                    <small>Saved on {host || 'this computer'} automatically. Nothing is uploaded.</small>
+                    <small>Saved on this computer automatically. Nothing is uploaded.</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1356,59 +1371,87 @@ export function Setup({ api }: { api: SetupAPI }) {
               <details className="review-technical">
                 <summary>Details</summary>
                 <p>Times and IDs are filled in when you sign.</p>
-                {review.workspace && (
-                  <section className="review-item">
-                    <h3>New workspace</h3>
-                    {review.workspace.lines.map((line, i) => (
-                      <p key={i}>
-                        <Raw>{line}</Raw>
-                      </p>
-                    ))}
-                  </section>
-                )}
-                {review.items.map((item) => (
-                  <section className="review-item" key={item.id}>
-                    <h3>
-                      <Raw>{item.title}</Raw>
-                    </h3>
-                    {rowLines(item.lines, item.placeholders).map((line, i) => (
-                      <p key={i}>
-                        <Raw>{line}</Raw>
-                      </p>
-                    ))}
-                    {item.note && (
-                      <p>
-                        <Raw>{item.note}</Raw>
-                      </p>
-                    )}
-                    {rowLines(item.details, item.placeholder_details).map((line, i) => (
-                      <p key={`d${i}`}>
-                        <Raw>{line}</Raw>
-                      </p>
-                    ))}
-                  </section>
-                ))}
-                {review.flags.filter((f) => f.detail).map((f) => (
-                  <section className="review-item" key={`detail-${f.id}`}>
-                    {f.id === 'git' && (
+                {/* W36: per step the plain headline and summary lines first; every signed row, hash and value is behind
+                    "Technical details" (moved, never dropped: WYSIWYS) */}
+                <div className="review-plain">
+                  {review.workspace && (
+                    <section className="review-item">
+                      <h3>New workspace</h3>
+                      {review.workspace.lines.map((line, i) => (
+                        <p key={i}>
+                          <Raw>{line}</Raw>
+                        </p>
+                      ))}
+                    </section>
+                  )}
+                  {review.items.map((item) => {
+                    const [headline, ...rest] = plainLines(rowLines(item.lines, item.placeholders))
+                    return (
+                      <section className="review-item" key={item.id}>
+                        <h3>
+                          <Raw>{headline ?? item.title}</Raw>
+                        </h3>
+                        {rest.map((line, i) => (
+                          <p key={i}>
+                            <Raw>{line}</Raw>
+                          </p>
+                        ))}
+                      </section>
+                    )
+                  })}
+                  {review.flags.filter((f) => f.detail).map((f) => (
+                    <section className="review-item" key={`flag-${f.id}`}>
                       <p>
                         <Raw>{f.text}</Raw>
                       </p>
-                    )}
-                    <p>
-                      <Raw>{f.detail ?? ""}</Raw>
-                    </p>
-                  </section>
-                ))}
-                {review.runner_grant && (
-                  <section className="review-item">
-                    <h3>Runner access</h3>
-                    <p>
-                      {review.runner_grant.hours} hours · <Raw>{review.runner_grant.scope}</Raw>
-                    </p>
-                    <p>{review.runner_grant.holder}</p>
-                  </section>
-                )}
+                    </section>
+                  ))}
+                </div>
+                <details className="review-raw">
+                  <summary>Technical details</summary>
+                  {review.items.map((item) => (
+                    <section className="review-item" key={item.id}>
+                      <h3>
+                        <Raw>{item.title}</Raw>
+                      </h3>
+                      {rowLines(item.lines, item.placeholders).map((line, i) => (
+                        <Row key={i} line={line} />
+                      ))}
+                      {item.note && (
+                        <p>
+                          <Raw>{item.note}</Raw>
+                        </p>
+                      )}
+                      {rowLines(item.details, item.placeholder_details).map((line, i) => (
+                        <Row key={`d${i}`} line={line} />
+                      ))}
+                    </section>
+                  ))}
+                  {review.flags.filter((f) => f.detail).map((f) => (
+                    <section className="review-item" key={`detail-${f.id}`}>
+                      <p>
+                        <Raw>{f.detail ?? ''}</Raw>
+                      </p>
+                    </section>
+                  ))}
+                  {review.runner_grant && (
+                    <section className="review-item">
+                      <h3>Runner access</h3>
+                      <p>
+                        {review.runner_grant.hours} hours · <Raw>{review.runner_grant.scope}</Raw>
+                      </p>
+                      <p>{review.runner_grant.holder}</p>
+                    </section>
+                  )}
+                  {state.hostname && (
+                    <section className="review-item">
+                      <h3>This computer</h3>
+                      <p>
+                        Host name: <Raw>{state.hostname}</Raw>
+                      </p>
+                    </section>
+                  )}
+                </details>
               </details>
               {review.tty_confirm && (
                 <div className="inset">

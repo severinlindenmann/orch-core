@@ -5,8 +5,10 @@ export interface SetupState {
   mode: 'new' | 'finish'
   dir: string
   dir_name: string
-  /** The computer running setup (its host name); absent in older cores (the page then says "this computer"). */
+  /** The computer running setup by its friendly name; empty when the OS has none (the page then says "this computer"). */
   host?: string
+  /** The raw host name (technical details only; the page never uses it in a sentence). */
+  hostname?: string
   suggested: { name: string; workspace_name: string; prefix: string; method?: 'terminal' | 'click'; agent_hours?: number; agent_grant?: boolean }
   addons: {
     id: string

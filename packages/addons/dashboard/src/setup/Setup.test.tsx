@@ -1625,7 +1625,8 @@ test('r11-P16: without One click the settings are open, so the password choice i
 async function toAgents(f: ReturnType<typeof fake>) {
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
-  for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  // Each step's Continue can render a tick after the previous click (slow CI runners): wait for it, never assume it.
+  for (let i = 0; i < 2; i++) fireEvent.click(await screen.findByRole('button', { name: 'Continue →' }))
   await screen.findByTestId('agents-summary')
 }
 

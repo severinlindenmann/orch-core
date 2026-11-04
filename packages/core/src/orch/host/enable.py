@@ -126,11 +126,11 @@ def plan(
     log_dir = Path(state) / "host"
     if platform == "darwin":
         path = Path(home) / "Library" / "LaunchAgents" / f"{units.LAUNCHD_LABEL}.plist"
-        content = units.launchd_plist(python, release, Path(state), log_dir=log_dir, run_dir=Path(run))
+        content = units.launchd_plist(python, release, Path(state), log_dir=log_dir, run_dir=Path(run), home=home)
         return Plan("launchd", path, content, Path(state), Path(run), release, uid)
     if platform.startswith("linux"):
         path = Path(home) / ".config" / "systemd" / "user" / units.SYSTEMD_NAME
-        content = units.systemd_unit(python, release, Path(state), run_dir=Path(run)).encode()
+        content = units.systemd_unit(python, release, Path(state), run_dir=Path(run), home=home).encode()
         return Plan("systemd", path, content, Path(state), Path(run), release, uid)
     raise Unsupported(f"no per-user service on {platform}: workspaces stay in direct mode")
 

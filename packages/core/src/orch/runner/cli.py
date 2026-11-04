@@ -397,7 +397,8 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
         refused.set()
         stop.set()
 
-    link = HostLink(sup, host_socket, host_uid=host_uid, gen=gen, term=term,
+    # W00: the runs this runner starts get its state dir (HostLink state_dir), whatever HOME the service manager gave it
+    link = HostLink(sup, host_socket, host_uid=host_uid, gen=gen, term=term, state_dir=state,
                     config=lambda: read_config(state, uid), grants=grants, release=release,
                     restart=gate.request, restarting=lambda: gate.armed, on_denied=give_up)  # fmt: skip
     link.start()

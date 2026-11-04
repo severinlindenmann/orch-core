@@ -111,6 +111,7 @@ def launchd_plist(
     log_dir: Path | None = None,
     run_dir: Path | None = None,
     extra_args: tuple[str, ...] = (),
+    home: str | None = None,
 ) -> bytes:
     """``run_dir``: the tier-A run directory (``<state>/run``, H7); without it the host uses the tier-B default.
     ``python`` is not in the plist (the launcher's shebang names it, see :func:`launcher_arguments`)."""
@@ -122,6 +123,8 @@ def launchd_plist(
         "ProcessType": "Background",
         "Umask": 0o077,
     }
+    if home:  # W00: launchd would give the GUI session's HOME, not the install's
+        doc["EnvironmentVariables"] = {"HOME": home}
     if log_dir is not None:
         doc["StandardOutPath"] = str(log_dir / "host.log")
         doc["StandardErrorPath"] = str(log_dir / "host.log")
@@ -139,6 +142,7 @@ def systemd_unit(
     host_uid: int | None = None,
     run_dir: Path | None = None,
     extra_args: tuple[str, ...] = (),
+    home: str | None = None,
 ) -> str:
     """A user unit (``systemctl --user``), or a system unit that runs as ``user`` (required with ``system``).
     ``run_dir`` names the run directory (tier A: ``<state>/run``, H7); a system unit defaults to ``/run/orch/<uid>``."""
@@ -157,6 +161,7 @@ def systemd_unit(
         "[Service]",
         "Type=simple",
         f"ExecStart={exec_start}",
+        *([f"Environment={systemd_quote('HOME=' + home)}"] if home else []),  # W00
         "Restart=always",
         "RestartSec=1",
         "UMask=0077",

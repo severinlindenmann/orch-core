@@ -64,7 +64,13 @@ def program_arguments(
 
 
 def launchd_plist(
-    python: Path, release: Path, state_dir: Path, run_dir: Path, extra_args: tuple[str, ...] = ()
+    python: Path,
+    release: Path,
+    state_dir: Path,
+    run_dir: Path,
+    extra_args: tuple[str, ...] = (),
+    *,
+    home: str | None = None,
 ) -> bytes:
     log = str(Path(state_dir) / "runner" / "runner.out")
     doc: dict[str, object] = {
@@ -77,10 +83,20 @@ def launchd_plist(
         "StandardOutPath": log,
         "StandardErrorPath": log,
     }
+    if home:  # W00: launchd would give the GUI session's HOME; the runs started from here inherit it
+        doc["EnvironmentVariables"] = {"HOME": home}
     return plistlib.dumps(doc, sort_keys=True)
 
 
-def systemd_unit(python: Path, release: Path, state_dir: Path, run_dir: Path, extra_args: tuple[str, ...] = ()) -> str:
+def systemd_unit(
+    python: Path,
+    release: Path,
+    state_dir: Path,
+    run_dir: Path,
+    extra_args: tuple[str, ...] = (),
+    *,
+    home: str | None = None,
+) -> str:
     exec_start = " ".join(systemd_quote(a) for a in program_arguments(python, release, state_dir, run_dir, extra_args))
     return "\n".join(
         [
@@ -91,6 +107,7 @@ def systemd_unit(python: Path, release: Path, state_dir: Path, run_dir: Path, ex
             "[Service]",
             "Type=simple",
             f"ExecStart={exec_start}",
+            *([f"Environment={systemd_quote('HOME=' + home)}"] if home else []),  # W00: the runs inherit it
             "Restart=always",
             "RestartSec=1",
             "Delegate=yes",
@@ -122,11 +139,11 @@ def plan(
     labels = {"launchd_label": LAUNCHD_LABEL, "systemd_name": SYSTEMD_NAME}
     if platform == "darwin":
         path = Path(home) / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
-        content = launchd_plist(python, release, Path(state), Path(run))
+        content = launchd_plist(python, release, Path(state), Path(run), home=home)
         return host_enable.Plan("launchd", path, content, Path(state), Path(run), release, uid, **labels)
     if platform.startswith("linux"):
         path = Path(home) / ".config" / "systemd" / "user" / SYSTEMD_NAME
-        content = systemd_unit(python, release, Path(state), Path(run)).encode()
+        content = systemd_unit(python, release, Path(state), Path(run), home=home).encode()
         return host_enable.Plan("systemd", path, content, Path(state), Path(run), release, uid, **labels)
     raise host_enable.Unsupported(f"no runner on {platform}: no terminals and no start-agent here (D-P2-38)")
 

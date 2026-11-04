@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
+import { toast } from 'sonner'
 import { ARM_MS, CLICK_RISK, clickProblem, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
 import { ApiError } from '@/api/types'
@@ -91,6 +92,40 @@ const press = (b: HTMLElement) => {
 }
 
 describe('the action dialog with click-to-sign', () => {
+  it.each(['submitted', 'rejected'] as const)('a sign request that is %s after unmount only toasts success', async (result) => {
+    flag(true)
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { SignPopover } = await import('./SignPopover')
+    const { render } = await import('@testing-library/react')
+    const ws = (await api.getWorkspaces())[0]!.id
+    const success = vi.spyOn(toast, 'success')
+    const onSettled = vi.fn()
+    const doneToast = 'Host settings changed'
+    let resolve!: (value: Awaited<ReturnType<typeof api.signClick>>) => void
+    let reject!: (error: Error) => void
+    const pending = new Promise<Awaited<ReturnType<typeof api.signClick>>>((yes, no) => { resolve = yes; reject = no })
+    c.sign.mockReturnValue(pending)
+    const { unmount } = render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change host settings" action={{ action: 'settings_set', grant_hours: 24 }} doneToast={doneToast} onSettled={onSettled} onClose={() => {}} /></QueryClientProvider>)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    const outcome = await within(dialog).findByRole('button', { name: 'Change host settings' }, T)
+    await waitFor(() => expect(outcome).toBeEnabled(), T)
+    fireEvent.click(outcome)
+    await within(dialog).findByTestId('click-panel', {}, T)
+    press(await armed(dialog))
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), T)
+    expect(success).not.toHaveBeenCalled()
+    unmount()
+    await act(async () => {
+      if (result === 'submitted') resolve({ state: 'submitted', duplicate: false })
+      else reject(new Error('Sign failed'))
+      await pending.catch(() => {})
+    })
+    expect(success).toHaveBeenCalledTimes(result === 'submitted' ? 1 : 0)
+    if (result === 'submitted') expect(success).toHaveBeenCalledWith(doneToast)
+    expect(onSettled).toHaveBeenCalledTimes(result === 'submitted' ? 1 : 0)
+    expect(c.cancel).not.toHaveBeenCalled()
+  })
+
   it('the armed Sign never signs on a synthetic (untrusted) press or a key auto-repeat; a trusted press signs once', async () => {
     const { dialog } = await toPanel()
     const b = await armed(dialog)

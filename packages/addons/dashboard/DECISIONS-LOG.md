@@ -2158,3 +2158,9 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 - **Decision:** Show core's current delivery state, and reuse the existing share review for a confirming sync. Send now opens a preview; Sign explicitly confirms its plan through the existing owner-only endpoint. No new signing operation or automatic confirmation.
 - **Why:** A rule retained before joining has no confirmed selection, so an automatic retry cannot deliver it. A selected ticket is not evidence of delivery.
 - **Revert:** Remove the new entry points and delivery badges together; retain core's confirmation boundary.
+
+### 2026-11-04 — Confirm one-click success after unmount (W03b)
+
+- **Decision:** Deliver a successful one-click sign response to the existing settle callback even after the initiating component unmounts; guard React state updates with the mounted check.
+- **Why:** Every completed signature needs its outcome confirmation. The early return previously suppressed the popover's done toast after navigation or closing the surface. Failures remain silent after unmount; hold tracking, cancellation, unknown outcomes and retries retain their existing behavior.
+- **Revert:** Restore the early return only alongside another notifier that confirms successful signatures after unmount.

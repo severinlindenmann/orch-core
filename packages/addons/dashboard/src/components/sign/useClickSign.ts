@@ -226,9 +226,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
           if (mounted.current) setPhase('held')
           return
         }
-        if (!mounted.current) return
-        setSigned(got)
-        setPhase('done')
+        // A completed signature still needs its confirmation after the initiating UI is gone.
+        if (mounted.current) {
+          setSigned(got)
+          setPhase('done')
+        }
         refetch(true)
         const as = settledAs(open, got)
         settled.current?.('done', as.state, as.request)

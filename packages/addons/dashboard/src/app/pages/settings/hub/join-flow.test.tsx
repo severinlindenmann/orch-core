@@ -214,6 +214,26 @@ describe('P12 / P08: Paste from clipboard', () => {
     expect(screen.getByTestId('hub-link-reading').textContent).toContain('Reading the clipboard')
     view.unmount()
   })
+  it('W04b: a permission query and a clipboard read that both never answer still end in the keyboard line', async () => {
+    Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: vi.fn(() => new Promise(() => {})) } })
+    try {
+      const view = renderApp('/w/DEMO/settings/hub')
+      await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+      clip(() => new Promise<string>(() => {}))
+      await view.user.click(await screen.findByRole('button', { name: 'Paste from clipboard' }, T))
+      expect(screen.getByTestId('hub-link-reading')).toBeTruthy()
+      expect((await screen.findByTestId('hub-link-noclipboard', {}, { timeout: 6000 })).textContent).toContain('Press ⌘V')
+      expect(screen.queryByTestId('hub-link-reading')).toBeNull()
+      view.unmount()
+    } finally { Reflect.deleteProperty(navigator, 'permissions') }
+  }, 10000)
+  it('W04b: a clipboard read that throws at once says so at once', async () => {
+    const view = await open()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: vi.fn(() => { throw new Error('sync') }) } })
+    await view.user.click(await screen.findByRole('button', { name: 'Paste from clipboard' }, T))
+    expect(await screen.findByTestId('hub-link-noclipboard', {}, T)).toBeTruthy()
+    view.unmount()
+  })
   it('W04: a clipboard read that never answers ends in plain words and puts the cursor in the field', async () => {
     const view = await open()
     clip(() => new Promise<string>(() => {}))

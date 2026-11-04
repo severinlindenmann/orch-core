@@ -2257,6 +2257,32 @@ process of the UID connects in tier A), and it would expose activity timing to e
 
 #### 0.8.6 Click-to-sign (convenience custody, H5c, D-P2-23)
 
+
+**Release grant custody (4 Nov 2026, normative; implementation pending).** The protocol's
+[§11.3 Release grant](../../contracts/hub/protocol.md#release-grant-one-press) is authoritative for the exact signed
+`log.added.release` fields, signer-local record and Required tests. This amends the request-first custody order for
+one app commit only. The host daemon still holds no device key; “host-local grant” means memory in the click signer.
+
+| Rule | Signer/host obligation (MUST) |
+| --- | --- |
+| RG-1 | The signer MUST validate the complete machine `release` fields and §11.4's `meta_hash` (`b64u(H("orch/v2/app-meta|" || cj(meta)))`), render its review from them, and derive the grant only from the event it itself just signed. Host/dashboard sidecars and prose MUST NOT supply authority. The host MUST preallocate an app id even for a new slug and include the full meta and stable audience ids in the signed note. |
+| RG-2 | The signer MUST inspect the raw method, host, target, body, hub, timestamp and nonce, verify the exact POST commit route and workspace/hub/destination, check ts within 120 s of its own wall clock, and compute request_hash itself. It MUST NOT sign a caller's hash. Body bindings and reach hash MUST match the signed release. |
+| RG-3 | The host MUST send the plain canonical-meta hash in the commit body; orch-publish MUST compare the selected version's stored meta and refuse `meta_mismatch` before serving. A missing hash is `malformed`. The old domain-prefixed meta hash MUST NOT be used for this amendment. |
+| RG-4 | The signer MUST bind app id, meta hash, access, audience, workspace and hub, never a version number. The host may allocate the version during upload; the server's meta check pins it. |
+| RG-5 | Only this bounded grant MUST permit consent first, then upload, then drawing the request/ts/nonce and signing one approval without another press. Without it the host MUST use ordinary request-first consent. |
+| RG-6 | A real person's press on that exact release MUST be required. Remembered/batched/always-allow consent, agent signing and old log replay MUST NOT create a grant. An agent may prepare the stage, never sign. |
+| RG-7 | The signer MUST use monotonic time for a maximum ten-minute lifetime from the press and consume the record atomically when signing, before returning the approval. One grant MUST yield exactly one approval, including under concurrent calls. Its 120 s ts and single-use nonce remain independent. Failed/unknown commits or expired approvals MUST require a new press; no three-attempt or restore-on-failure policy. |
+| RG-8 | The signer MUST keep grants only in process memory, lose them on restart, and refuse start/rollback. Public review MUST show its own anyone-can-open warning with “Sign and publish to anyone”. |
+
+The signer retains its own signed event in memory to check the request against the meta; it MUST NOT load a grant
+from persisted history. A grant record has exactly `{release_event_id, person_id, device_id, workspace_id, hub_id,
+app_id, meta_hash, access, audience, pressed_mono_ms, expires_mono_ms}`; no version and no caller-provided hash.
+The host's historical one-hour signed-note upload check is not a grant lifetime and cannot authorise commit.
+The protocol's consumer table identifies the required migration of `app_release_text`, `signed_release`, signer
+validation, review rendering, dashboard stage matching and reserved-note guards. Existing text-only notes remain
+readable history. The implementation notes in §12 describe the pre-amendment upload-only code, not RG compliance.
+The Required tests in §11.3 MUST pass before enabling this custody form; amendment vectors are pending explicitly.
+
 **D3 (28 Oct 2026): install and turn on.** `market.stage` remains unsigned and installs nothing.
 A staged `addon_enable` intent carries `{v:1, kind, name, staged, settings, grant}`. Its only steps are
 `settings.set` when the manifest has required fields, followed by `addon.grant {name, staged, digest, caps}`.
@@ -13414,7 +13440,7 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   `settings.set` that touches `publish` are plain clicks after the review (they were terminal-only); the View names both
   `click/protocol.op_class` still classes `settings.set` by key (`SETTINGS_TERMINAL_KEYS`, now empty) from the
   request's `set` before prepare and from the prepared events at sign time; the sign-time class wins.
-* **App releases** (#1457, HUB-PU-07). Making an app live (a new version, an update, a rollback, a start after a stop)
+* **App releases** (#1457, HUB-PU-07; pre-release-grant implementation, superseded for new commit consent by §0.8.6 RG-1–RG-8). Making an app live (a new version, an update, a rollback, a start after a stop)
   runs code in other people's browsers, so it needs a PERSON's one-click signature, never an agent's. `app.release
   {staged_id}` (`pa_` + 32 hex; through `human.prepare`/`submit`) is one `log.added` note on the ticket whose text
   `orch.publishclient.approval.app_release_text` builds from the staged release alone (the request names only the staged

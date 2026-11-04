@@ -224,3 +224,23 @@ def test_pass(c):
         )
     )
     assert got == c["expect"]
+
+
+# RG is a spec-only signed-shape/hash amendment. Keep it visible as pending rather
+# than weakening expectations or teaching the legacy verifier the new contract here.
+RG_VEC = json.loads(
+    (pathlib.Path(__file__).resolve().parents[3] / "contracts" / "publish" / "release_grant_v1.json").read_text()
+)
+
+
+@pytest.mark.parametrize("c", RG_VEC["commit_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason=RG_VEC["pending_reason"])
+def test_release_grant_commit(c):
+    files = {p: tuple(v) for p, v in c["stored_files"].items()}
+    assert P.check_release(c["body"], c["meta"], files, c["forbidden"]) == c["expect"]
+
+
+@pytest.mark.parametrize("c", RG_VEC["release_note_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending core signer replay of RG-1 signed release fields and real-press custody")
+def test_release_grant_note(c):
+    pass

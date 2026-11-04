@@ -1,0 +1,269 @@
+{
+ "commit_cases": [
+  {
+   "body": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+    "op": "commit",
+    "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+    "version": 7
+   },
+   "expect": null,
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com"
+   ],
+   "meta": {
+    "access": "group",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "commit_meta_hash_ok",
+   "stored_files": {
+    "index.html": [
+     20,
+     "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441"
+    ]
+   }
+  },
+  {
+   "body": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "meta_hash": "5nVNr01leu7uD5bmu-Ih0TEb2no6aXg5bIk10txjNnw",
+    "op": "commit",
+    "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+    "version": 7
+   },
+   "expect": "meta_mismatch",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com"
+   ],
+   "meta": {
+    "access": "group",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "commit_meta_hash_mismatch",
+   "stored_files": {
+    "index.html": [
+     20,
+     "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441"
+    ]
+   }
+  },
+  {
+   "body": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "op": "commit",
+    "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+    "version": 7
+   },
+   "expect": "malformed",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com"
+   ],
+   "meta": {
+    "access": "group",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "commit_meta_hash_missing",
+   "stored_files": {
+    "index.html": [
+     20,
+     "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441"
+    ]
+   }
+  },
+  {
+   "body": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+    "op": "commit",
+    "reach_hash": "kwVtTtEkGYXyZm4O4RszK3-RB9Cbq5IBR4Vo2V4kut8",
+    "version": 7
+   },
+   "expect": "meta_mismatch",
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com"
+   ],
+   "meta": {
+    "access": "group",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "pw": null,
+    "reach": [
+     "https://other.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "commit_meta_hash_reach_changed",
+   "stored_files": {
+    "index.html": [
+     20,
+     "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441"
+    ]
+   }
+  }
+ ],
+ "doc": "Protocol 11.3 RG-1 to RG-8, 4 Nov 2026. Synthetic ids; no real keys. Commit cases assume valid request approval and exercise stored-meta verification only.",
+ "pending_reason": "Spec-only amendment: release fields and the commit meta_hash check are not implemented",
+ "release_note_cases": [
+  {
+   "event": {
+    "actor": {
+     "device": "d_88888888888888888888888888888888",
+     "id": "p_77777777777777777777777777777777",
+     "kind": "person"
+    },
+    "auth": "convenience",
+    "based_on": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "hash_v": 1,
+    "id": "01J9ZP0000000000000000EVT1",
+    "release": {
+     "access": "group",
+     "app_id": "33333333333333333333333333333333",
+     "audience": "group:44444444444444444444444444444444",
+     "hub_id": "22222222222222222222222222222222",
+     "meta": {
+      "access": "group",
+      "audience": "group:44444444444444444444444444444444",
+      "files": [
+       {
+        "path": "index.html",
+        "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+        "size": 20
+       }
+      ],
+      "kind": "page",
+      "label": "First release",
+      "name": "Team report",
+      "pw": null,
+      "reach": [
+       "https://api.example.com"
+      ],
+      "slug": "team-report",
+      "ticket": "01J9ZP00000000000000000001"
+     },
+     "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+     "op": "commit",
+     "staged_id": "pa_55555555555555555555555555555555",
+     "v": 1,
+     "workspace_id": "11111111111111111111111111111111"
+    },
+    "roster_v": 1,
+    "text": "App approval: let an app go live\nApp name: Team report\nKind: page\nAddress slug: team-report\nWho can open it: group 44444444444444444444444444444444\nThe app may contact: https://api.example.com\nThe app runs code in the browser of everyone who opens it\nFile: index.html (20 bytes, sha256 9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441)\nWorkspace: 11111111111111111111111111111111\nHub: 22222222222222222222222222222222\nApp id: 33333333333333333333333333333333\nStaged release: pa_55555555555555555555555555555555\nApp hash: XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+    "type": "log.added",
+    "v": 2
+   },
+   "event_canonical_utf8": "{\"actor\":{\"device\":\"d_88888888888888888888888888888888\",\"id\":\"p_77777777777777777777777777777777\",\"kind\":\"person\"},\"auth\":\"convenience\",\"based_on\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"hash_v\":1,\"id\":\"01J9ZP0000000000000000EVT1\",\"release\":{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"hub_id\":\"22222222222222222222222222222222\",\"meta\":{\"access\":\"group\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"},\"meta_hash\":\"XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o\",\"op\":\"commit\",\"staged_id\":\"pa_55555555555555555555555555555555\",\"v\":1,\"workspace_id\":\"11111111111111111111111111111111\"},\"roster_v\":1,\"text\":\"App approval: let an app go live\\nApp name: Team report\\nKind: page\\nAddress slug: team-report\\nWho can open it: group 44444444444444444444444444444444\\nThe app may contact: https://api.example.com\\nThe app runs code in the browser of everyone who opens it\\nFile: index.html (20 bytes, sha256 9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441)\\nWorkspace: 11111111111111111111111111111111\\nHub: 22222222222222222222222222222222\\nApp id: 33333333333333333333333333333333\\nStaged release: pa_55555555555555555555555555555555\\nApp hash: XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o\",\"type\":\"log.added\",\"v\":2}",
+   "expect": {
+    "ok": true
+   },
+   "log": "01J9ZP00000000000000000001",
+   "meta": {
+    "access": "group",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "meta_canonical_utf8": "{\"access\":\"group\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}",
+   "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+   "name": "release_note_fields",
+   "scope": "Unsigned canonical event content, before the ordinary F1 device signature; text is an example signer rendering, not a new fixed prose grammar. A valid signature alone does not prove a fresh press or create a grant.",
+   "workspace_id": "11111111111111111111111111111111"
+  }
+ ],
+ "required": {
+  "commit": [
+   "commit_meta_hash_ok",
+   "commit_meta_hash_mismatch",
+   "commit_meta_hash_missing",
+   "commit_meta_hash_reach_changed"
+  ],
+  "release_note": [
+   "release_note_fields"
+  ]
+ },
+ "status": "pending"
+}

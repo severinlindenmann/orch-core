@@ -197,7 +197,7 @@ literal `orch/v2/hub-…|` names.
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
 | `h_publish_request_direct` | `orch/v2/publish-request\|` | hash | what the owner's approval names on the direct v2 12.1 path (M4) | 11.4 |
-| `h_app_meta` | `orch/v2/app-meta\|` | hash | the stored meta of one app version (`meta_hash`, M4) | 11.4 |
+| `h_app_meta` | `orch/v2/app-meta\|` | hash | the stored meta of one app version (`meta_hash`, M4; also the release grant's binding, RG-1/RG-3) | 11.4 |
 | `h_app_reach` | `orch/v2/app-reach\|` | hash | the approved reach list of one app version (`reach_hash`, M4) | 11.4 |
 | `sig_hub_release_narrow` | `orch/v2/hub-release-narrow\|` | `HK_op` | `cj(o)` of `hub.release_narrow` (revoke a link, stop an app; M4) | 11.6 |
 | `sig_hub_app_pass` | `orch/v2/hub-app-pass\|` | `HK_op` | `cj(o)` of `hub.app_pass` (single-use pass into a company/group app; M4) | 11.8 |
@@ -3302,7 +3302,7 @@ already pre-bound to that owner, with its own genuine `WSK`, and grants **no pub
 
 ### 11.3 `hub.publish_approval` (V3-D4)
 
-The owner's local-key authorisation of **one exact request**, signed at the host terminal by the owner's device key
+The owner's local-key authorisation of **one exact request**, signed by the owner's local signer with the owner's device key
 (`dk_sig`, the key that signs the owner's person events; D64 custody):
 
 ```
@@ -3317,7 +3317,8 @@ request_hash = b64u(H("orch/v2/hub-publish-request|" || suite || workspace_id (1
                       || lp16(METHOD) || lp16(host) || lp16(request-target) || H(body) || hub_id (16)))
 ```
 
-The host draws `ts` and `nonce` first, shows the owner the request, and the owner signs after (L2-2). An approval is
+Ordinarily the host draws `ts` and `nonce` first, shows the owner the request, and the owner signs after (L2-2).
+The release-grant custody form below is the sole exception to that ordering. An approval is
 therefore good for exactly one request: its nonce is single-use in the publish nonce store and its `ts` must be inside
 the 120 s window. The approval has no lifetime of its own; if the owner takes longer, the host draws a fresh `ts` and
 `nonce` and asks again. (`request_hash` cannot include the WSK-signed bytes, which contain `H(approval)`; it names the
@@ -3352,6 +3353,120 @@ Requests for `secret` or `sealed` access keep the v2 path: the host evaluates th
 
 **Full mode** (phase 3+): until custodial signing (phase 4), a dev full-mode workspace uses the same owner approval
 (V3-D3); from phase 4 the approval is a custodial signature carried the same way (spec §8), defined then as a new `hv`.
+
+#### Release grant (one press)
+
+**Normative amendment, 4 Nov 2026; implementation pending.** One press on `app.release` may authorise one later
+commit approval. This changes the signed `log.added` shape, not the `hub.publish_approval` shape or signature domain.
+It supersedes the design note's version-bound grant and the Opus suggestion of three attempts/consumption on success.
+
+**Signed machine fields.** The ticket's ordinary person-signed `log.added` event adds one `release` member. Its exact
+members are below; no optional or unknown members are allowed. The ordinary event envelope and `text` remain signed.
+
+```
+release = {v: 1, op: "commit", staged_id, workspace_id, hub_id, app_id,
+           meta_hash, access, audience, meta}
+```
+
+`staged_id` is `pa_` plus 32 lowercase hex digits; `workspace_id`, `hub_id` and `app_id` are 16-byte ids encoded as
+32 lowercase hex digits. A new app MUST have its app id allocated before review (as the host's current stage does);
+its slug is `meta.slug`. There is no caller-resolved slug-to-app substitution after consent. This amendment covers
+hub publishing; direct-path approvals retain their existing explicit review and do not use a release grant.
+`meta` is the complete, validated version meta of §11.4: exactly `name`, `kind`, `access`, `audience`, `slug`, `reach`,
+`files` (each exactly `path`, `size`, `sha256`), `pw`, `label`, `ticket`. `access` and `audience` MUST equal their meta
+members. Audience keeps §11.4's wire representation: `null`, `"company"`, `"group:<hub group id>"` or
+`"ws:<workspace_id>"`; a group reference is its stable id, never a display name. This does not add multi-group access.
+`meta_hash` is §11.4's existing `b64u(H("orch/v2/app-meta|" || cj(meta)))` (label `h_app_meta`): the release grant reuses it unchanged.
+No field, including `reach`, the file hashes, `pw`, `label` or `ticket`, may be omitted from this hash.
+
+The signer renders the release review and signed `text` from `release`, recomputes its hash and duplicated fields,
+and refuses a discrepancy before signing. The first line remains `App approval: let an app go live`. The review MUST
+show the name, kind, slug, access, audience ids, reach, files with size and hash, workspace and hub, with the full meta
+available in details. Caller-authored prose, sidecars, display names and a version number are not authority. Text-only
+legacy notes remain history but MUST NOT create grants. The event's ticket context MUST match `meta.ticket`; `release.workspace_id` MUST equal the F1 signing context,
+and `release.hub_id` MUST match that workspace's hub in the signer's trusted configuration.
+
+**Host-local record (not on the wire).** The signer alone holds this exact record, indexed by its signed event id:
+
+```
+grant = {release_event_id, person_id, device_id, workspace_id, hub_id, app_id,
+         meta_hash, access, audience, pressed_mono_ms, expires_mono_ms}
+```
+
+Identity fields come from the signer's own signed event/envelope; release fields come from that event's `release`.
+Times come from the signer's monotonic clock at the press, with `expires_mono_ms = pressed_mono_ms + 600000`.
+The signer also retains its own signed event in memory to check the meta at approval time.
+A record's presence means unused; consumption removes it atomically. Neither a version nor a request hash is stored
+in the grant. No grant object, import/export operation or bearer capability is accepted from the host/dashboard.
+
+- **RG-1 (B1).** The signer MUST derive a grant ONLY from the exact `app.release` event it has itself just signed
+  following review, using the machine fields above. It MUST recompute `meta_hash`, check all duplicated fields and
+  render the words from them. It MUST NOT take grant inputs from caller sidecars or reconstruct authority from text.
+- **RG-2 (B2).** Before signing, the signer MUST receive and inspect `(method, host, target, body, hub_id, ts, nonce)`
+  and compute `request_hash` itself with §11.3's formula and the grant's workspace. It MUST NOT sign a supplied hash.
+  Method MUST be `POST`; the raw target MUST equal `/v1/ws/{workspace_id}/apps/{app_id}/commit` exactly (no query,
+  alternate encoding or normalisation). Hub and workspace MUST match the grant; host MUST match the signer's pinned
+  publish destination for that hub/workspace. `abs(ts_ms - signer_wall_clock_ms)` MUST be at most 120000.
+  The body MUST have §11.4's exact commit shape, `op: "commit"`, matching `app_id`, `meta_hash`, `access`, `audience`,
+  and the reach hash recomputed from the signed meta. The signer MUST hash the exact body bytes that will be sent,
+  reject duplicate JSON keys, and bind the approval to its own person/device. A changed request needs new checking.
+- **RG-3 (B3).** The commit body MUST carry §11.4's `meta_hash`, inside `request_hash`. Before making the
+  named version live, orch-publish MUST hash that version's stored, validated meta and require equality. A mismatch
+  MUST refuse with existing `meta_mismatch` (409); a missing/malformed hash MUST refuse with `malformed` (400).
+  Stored-file size/hash verification still applies. Vectors: `commit_meta_hash_mismatch`, `commit_meta_hash_ok`.
+- **RG-4 (B4).** A grant MUST bind `app_id`, `meta_hash`, `access`, `hub_id`, `workspace_id` and the signed audience;
+  it MUST NOT bind a version number. Upload may allocate the version later. RG-3 pins that selected version by meta;
+  the approval still binds the commit's concrete version through its request body.
+- **RG-5 (B5, L2-2 amendment).** A signer MUST allow consent-first custody only under RG-1 to RG-4 and RG-6 to RG-8:
+  the person's `app.release` press precedes upload and the host's drawing of the commit request, `ts` and nonce.
+  Without a valid release grant, the ordinary request-first review and signature order MUST remain in force.
+- **RG-6 (B6).** Only a real person's press on that exact release MUST create a grant. Remembered consent, batches,
+  “always allow”, replaying a signed log event, or agent-origin signing MUST NOT create one. Agents never sign.
+  An agent may prepare a stage, but the release actor and the press MUST be the person. One click on this computer
+  is eligible only when it requires that individual review and press.
+- **RG-7.** A grant MUST yield exactly ONE commit approval and MUST be consumed atomically when that approval is
+  signed, before returning it, not on confirmed commit. It MUST expire at `now_mono_ms >= expires_mono_ms` (at most
+  ten minutes from the press). The approval MUST retain the ordinary 120 s timestamp window and single-use request
+  nonce. Concurrent calls MUST NOT yield two approvals. After a failed/unknown commit or approval expiry the person
+  MUST press again and sign a fresh release event for a new grant; failure MUST NOT restore a consumed grant or permit a fresh-nonce retry.
+- **RG-8.** Grants MUST live only in signer process memory and MUST be lost on restart; no persistence or recovery
+  from the log is allowed. A grant MUST NOT authorise `app.start` or `app.rollback`, which keep their own approval.
+  For `access: public`, the signer's own review MUST warn that anyone can open the app and MUST use the button
+  **“Sign and publish to anyone”**. A dashboard-only warning does not satisfy this rule.
+
+**Signed-shape consumers (implementation obligations; no runtime changes in this amendment).**
+
+| Consumer | Required reading of the new note |
+| --- | --- |
+| `packages/core/src/orch/publishclient/approval.py`: `APP_MARK`, `app_release_text` | Keep the marker; build text from validated `release`/meta, including ids and the new hash; remove version as release consent input. `reserved_note_op`/`RESERVED_LINES` continue reserving the marker to `app.release`. |
+| `packages/core/src/orch/host/appops.py`: `_text`, `facts_for`, `signed_release`, send planning | Emit the machine fields; compare the signed fields and recomputed staged meta, actor and ticket before upload, not just matching prose. A persisted note permits no new grant; commit requires the live signer grant. |
+| `packages/core/src/orch/host/signer.py`: `_person_op` | Validate the exact release shape and bindings, rejecting text-only notes for grant creation and machine fields smuggled into another op. |
+| `packages/core/src/orch/host/signcontent.py`: `log.added`/`APP_MARK` review | Render verified machine fields, including the public warning, rather than trusting the note text as the whole effect. |
+| `packages/addons/dashboard/server/src/orch_dashboard/signing.py`: `APP_MARK`, `expected(AppRelease)` | Check `release.staged_id` and the machine shape; do not extract stage identity from a text line or supply grant fields. The signer remains authoritative. |
+| Marker guards: `packages/core/src/orch/ops/plans.py` and `host/signer.py` via `reserved_note_op`; `packages/core/src/orch/hubclient/custodial.py` | Keep reserved-text protection and reject release machine payloads through ordinary/agent/custodial note paths, even without the marker. Hub custody cannot mint a local release grant. |
+| Tests: core `tests/publishclient/test_app_release.py`, `tests/host/test_appops.py`, `tests/host/test_publishing.py`, `tests/hub/test_custodial.py`; dashboard `server/tests/test_shares.py` | Replace marker/text-only acceptance fixtures with machine-field assertions; retain reserved-marker negatives and legacy-history coverage. |
+
+The click signer must also carry these fields through its ordinary event validation/signing path and implement the
+memory record above. Generic event readers must preserve the signed `release` member, never silently strip it.
+
+##### Required tests
+
+These are build requirements, not claims of implemented verification. Each row includes negative coverage.
+
+| Rule | Required tests |
+| --- | --- |
+| RG-1 | Forged sidecar `meta_hash`/access/audience/app/workspace/hub cannot seed a grant; mismatched prose, missing/extra machine fields, meta-hash mismatch, a group display name substituted for its id, wrong ticket and a legacy text-only note are refused. `release_note_fields` pins canonical event content and sample meta hashing. |
+| RG-2 | Caller-supplied hash alone, non-POST, wrong app/workspace/hub/host, query or encoded target, stale or future `ts` beyond 120 s, duplicate body keys and mismatched body fields are refused; exact ±120 s boundaries are covered. |
+| RG-3 | `commit_meta_hash_mismatch` refuses; `commit_meta_hash_ok` accepts with otherwise valid approval/files. Missing `meta_hash` is `malformed`; a reach-only or file-hash-only stored-meta change is `meta_mismatch`, never served. |
+| RG-4 | Substituting any bound identity/access/meta/audience fails. A version allocated after the press succeeds only with identical meta; the same version number with different meta fails. |
+| RG-5 | Consent-first signing without a live matching grant fails; normal explicit request-first approval still works. Upload/commit cannot precede the release press on the grant path. |
+| RG-6 | Agent release/signing, remembered consent, batch/always-allow signing and replay of an old person-signed release create no grant; an agent-prepared stage with a fresh person press can. |
+| RG-7 | Second use, two concurrent requests, retry after failure/unknown outcome, fresh-nonce retry and age >= 600000 ms fail. Just below expiry can sign; ts expiry and server nonce replay still fail independently. |
+| RG-8 | Restart loses the grant; disk/log restoration, start/rollback substitution and public review without its own warning or exact button fail. |
+
+**Vectors.** `../publish/release_grant_v1.json` (generator `../publish/make_release_grant_vectors.py`) pins this
+amendment; its cases are pending until the build implements them. `meta_hash` is §11.4's existing domain-separated hash,
+so `vectors_published.json` stays valid as it is.
 
 ### 11.4 Published: links and apps (M4, #1357; vectors `vectors_published.json`)
 

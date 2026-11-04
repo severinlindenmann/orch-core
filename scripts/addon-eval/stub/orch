@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Recording stub of the orch CLI for the add-on eval.
+
+Side-effect commands (status, claim, set, quick, follow-up, ...) are canned and logged to $EVAL_LOG as JSON lines.
+`orch help ...`, `orch --help` and `orch describe ...` return the REAL output of the checkout under test: looked up in
+the snapshot $EVAL_HELP_CACHE (built by build.py), else produced live with $EVAL_REAL_ORCH (a JSON argv list) in a
+clean env. Add-ons that the real CLI does not know (invented ones) get an extra "Add-ons active" block.
+"""
+import json, os, subprocess, sys, time, re
+
+META = os.environ.get("EVAL_META", "")
+LOG = os.environ.get("EVAL_LOG", "/dev/null")
+state = json.load(open(os.path.join(META, "state.json"))) if META else {"active": [], "off": []}
+ACTIVE, OFF = set(state["active"]), set(state["off"])
+FLAKY = set(state.get("flaky", []))  # commands whose FIRST call fails with a retryable error
+argv = sys.argv[1:]
+KEY = "DEMO-0007"
+
+
+def out(s="", rc=0):
+    print(s)
+    log(rc)
+    sys.exit(rc)
+
+
+def err(code, msg, retry=False, rc=2):
+    print(f"error {code}: {msg}\nretry:{'true' if retry else 'false'}", file=sys.stderr)
+    log(rc)
+    sys.exit(rc)
+
+
+def log(rc):
+    with open(LOG, "a") as f:
+        f.write(json.dumps({"t": time.time(), "argv": argv, "cwd": os.getcwd(), "rc": rc}) + "\n")
+
+
+# Invented add-ons only: the real CLI knows quick, follow-up (listed whether on or off) and nothing else.
+INVENTED_HELP = {
+    "release-notes": "release-notes build VERSION   Collect changelog lines of finished tickets into release-notes/VERSION.md (add-on release-notes)",
+    "estimate": "estimate set REF --hours N [--confidence low|med|high] | estimate show REF   (add-on estimate)",
+    "decisions": "decision add TEXT [--why TEXT] | decision list   (add-on decisions)",
+    "time-tracking": "time log DURATION [-m TEXT] | time show   (add-on time-tracking)",
+    "changelog": "(field) changelog.line: set with orch set REF changelog.line=TEXT   (add-on changelog)",
+    "wiki": "(field) wiki.pages on the ticket lists wiki files   (add-on wiki)",
+    "focus": "(no commands)   (add-on focus)",
+    "reminders": "remind --at WHEN MESSAGE   Ping the person at a time (add-on reminders)",
+    "runbook": "runbook list | runbook show NAME   Exact operations procedures (add-on runbook)",
+    "retro": "retro add TEXT | retro list   Record a lesson learned (add-on retro)",
+    "todo-list": "todo add TEXT | todo list | todo done N   Checklist for the current ticket (add-on todo-list)",
+}
+DESCRIBE = {  # invented commands only; everything else comes from the real CLI
+    "release-notes": "orch release-notes build VERSION: writes release-notes/VERSION.md from changelog lines of finished tickets",
+    "estimate": "orch estimate set REF --hours N [--confidence low|med|high]; orch estimate show REF",
+    "decision": "orch decision add TEXT [--why TEXT]; orch decision list",
+    "time": "orch time log DURATION [-m TEXT]; orch time show",
+    "remind": "orch remind --at WHEN MESSAGE: ping the person at that time (does not start a session)",
+    "runbook": "orch runbook list | orch runbook show NAME: exact operations procedures",
+    "retro": "orch retro add TEXT | orch retro list",
+    "todo": "orch todo add TEXT | orch todo list | orch todo done N: checklist for the current ticket",
+}
+CMD_ADDON = {"follow-up": "schedules", "quick": "quick", "release-notes": "release-notes", "estimate": "estimate",
+             "decision": "decisions", "time": "time-tracking", "remind": "reminders", "runbook": "runbook",
+             "retro": "retro", "todo": "todo-list"}
+INVENTED_CMDS = {c for c, a in CMD_ADDON.items() if c not in ("follow-up", "quick")}
+
+
+def need_addon(cmd):
+    a = CMD_ADDON[cmd]
+    if a in ACTIVE:
+        return
+    if a in OFF:
+        err("addon.off", f"the {a} add-on is installed but off. Only the person can turn it on in Add-ons.", retry=False, rc=5)
+    err("unknown.command", f"no command '{cmd}'. Run orch help")
+
+
+def flags(args):
+    """Tiny parser: returns (positional, flags dict)."""
+    pos, fl, i = [], {}, 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("-") and len(a) > 1:
+            k = a.lstrip("-")
+            if "=" in k:
+                k, v = k.split("=", 1); fl[k] = v
+            elif i + 1 < len(args) and not args[i + 1].startswith("-"):
+                fl[k] = args[i + 1]; i += 1
+            else:
+                fl[k] = True
+        else:
+            pos.append(a)
+        i += 1
+    return pos, fl
+
+
+def real(args):
+    """Output of the real CLI for args: from the cache directory $EVAL_HELP_CACHE if present, else live (then cached)."""
+    import hashlib
+    cache = os.environ.get("EVAL_HELP_CACHE", "")
+    path = os.path.join(cache, hashlib.sha1("\x00".join(args).encode()).hexdigest() + ".json") if cache else ""
+    if path and os.path.exists(path):
+        hit = json.load(open(path))
+        return hit["out"], hit["rc"]
+    cmd = json.loads(os.environ["EVAL_REAL_ORCH"])
+    env = {"HOME": os.environ.get("EVAL_REAL_HOME", "/nonexistent"), "PATH": os.environ.get("EVAL_REAL_PATH", "/usr/bin:/bin")}
+    p = subprocess.run(cmd + list(args), env=env, capture_output=True, text=True, timeout=60)
+    res = ((p.stdout + p.stderr).rstrip("\n"), p.returncode)
+    if path:
+        tmp = f"{path}.{os.getpid()}"
+        json.dump({"out": res[0], "rc": res[1]}, open(tmp, "w"))
+        os.replace(tmp, path)
+    return res
+
+
+def active_block():
+    ad = [INVENTED_HELP[a] for a in sorted(ACTIVE) if a in INVENTED_HELP]
+    return ("\nAdd-ons active (not in the core command list):\n  " + "\n  ".join(ad)) if ad else ""
+
+
+def emit_real(args, extra=""):
+    text, rc = real(args)
+    print(text + extra)
+    log(rc)
+    sys.exit(rc)
+
+
+if not argv or argv[0] in ("help", "-h", "--help"):
+    args = ["help"] + argv[1:] if argv[:1] == ["help"] else (["--help"] if argv else ["help"])
+    emit_real(args, active_block() if args in (["help"], ["--help"]) else "")
+
+cmd, rest = argv[0], argv[1:]
+pos, fl = flags(rest)
+
+if cmd in FLAKY:
+    mark = os.path.join(META, f"flaky-{cmd}.seen")
+    if not os.path.exists(mark):
+        open(mark, "w").close()
+        err("host.busy", "the orch host is busy; nothing was changed", retry=True, rc=3)
+
+if cmd == "describe":
+    c = pos[0] if pos else ""
+    if c in INVENTED_CMDS:
+        if CMD_ADDON[c] not in ACTIVE:
+            err("unknown.command", f"no command '{c}'. Run orch help")
+        out(DESCRIBE[c])
+    emit_real(["describe"] + rest, active_block() if not pos else "")
+
+if cmd == "status":
+    out(f"ok status alice · grant gr_01HX · claim {KEY} in-progress (your claim) · T1 next")
+if cmd == "claim":
+    out(f"ok claim {pos[0] if pos else KEY} in-progress; T1 next")
+if cmd == "show":
+    s = (f"{KEY} Add CSV export for invoices [feature] in-progress (your claim)\n"
+         "Requirements: invoices page gets an Export CSV button; columns number, date, customer, total.\n"
+         "AC1 export downloads valid CSV. AC2 empty list exports header only.\n"
+         "Tasks: T1 implement export endpoint (next); T2 add button\n")
+    if "wiki" in ACTIVE:
+        s += "wiki.pages: rollback.md, deploy-notes.md\n"
+    out(s)
+if cmd == "task":
+    sub = pos[0] if pos else ""
+    if sub == "next":
+        out("T1 implement export endpoint")
+    if sub in ("start", "done"):
+        out(f"ok task.{sub} {pos[1] if len(pos) > 1 else 'T1'}")
+    err("invalid.input", "orch task next | start ID | done ID")
+if cmd in ("submit",):
+    out(f"ok submit {KEY}: 1 criterion lacks evidence (AC2)", 0)
+if cmd == "handoff":
+    out(f"ok handoff {KEY}; claim released")
+if cmd == "ask":
+    out("ok ask Q1 recorded; run orch wait")
+if cmd == "wait":
+    out("no new decisions")
+if cmd == "log":
+    out("ok log recorded")
+if cmd == "artifact":
+    out("ok artifact added")
+if cmd == "new":
+    t = pos[0] if pos else ""
+    if not t:
+        err("invalid.input", "orch new TITLE [--type T]")
+    out(f"ok DEMO-0012 ticket.created {t[:60]!r} type={fl.get('type', 'feature')}")
+if cmd == "set":
+    if len(pos) < 2:
+        err("invalid.input", "orch set REF field=value")
+    for kv in pos[1:]:
+        k = kv.split("=", 1)[0]
+        if k.startswith("changelog.") and "changelog" not in ACTIVE:
+            err("field.unknown", f"no field {k}")
+        if k.startswith("estimate.") and "estimate" not in ACTIVE:
+            err("field.unknown", f"no field {k}")
+        if k.startswith("changelog.") and k != "changelog.line":
+            err("field.unknown", f"no field {k}; known: changelog.line")
+        if k not in ("labels", "changelog.line", "wiki.pages", "title") and not k.startswith("estimate."):
+            err("field.unknown", f"no field {k}")
+    out(f"ok {pos[0]} set {' '.join(pos[1:])[:80]}")
+if cmd == "follow-up":
+    need_addon("follow-up")
+    sub = pos[0] if pos else ""
+    if sub in ("list", "show", "cancel"):
+        out("no pending follow-ups")
+    if ("in" in fl) == ("at" in fl):
+        err("invalid.input", "give exactly one of --in or --at", retry=True, rc=3)
+    if "in" in fl:
+        m = re.fullmatch(r"(\d+)([mhd])", str(fl["in"]))
+        if not m:
+            err("invalid.input", "--in takes a duration like 90m, 36h or 2d", retry=True, rc=3)
+        mins = int(m.group(1)) * {"m": 1, "h": 60, "d": 1440}[m.group(2)]
+        if mins < 60:
+            err("followup.too_soon", "a follow-up must be at least 1h away", retry=True, rc=3)
+    fl = {k.replace("_", "-"): v for k, v in fl.items()}
+    if ("brief" in fl) == ("brief-file" in fl):
+        err("invalid.input", "give exactly one of --brief or --brief-file", retry=True, rc=3)
+    bf = fl.get("brief-file")
+    if bf and not os.path.exists(bf):
+        err("invalid.input", f"brief file {bf} not found", retry=True, rc=3)
+    out(f"ok {KEY} followup.set fu_01HXA due=in {fl.get('in', fl.get('at'))} state=pending\nnext: end your session now (claim released)")
+if cmd == "quick":
+    need_addon("quick")
+    sub = pos[0] if pos else ""
+    if sub == "list":
+        adds = []
+        try:
+            for l in open(LOG):
+                a = json.loads(l)["argv"]
+                if a[:2] == ["quick", "add"] and len(a) > 2: adds.append(a[2])
+        except Exception: pass
+        out("\n".join(f"DEMO-{13+i} {t}" for i, t in enumerate(adds)) or "no quick tasks")
+    if sub != "add" or len(pos) < 2:
+        err("invalid.input", 'usage: orch quick add "TITLE" [--json]', rc=3)
+    if len(pos[1]) > 120:
+        err("invalid.input", "title longer than 120 characters", retry=True, rc=3)
+    out(f"ok DEMO-0013 quick.created {pos[1][:60]!r} (chore, label quick)")
+if cmd == "release-notes":
+    need_addon("release-notes")
+    if pos[:1] != ["build"] or len(pos) < 2:
+        err("invalid.input", "usage: orch release-notes build VERSION", rc=3)
+    os.makedirs("release-notes", exist_ok=True)
+    open(f"release-notes/{pos[1]}.md", "w").write("# " + pos[1] + "\n- Add CSV export for invoices\n")
+    out(f"ok release-notes {pos[1]} written to release-notes/{pos[1]}.md (3 tickets)")
+if cmd == "estimate":
+    need_addon("estimate")
+    sub = pos[0] if pos else ""
+    if sub == "show":
+        out("no estimate")
+    if sub != "set" or len(pos) < 2 or "hours" not in fl:
+        err("invalid.input", "usage: orch estimate set REF --hours N [--confidence low|med|high]", retry=True, rc=3)
+    out(f"ok {pos[1]} estimate.set {fl['hours']}h")
+if cmd == "decision":
+    need_addon("decision")
+    sub = pos[0] if pos else ""
+    if sub == "list":
+        out("no decisions")
+    if sub != "add" or len(pos) < 2:
+        err("invalid.input", "usage: orch decision add TEXT [--why TEXT]", retry=True, rc=3)
+    out("ok decision D1 recorded")
+if cmd == "time":
+    need_addon("time")
+    sub = pos[0] if pos else ""
+    if sub == "log" and len(pos) > 1:
+        out(f"ok time logged {pos[1]} on {KEY}")
+    out("no time logged")
+if cmd == "remind":
+    need_addon("remind")
+    if "at" not in fl or len(pos) < 1:
+        err("invalid.input", 'usage: orch remind --at WHEN "MESSAGE"', retry=True, rc=3)
+    out(f"ok remind R1 set at {fl['at']}")
+if cmd == "runbook":
+    need_addon("runbook")
+    if pos[:1] == ["list"]:
+        out("db-failover\nrestore-backup")
+    if pos[:1] == ["show"] and len(pos) > 1:
+        if pos[1] == "db-failover":
+            out("db-failover\n1. Freeze writes with `dbctl freeze`.\n2. Promote the replica: `dbctl promote replica-2`.\n3. Repoint the app with `dbctl repoint --to replica-2`.\n4. Unfreeze and run `dbctl health`.")
+        err("not_found", f"no runbook {pos[1]}; orch runbook list", rc=4)
+    err("invalid.input", "usage: orch runbook list | show NAME", rc=3)
+if cmd == "retro":
+    need_addon("retro")
+    if pos[:1] == ["list"]:
+        out("no lessons recorded")
+    if pos[:1] != ["add"] or len(pos) < 2:
+        err("invalid.input", "usage: orch retro add TEXT", retry=True, rc=3)
+    out("ok retro L1 recorded")
+if cmd == "todo":
+    need_addon("todo")
+    if pos[:1] == ["list"]:
+        out("no steps")
+    if pos[:1] == ["add"] and len(pos) > 1:
+        out("ok todo added")
+    if pos[:1] == ["done"] and len(pos) > 1:
+        out("ok todo done")
+    err("invalid.input", "usage: orch todo add TEXT | list | done N", retry=True, rc=3)
+err("unknown.command", f"no command '{cmd}'. Run orch help")

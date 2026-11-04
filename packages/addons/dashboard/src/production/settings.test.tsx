@@ -266,7 +266,9 @@ it('removing a member is signed with One click; you cannot remove yourself or th
   const user = userEvent.setup()
   show('/w/DEMO/settings/members')
   await screen.findByRole('list', { name: 'People' }, T)
-  expect(screen.getByRole('button', { name: 'Remove Sev' })).toBeDisabled()
+  // W27: no greyed, active-looking Remove for yourself / the only owner; the reason is visible text, not a tooltip
+  expect(screen.queryByRole('button', { name: 'Remove Sev' })).not.toBeInTheDocument()
+  expect(screen.getByTestId('only-owner-note')).toHaveTextContent('You are the only owner. To change your role, make someone else an owner first.')
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
   await prepareByClick(await screen.findByRole('dialog', {}, T), 'Remove Tom')
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'member_remove', person: TOM }])

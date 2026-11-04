@@ -618,6 +618,15 @@ test('a used-up setup link leads to the dashboard and keeps the terminal steps b
   expect(screen.getByText('Reason: setup.ended')).toBeInTheDocument()
 })
 
+test('W20: a used link whose session is gone names one cause only (no "lost its link" line)', async () => {
+  document.body.innerHTML = '<div id="root"></div>'
+  const { mount } = await import('./Setup')
+  await mount(Promise.reject(new SetupError('session.expired')))
+  expect(await screen.findByRole('heading', { name: 'This setup link was already used' })).toBeInTheDocument()
+  expect(document.body.textContent).not.toContain('lost its link')
+  expect(screen.getByText('Reason: session.expired')).toBeInTheDocument() // the code stays under Technical details
+})
+
 test('another bootstrap failure keeps a generic heading with the same way out', async () => {
   document.body.innerHTML = '<div id="root"></div>'
   const spy = vi.spyOn(console, 'error').mockImplementation(() => {})

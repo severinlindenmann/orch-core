@@ -66,7 +66,7 @@ const openFailedLater = 'If this keeps failing, run orch setup again in your pro
 function Reason({ reason, plain }: { reason: string; plain?: string }) {
   return (
     <>
-      <small>{plain ?? plainReason(reason)}</small>
+      {(plain ?? plainReason(reason)) && <small>{plain ?? plainReason(reason)}</small>}
       <details className="reason">
         <summary>Technical details</summary>
         <small>Reason: {reason}</small>
@@ -1628,7 +1628,8 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
             new recovery words.
           </p>
         </details>
-        <Reason reason={reason} />
+        {/* W20: a used link says one cause: the heading; the code stays under Technical details */}
+        <Reason reason={reason} plain={used ? '' : undefined} />
       </main>,
     )
   }

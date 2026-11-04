@@ -269,6 +269,7 @@ export function Members({ workspace, viewer, canEdit }: { workspace: Workspace; 
                       {m.name}
                       <span className="font-mono text-[11px] text-text-faint">{m.person}</span>
                     </span>
+                    {lastOwner && <span data-testid="only-owner-note" className="mt-1 block text-[12px] text-text-muted">{m.person === viewer ? 'You are the only owner. To change your role, make someone else an owner first.' : 'The only owner. To change this role, make someone else an owner first.'}</span>}
                   </TableCell>
                   <TableCell>
                     {lastOwner && canEdit ? (
@@ -287,13 +288,12 @@ export function Members({ workspace, viewer, canEdit }: { workspace: Workspace; 
                   <TableCell className="tabular-nums">{m.devices ?? 0}</TableCell>
                   <TableCell className="text-text-muted">{m.last_seen ? ago(m.last_seen) : 'never'}</TableCell>
                   <TableCell>
-                    {canEdit && (
+                    {/* W27 (mockup, same rule as host/Members): no greyed Remove for yourself or the only owner */}
+                    {canEdit && m.person !== viewer && !lastOwner && (
                       <Button
                         variant="ghost"
                         size="sm"
                         aria-label={`Remove ${m.name}`}
-                        disabled={m.person === viewer}
-                        title={m.person === viewer ? 'You cannot remove yourself.' : undefined}
                         onClick={() =>
                           ask({
                             title: `Remove ${m.name}`,

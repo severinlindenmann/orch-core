@@ -36,6 +36,7 @@ _PERSON = re.compile(r"p_[0-9a-f]{32}")
 _TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")
 MAX_HELD = 64
 MAX_RUN_HELD = 16
+MAX_RELEASE_HELD = 256
 _RUN = re.compile(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 
 
@@ -66,6 +67,8 @@ class GrantStore:
         self._lock = threading.Lock()
         self._held: dict[tuple[str, str], _Held] = {}
         self._runs: dict[str, _Held] = {}
+        #: run -> the secret that run was started with, kept only to release its claim when it ends (W31)
+        self._release: dict[str, _Held] = {}
         self.clock = clock
 
     def put(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -139,21 +142,47 @@ class GrantStore:
             if held is None or held.grant != grant:
                 raise GrantError("launch.no_grant", "the runner holds no such grant for this run")
             del self._runs[run]
+            self._keep_release(run, held)
             return held.secret
 
     def drop(self, grant: Any) -> bool:
         dropped = False
         with self._lock:
-            for entries in (self._held, self._runs):
+            for entries in (self._held, self._runs, self._release):
                 for key, held in list(entries.items()):
                     if held.grant == grant:
                         del entries[key]
                         dropped = True
         return dropped
 
-    def secret_for(self, workspace_id: str, person: str, grant: Any) -> str:
+    def _keep_release(self, run: Any, held: _Held) -> None:
+        """Caller holds the lock. Expired entries go first; the oldest goes when the store is full."""
+        if not (isinstance(run, str) and _RUN.fullmatch(run)):
+            return
+        now = self.clock()
+        for key, old in list(self._release.items()):
+            if old.until_s <= now:
+                del self._release[key]
+        while len(self._release) >= MAX_RELEASE_HELD:
+            del self._release[next(iter(self._release))]
+        self._release[run] = held
+
+    def secret_for_release(self, run: str) -> str | None:
+        """Take (once) the secret ``run`` was started with, for releasing its claim at the run's end. ``None`` when
+        there is none: the grant was dropped (revoked), it has expired, or the run never had one."""
+        with self._lock:
+            held = self._release.pop(run, None)
+            if held is None or held.until_s <= self.clock():
+                return None
+            return held.secret
+
+    def forget_release(self, run: str) -> None:
+        with self._lock:
+            self._release.pop(run, None)
+
+    def secret_for(self, workspace_id: str, person: str, grant: Any, run: Any = None) -> str:
         """The secret of ``grant`` if it is this (workspace, person)'s current, unexpired grant; else
-        ``launch.no_grant``."""
+        ``launch.no_grant``. ``run`` (the run it is for) keeps it for :meth:`secret_for_release`."""
         with self._lock:
             held = self._held.get((workspace_id, person))
             if held is not None and held.until_s <= self.clock():
@@ -161,6 +190,8 @@ class GrantStore:
                 held = None
         if held is None or held.grant != grant:
             raise GrantError("launch.no_grant", "the runner holds no such runner grant for this person")
+        with self._lock:
+            self._keep_release(run, held)
         return held.secret
 
     def report(self) -> list[dict[str, Any]]:
@@ -175,7 +206,7 @@ class GrantStore:
 
     def secrets(self) -> list[str]:
         with self._lock:
-            return [h.secret for entries in (self._held, self._runs) for h in entries.values()]
+            return [h.secret for entries in (self._held, self._runs, self._release) for h in entries.values()]
 
 
 class RedactFilter(logging.Filter):

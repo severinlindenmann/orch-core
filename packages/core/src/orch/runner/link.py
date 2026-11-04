@@ -49,7 +49,7 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
-from . import mcpconfig, rules, transcript, transcript_children, transcript_sources
+from . import claimend, mcpconfig, rules, transcript, transcript_children, transcript_sources
 from .config import ConfigError, RunnerConfig
 from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
@@ -228,7 +228,9 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
             raise SpawnError("launch.no_grant", "spawn: an agent needs its person's runner grant")
         try:
             env["ORCH_GRANT"] = (
-                grants.secret_for_run(args.get("run"), grant) if run_grant else grants.secret_for(wid, person, grant)
+                grants.secret_for_run(args.get("run"), grant)
+                if run_grant
+                else grants.secret_for(wid, person, grant, args.get("run"))
             )
         except GrantError as exc:
             raise SpawnError(exc.code, exc.message) from None
@@ -314,6 +316,12 @@ class HostLink:
         self._repo_locks: dict[str, threading.Lock] = {}
         #: run -> (workspace root, work folder) a Claude Code trust entry was recorded for
         self._trusted: dict[str, tuple[str, str]] = {}
+        #: W31: run -> the agent run's environment without its secret (its claim is released when it ends), and the
+        #: outcome once decided; ``claim_cli`` runs ``orch`` for that (tests replace it)
+        self._claims: dict[str, dict[str, str]] = {}
+        self._claim_out: dict[str, bool] = {}
+        self._claim_lock = threading.Lock()
+        self.claim_cli: claimend.CliFn = claimend.run_cli
         #: tests: drop the report of these commands (a lost ack)
         self.drop_reports: set[str] = set()
         sup.on_event = self._on_event
@@ -571,6 +579,8 @@ class HostLink:
                 if self._restarting():
                     raise SpawnError("runner.unavailable", "the agent runner is restarting on a new release; try again")
                 res = self.sup.spawn(spec)
+                if spec.kind == "agent" and not res.get("duplicate"):
+                    self._claims[spec.run] = {k: v for k, v in spec.env.items() if k != "ORCH_GRANT"}
                 if not res.get("duplicate"):  # the transcript reader finds the run's file from these
                     harness = _harness_of(spec.argv, self.config())
                     self.sup.table.update(spec.run, harness=harness, cwd_path=spec.cwd.get("path"))
@@ -656,16 +666,35 @@ class HostLink:
 
             refresh(self.env, *got)
 
+    def _end_claim(self, run: str) -> bool:
+        """W31: the run's leader ended: release its claim as the agent, once. True if this run's claim was released."""
+        with self._claim_lock:
+            base = self._claims.pop(run, None)
+            if base is None:
+                return self._claim_out.get(run, False)
+            try:
+                done = claimend.release_claim(run, base, self.grants.secret_for_release(run), self.claim_cli)
+            except Exception:  # noqa: BLE001 - never let a failed release stop the exit report
+                LOG.info("run %s: claim release failed", run)
+                done = False
+            self._claim_out[run] = done
+            while len(self._claim_out) > 256:
+                del self._claim_out[next(iter(self._claim_out))]
+            return done
+
     def _on_event(self, kind: str, run: str, payload: dict[str, Any]) -> None:
         if kind == "exit":
             with contextlib.suppress(Exception):
                 self._after_exit(run)
-        if not self.ready.is_set() or kind != "cleanup":
-            return  # the next hello carries the state; runner.exit is sent once the clean-up has a result
+        if kind != "cleanup":
+            return
         rec = self.sup.table.get(run) or {}
         exit_ = rec.get("exit") or {}
         if not exit_:
             return  # a leader still alive (incomplete stop): no exit to report yet
+        released = self._end_claim(run)  # also when the host is away: the claim is the host's, not this link's
+        if not self.ready.is_set():
+            return  # the next hello carries the state; runner.exit is sent once the clean-up has a result
         args: dict[str, Any] = {
             "run": run,
             "code": exit_.get("code"),
@@ -673,6 +702,8 @@ class HostLink:
             "at": exit_.get("at") or now_iso(),
             "cleanup": payload.get("cleanup") or "unknown",
         }
+        if released:
+            args["claim_released"] = True
         with contextlib.suppress(OSError, ConnectionError):
             self._send_req("runner.exit", args)
 

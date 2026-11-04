@@ -211,7 +211,9 @@ class ShareItem:
         if self.kind == "summary":
             return f"needs you: {self.payload['type']}: {self.payload['title']}{extra}"
         if self.kind == "question":
-            return f"question on {clean_line(self.ticket_key)}: {self.payload['title']}"
+            # W09 (#1074): the whole question the item sends (its text), on one line; not the cut title
+            whole = clean_line(self.payload.get("text") or self.payload["title"])
+            return f"question on {clean_line(self.ticket_key)}: {whole}"
         return f"ticket {clean_line(self.ticket_key)}: {self.payload['title']}"
 
 

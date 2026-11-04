@@ -165,7 +165,7 @@ def test_the_default_child_gets_a_cleaned_environment(monkeypatch):
     seen = {}
 
     def fake(argv, **kw):
-        seen["argv"], seen["env"] = argv, kw["env"]
+        seen["argv"], seen["env"], seen["cwd"] = argv, kw["env"], kw.get("cwd")
         return subprocess.CompletedProcess(argv, 0, "{}", "")
 
     monkeypatch.setattr(subprocess, "run", fake)
@@ -174,6 +174,8 @@ def test_the_default_child_gets_a_cleaned_environment(monkeypatch):
     )
     assert seen["argv"][-2:] == ["release", "A-1"]
     assert "PYTHONPATH" not in seen["env"] and "LD_PRELOAD" not in seen["env"] and seen["env"]["ORCH_GRANT"] == "g"
+    # Opus W31: the child never imports from the current folder (a planted orch/__main__.py) and runs from "/"
+    assert seen["argv"][1:4] == ["-P", "-m", "orch"] and seen["cwd"] == "/"
 
 
 def test_the_store_keeps_a_run_secret_for_release_once_and_forgets_it_on_drop():

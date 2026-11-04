@@ -36,7 +36,11 @@ def run_cli(argv: list[str], env: Mapping[str, str]) -> tuple[int, str]:
     """Run ``orch <argv>`` as a child with a cleaned copy of ``env``. Never raises."""
     try:
         done = subprocess.run(
-            [sys.executable, "-m", "orch", *argv],
+            # Opus W31: -P keeps the current folder off sys.path and cwd="/" is a folder no agent writes, so a planted
+            # orch/__main__.py (e.g. in $HOME, a service's default folder) is never what runs with the grant; the
+            # workspace comes from ORCH_WORKSPACE in the run's own environment
+            [sys.executable, "-P", "-m", "orch", *argv],
+            cwd="/",
             env=childenv.sanitize(env),
             stdin=subprocess.DEVNULL,
             capture_output=True,

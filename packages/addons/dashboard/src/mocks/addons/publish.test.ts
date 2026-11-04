@@ -150,7 +150,7 @@ describe('publish shares', () => {
 
 describe('publish decisions', () => {
   const ids = async (s: ReturnType<typeof setup>) => (await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'publish').map((d) => d.id)
-  it('shows the failed-build decision to Severin, not to Tom', async () => {
+  it('shows the failed-build decision to Anna Test, not to Tom', async () => {
     const s = setup()
     expect(await ids(s)).toEqual(expect.arrayContaining(['dec_publish_report', 'dec_publish_failed_build']))
     s.store.setViewer('p_tom')
@@ -240,7 +240,7 @@ describe('publish app details (Apps rows open as an accordion)', () => {
     expect(p.Memory).toMatch(/ of 1\.0 GB$/)
     expect(p.Disk).toMatch(/^\d+(\.\d)? (GB|MB) of 5\.0 GB$/)
     expect(p['Last deploy']).toMatch(/^[0-9a-f]{7} · 8 Oct, /)
-    expect(p.Recipients).toBe('Mara, Severin')
+    expect(p.Recipients).toBe('Mara, Anna Test')
     const req = billing.children[1].children[2]
     expect(req.trend).toHaveLength(24)
     expect(req.value).toBe(req.trend.reduce((a, b) => a + b, 0).toLocaleString('en-US'))

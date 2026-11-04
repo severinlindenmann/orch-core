@@ -386,7 +386,7 @@ const dropOptions = (scenario: LayoutScenario): DropFixtureOptions => {
           dropItem({ name: 'invoice\u202Efdp.exe', mime: 'application/octet-stream', author: AGENT }),
           dropItem({ name: 'line one\nline two\u0000.txt', mime: 'text/plain' }),
           dropItem({ name: null, name_hidden: true }),
-          dropItem({ name: `${'a very long file name with many words '.repeat(5)}.docx`, author: { ...PHONE, person_name: `Severin ${LONG_WORD}`, device: `d_${LONG_WORD.toLowerCase()}` } }),
+          dropItem({ name: `${'a very long file name with many words '.repeat(5)}.docx`, author: { ...PHONE, person_name: `Anna Test ${LONG_WORD}`, device: `d_${LONG_WORD.toLowerCase()}` } }),
           dropItem({ name: `${LONG_URL}`, claimed: false }),
         ],
       }

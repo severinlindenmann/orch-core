@@ -12,7 +12,7 @@ export const MAC = dev('f')
 export const PHONE = dev('1')
 export const LAPTOP = dev('2')
 export const OLD_PHONE = dev('3')
-const LONG = `Severin’s iPhone 17 Pro Max ${'U'.repeat(90)}`.slice(0, 80)
+const LONG = `Anna Test’s iPhone 17 Pro Max ${'U'.repeat(90)}`.slice(0, 80)
 
 const device = (id: string, over: Partial<RosterDevice> = {}): RosterDevice => ({
   id, auth: null, scopes: ['look', 'decide'], valid: true, label: null, label_hidden: false, paired_at: null, relay: false, cert_expires_at: null, reader: 1, ...over,
@@ -22,7 +22,7 @@ const device = (id: string, over: Partial<RosterDevice> = {}): RosterDevice => (
 export function readersRoster(): RosterMember[] {
   return [
     {
-      person: ME, name: 'Severin', role: 'owner', devices: [
+      person: ME, name: 'Anna Test', role: 'owner', devices: [
         device(MAC, { auth: 'passphrase', scopes: ['look', 'decide', 'operate', 'type'] }),
         device(PHONE, { label: LONG, relay: true, paired_at: '2026-10-12T09:00:00Z', cert_expires_at: '2027-10-12T09:00:00Z' }),
         device(OLD_PHONE, { label: 'Work phone\nsecond line', relay: true, paired_at: '2026-10-01T09:00:00Z', reader: null }),

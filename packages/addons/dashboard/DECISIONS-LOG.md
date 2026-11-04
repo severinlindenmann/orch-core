@@ -2174,3 +2174,9 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 - **Decision:** Show core's current delivery state, and reuse the existing share review for a confirming sync. Send now opens a preview; Sign explicitly confirms its plan through the existing owner-only endpoint. No new signing operation or automatic confirmation.
 - **Why:** A rule retained before joining has no confirmed selection, so an automatic retry cannot deliver it. A selected ticket is not evidence of delivery.
 - **Revert:** Remove the new entry points and delivery badges together; retain core's confirmation boundary.
+
+## 2026-11-04 — Static public visual demo
+
+- **Decision:** A separate demo Vite config retains the mock transport and uses hash history; a root script assembles the dashboard, setup, hub and publish previews for GitHub Pages. Demo builds show a sample-data badge. Identifiable fixture values are replaced with neutral examples.
+- **Why:** A public static demo needs no host, credentials or history fallback; production entry selection and mock rejection must remain unchanged.
+- **Revert:** Remove the demo config, helper, build script and Pages workflow, and restore the demo-specific navigation branches.

@@ -170,7 +170,7 @@ describe('busy store: histories', () => {
 })
 
 describe('busy store: Today under pressure', () => {
-  it('Severin has at least 20 open items and Mara about 10', () => {
+  it('Anna Test has at least 20 open items and Mara about 10', () => {
     const sev = setup('p_sev')
     const today = sev.store.today(sev.id('DEMO'))
     expect(today.needs_you.length).toBeGreaterThanOrEqual(20)

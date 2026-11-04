@@ -169,10 +169,10 @@ describe('usage by person', () => {
   it('splits the 30 days by whose grant ran the sessions, largest first, and adds up to the Overview', async () => {
     const st = await check(setup())
     expect(st.personTotals.map((p) => [p.person, p.name])).toEqual([
-      ['p_sev', 'Severin'],
+      ['p_sev', 'Anna Test'],
       ['p_mara', 'Mara'],
     ])
-    expect(st.personRows.map((r) => r.person)).toEqual(['Severin', 'Mara', 'Total'])
+    expect(st.personRows.map((r) => r.person)).toEqual(['Anna Test', 'Mara', 'Total'])
   })
   it('adds up on the Busy day too', async () => {
     const store = createMockStore({ persist: false, dataset: 'busy' })

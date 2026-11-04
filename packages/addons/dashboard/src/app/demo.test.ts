@@ -1,0 +1,42 @@
+import { afterEach, expect, it, vi } from 'vitest'
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.resetModules()
+  window.history.replaceState(null, '', '/')
+})
+
+it('uses hash addresses under the demo base while explicit initial paths stay in memory', async () => {
+  vi.stubEnv('MODE', 'demo')
+  vi.stubEnv('BASE_URL', '/orch-core/app/')
+  vi.resetModules()
+  window.history.replaceState(null, '', '/orch-core/app/#/w/DEMO/board')
+  const { createAppRouter } = await import('./router')
+  const { shareableLink } = await import('./urls')
+  const router = createAppRouter()
+  expect(router.history.location.pathname).toBe('/w/DEMO/board')
+  expect(router.state.location.pathname).toBe('/board')
+  expect(router.history.createHref('/w/DEMO/tickets')).toBe('/orch-core/app/#/w/DEMO/tickets')
+  expect(shareableLink('/w/DEMO/board', 'https://example.test')).toBe('https://example.test/orch-core/app/#/w/DEMO/board')
+  const memory = createAppRouter('/w/INT/board')
+  expect(memory.history.location.pathname).toBe('/w/INT/board')
+  expect(memory.state.location.pathname).toBe('/board')
+  router.history.destroy()
+  memory.history.destroy()
+})
+
+it('keeps demo checklist notes and images local without fetching', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch')
+  const { demoTestrun } = await import('@/mocks/testrun')
+  localStorage.clear()
+  await demoTestrun('PUT', '/api/testrun/demo/steps/first', { status: 'pass', note: 'sample' })
+  const state = await (await demoTestrun('GET', '/api/testrun/demo')).json()
+  expect(state.notes.first).toMatchObject({ status: 'pass', note: 'sample' })
+  const { name } = await (await demoTestrun('POST', '/api/testrun/demo/steps/first/images', { type: 'image/png', data: btoa('demo') })).json()
+  expect(await (await demoTestrun('GET', `/api/testrun/demo/images/${name}`)).text()).toBe('demo')
+  await demoTestrun('DELETE', `/api/testrun/demo/images/${name}`)
+  expect((await (await demoTestrun('GET', '/api/testrun/demo')).json()).notes.first.images).toEqual([])
+  expect(fetch).not.toHaveBeenCalled()
+  fetch.mockRestore()
+  localStorage.clear()
+})

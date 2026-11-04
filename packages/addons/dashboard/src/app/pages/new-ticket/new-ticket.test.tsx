@@ -112,7 +112,7 @@ describe('new ticket page', () => {
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Visibility' }), 'restricted')
     const group = screen.getByRole('group', { name: 'Can see this ticket' })
     expect(within(group).getByRole('button', { name: 'Mara' })).toHaveAttribute('aria-pressed', 'true')
-    expect(within(group).getByRole('button', { name: 'Severin' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(group).getByRole('button', { name: 'Anna Test' })).toHaveAttribute('aria-pressed', 'true')
     expect(within(group).getByRole('button', { name: 'Tom' })).toHaveAttribute('aria-pressed', 'false')
   })
   it('W24: a picked chip looks picked (a check mark), an unpicked one has none', async () => {

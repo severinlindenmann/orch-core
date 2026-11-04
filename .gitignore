@@ -3,3 +3,7 @@
 /.h[0-9a-z][0-9a-z][0-9a-z][0-9a-z]/
 __pycache__/
 release/keys/root.env
+
+# Static visual demo
+/site/
+/packages/addons/dashboard/dist-demo/

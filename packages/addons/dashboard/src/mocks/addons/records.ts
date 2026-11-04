@@ -30,7 +30,7 @@ interface LastPush {
   remote: string
 }
 const ADDON = { kind: 'addon', id: 'records' } as const
-const REMOTE = 'git@github.com:acme-energy/energy-records.git'
+const REMOTE = 'git@git.example.test:demo/energy-records.git'
 const DEFAULTS: Settings = { auto_commit_minutes: 30, push: true, remote: REMOTE }
 const REJECTED = 'Remote rejected: non-fast-forward. Pull first.'
 const SEED_PENDING = [3, 4, 2, 3] // events not recorded yet, for the first tickets that have that many
@@ -97,7 +97,7 @@ function seedBase(ws: string, store: MockStore) {
     history: [
       { hash: 'c41d9e2', at: '2026-10-09T08:00:00Z', by: 'auto-commit', perTicket: spread(keys, 0, 5, 17) },
       { hash: '9b07a3f', at: '2026-10-08T17:30:00Z', by: 'Mara', perTicket: spread(keys, 2, 3, 9) },
-      { hash: '5e2f810', at: '2026-10-08T09:15:00Z', by: 'Severin', perTicket: spread(keys, 0, 6, 24) },
+      { hash: '5e2f810', at: '2026-10-08T09:15:00Z', by: 'Anna Test', perTicket: spread(keys, 0, 6, 24) },
     ] satisfies Commit[],
     seq: 3,
     behind: false,

@@ -1,7 +1,7 @@
 // Text pools for the busy-day generator: fictional "Acme energy data" work. Plain, specific wording.
 import type { Rng } from './rng'
 
-export const PERSON_NAME: Record<string, string> = { p_sev: 'Severin', p_mara: 'Mara', p_tom: 'Tom' }
+export const PERSON_NAME: Record<string, string> = { p_sev: 'Anna Test', p_mara: 'Mara', p_tom: 'Tom' }
 
 /** Label names (14). Two are long on purpose, to test truncation. */
 export const LABELS = [
@@ -86,7 +86,7 @@ export const QUESTIONS: PoolQuestion[] = [
   {
     text: 'Who owns the fix on the finance side?',
     whys: ['The export changes the numbers finance closes the month with.', 'Someone has to sign off the reconciled totals.'],
-    options: [{ label: 'Mara', cost: 'fix lands after the close, in 3 days' }, { label: 'Severin', cost: '+1 day to hand over the export' }],
+    options: [{ label: 'Mara', cost: 'fix lands after the close, in 3 days' }, { label: 'Anna Test', cost: '+1 day to hand over the export' }],
   },
   {
     text: 'May we drop the old tariff_code column after the migration?',

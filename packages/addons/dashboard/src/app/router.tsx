@@ -1,6 +1,7 @@
+import { isDemoBuild } from '@/lib/demo'
 import { BootScreen } from './shell/BootScreen'
 import type { QueryClient } from '@tanstack/react-query'
-import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, Outlet, redirect, useRouterState } from '@tanstack/react-router'
+import { createBrowserHistory, createHashHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, Outlet, redirect, useRouterState } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
 import { RouteProblem } from './shell/RouteProblem'
 import { lazyPage } from './pages/lazyPage'
@@ -389,7 +390,7 @@ const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, n
  */
 export function createAppRouter(initialPath?: string, queryClient?: QueryClient, opts: { pendingMs?: number } = {}) {
   const urls: UrlState = { prefix: null }
-  const history = initialPath === undefined ? createBrowserHistory() : createMemoryHistory({ initialEntries: [initialPath] })
+  const history = initialPath === undefined ? (isDemoBuild ? createHashHistory() : createBrowserHistory()) : createMemoryHistory({ initialEntries: [initialPath] })
   return createRouter({
     routeTree,
     history,

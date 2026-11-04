@@ -54,8 +54,8 @@ interface Settings {
 }
 
 const seedApps = (): App[] => [
-  { id: 'app_billing', name: 'Billing explorer', kind: 'streamlit', folder: 'apps/billing-explorer', status: 'running', recipients: 2, log: ['streamlit run app.py --server.port 8501', 'You can now view your Streamlit app', 'Serving to Mara and Severin'] },
-  { id: 'app_energy', name: 'Energy dashboard', kind: 'static', folder: 'apps/energy-dashboard', status: 'stopped', recipients: 0, log: ['Built 14 files in 0.8 s', 'Stopped by Severin'] },
+  { id: 'app_billing', name: 'Billing explorer', kind: 'streamlit', folder: 'apps/billing-explorer', status: 'running', recipients: 2, log: ['streamlit run app.py --server.port 8501', 'You can now view your Streamlit app', 'Serving to Mara and Anna Test'] },
+  { id: 'app_energy', name: 'Energy dashboard', kind: 'static', folder: 'apps/energy-dashboard', status: 'stopped', recipients: 0, log: ['Built 14 files in 0.8 s', 'Stopped by Anna Test'] },
   {
     id: 'app_ops',
     name: 'Ops notebook',
@@ -100,7 +100,7 @@ function appStats(x: Pick<App, 'id' | 'status'>, seedIndex: number): AppStats {
 const withStats = (list: App[]): App[] => list.map((x, i) => ({ ...x, stats: x.stats ?? appStats(x, i) }))
 const statsOf = (x: App): AppStats => (x.stats ??= appStats(x, -1))
 
-const RECIPIENTS = ['Mara', 'Severin', 'Tom', 'Ida', 'Jonas']
+const RECIPIENTS = ['Mara', 'Anna Test', 'Tom', 'Ida', 'Jonas']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 /** "8 Oct, 07:40 UTC". */
 const when = (iso: string) => {
@@ -249,7 +249,7 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
   const others = rng.shuffle(tickets.filter((t) => !t.restricted && ['done', 'testing', 'in-progress'].includes(t.status)))
   const bound = [...restricted.slice(0, 3), ...others]
   const kinds: ShareKind[] = ['secret link', 'secret link', 'public link', 'sealed', 'show-once', 'secret link']
-  const people = ['Mara', 'Severin', 'Tom']
+  const people = ['Mara', 'Anna Test', 'Tom']
   const titles = ['Before/after report', 'Reconciliation table', 'Run summary', 'Sample rows', 'Tariff notes', 'Invoice preview', 'Findings', 'Meter list']
   const shares: Share[] = Array.from({ length: 35 }, (_, i) => {
     const kind = kinds[i % kinds.length]

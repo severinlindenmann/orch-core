@@ -10,6 +10,7 @@
 //
 // URLs carry keys and ids only: never titles, tokens or signed values.
 
+import { isDemoBuild } from '@/lib/demo'
 import type { AnyRouter, LocationRewrite } from '@tanstack/react-router'
 
 const WS_PATH = /^\/w\/([^/?#]+)(\/.*)?$/
@@ -122,5 +123,5 @@ export function setLinkWorkspace(router: AnyRouter, urls: UrlState, prefix: stri
 
 /** The link a person can paste elsewhere, for an address-bar href (`/w/DEMO/board?x=1`). */
 export function shareableLink(publicHref: string, origin: string = window.location.origin): string {
-  return `${origin}${publicHref}`
+  return isDemoBuild ? `${origin}${import.meta.env.BASE_URL}#${publicHref}` : `${origin}${publicHref}`
 }

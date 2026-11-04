@@ -39,7 +39,7 @@ describe('ticket: the changes the verdict signs', () => {
 
   it('a charter verdict says no person reviewed it', async () => {
     renderApp('/ticket/DEMO-0051', { setup: (s) => installAndGrant(s, wsOf(s), 'factory') })
-    expect(await screen.findByTestId('gate-notes', {}, T)).toHaveTextContent('Verdict: via the factory charter — no person reviewed this (charter signed by Severin, commit')
+    expect(await screen.findByTestId('gate-notes', {}, T)).toHaveTextContent('Verdict: via the factory charter — no person reviewed this (charter signed by Anna Test, commit')
   })
 
   it('with the code review on, the next-step card offers it after the verdict', async () => {

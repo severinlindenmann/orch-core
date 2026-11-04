@@ -7,7 +7,7 @@ import { installAndGrant } from '@/test/installAddon'
 import { refused as refusal } from '@/test/refused'
 
 // Security sweep: an addon's state and actions must not reveal a ticket the viewer cannot see.
-// DEMO-0041 and DEMO-0043 are restricted to Severin; Mara (a maintainer) is outside the list.
+// DEMO-0041 and DEMO-0043 are restricted to Anna Test; Mara (a maintainer) is outside the list.
 const HIDDEN = ['DEMO-0041', 'DEMO-0043']
 const ADDONS = ['focus', 'publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules', 'drop', 'land']
 
@@ -101,7 +101,7 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
     expect((await s.api.getAddonDecisions(s.ws)).some((d) => d.ticket === 'DEMO-0041')).toBe(false)
     expect(await refusal(run(s, 'publish', 'decide', { id: 'dec_publish_report', confirmed: true, option: 'yes' }))).toMatchObject({ status: 409, code: 'decision.closed' })
     expect(s.store.addonState(s.ws, 'publish').shares).toHaveLength(5) // no share was created
-    // Severin still sees and can decide it.
+    // Anna Test still sees and can decide it.
     const t = setup('p_sev')
     expect((await t.api.getAddonDecisions(t.ws)).some((d) => d.ticket === 'DEMO-0041')).toBe(true)
   })

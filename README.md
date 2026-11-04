@@ -1,5 +1,9 @@
 # orch
 
+> **Live demo:** click through orch with sample data, no install needed:
+> **[severinlindenmann.github.io/orch-core](https://severinlindenmann.github.io/orch-core/)**
+> (workspace dashboard, setup wizard, hub console, publish pages).
+
 **Let coding agents do the work. Keep every decision yours.**
 
 orch core is a way of working with coding agents: every piece of work is a ticket, every ticket follows a fixed path, and a person signs each step that matters. Agents file tickets, write the requirements and the plan, do the work and attach the evidence. You approve the requirements and the plan and give the final verdict, and you sign in a physical way: with your fingerprint or your phone. An agent can type any command, but it can't put a finger on the sensor.

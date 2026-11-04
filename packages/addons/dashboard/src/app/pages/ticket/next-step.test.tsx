@@ -8,7 +8,7 @@ import { TicketProgress } from './NextStep'
 afterEach(cleanup)
 
 // B6: one plain stepper and one next-step card instead of the Requirements/Plan/Verify bar (owner feedback 5/14).
-const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
+const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Anna Test', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Anna Test' : String(id)), ready: true }
 
 async function demo() {
   const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
@@ -148,7 +148,7 @@ it('the stepper: done steps, the first open one is current, the rest still to do
 })
 
 // The approval evidence (ported from the old gate popover) sits behind a quiet "i" on the card.
-const viewer2 = { ...viewer, members: [...viewer.members, { person: 'p_mara', name: 'Mara', role: 'maintainer' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : id === 'p_mara' ? 'Mara' : String(id)) }
+const viewer2 = { ...viewer, members: [...viewer.members, { person: 'p_mara', name: 'Mara', role: 'maintainer' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Anna Test' : id === 'p_mara' ? 'Mara' : String(id)) }
 
 async function planUp(gate: Partial<TicketDocument['gates']['plan']>) {
   const doc = await demo()

@@ -190,7 +190,7 @@ describe('the serial worker', () => {
     expect(need).toMatchObject({ kind: 'conflict', open: true, person: false, agent: 'claude-code:s_5d10:p_sev' })
     const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.addon === 'land')!
     expect(d).toMatchObject({ title: 'Needs: conflict', ticket: 'DEMO-0041', action: 'resolve' })
-    expect(d.detail).toMatch(/Claude Code for Severin picks this up/)
+    expect(d.detail).toMatch(/Claude Code for Anna Test picks this up/)
     expect((await view(s)).cards['DEMO-0041']).toBe('conflict')
     expect(step(s.store, land(s))).toBeNull() // the agent picks it up
     expect(step(s.store, land(s))).toBe('DEMO-0041: Claude Code resolved the conflict')
@@ -225,7 +225,7 @@ describe('the serial worker', () => {
     expect(land(s).resolutions.some((r) => r.ticket === 'DEMO-0041')).toBe(false)
     expect(landEvents(s, 'DEMO-0041', 'land.resolved')).toHaveLength(0)
     expect((await s.api.getAddonDecisions(s.ws)).some((x) => x.addon === 'land')).toBe(false)
-    expect(text(await panel(s, 'DEMO-0041'))).toContain('Severin resolves it by hand')
+    expect(text(await panel(s, 'DEMO-0041'))).toContain('Anna Test resolves it by hand')
     expect((await refused(run(s, 'enqueue', { ticket: 'DEMO-0041' }))).code).toBe('land.needs_open')
     // Someone else (a member, not the taker) cannot close it.
     s.store.workspaces.find((w) => w.id === s.ws)!.members.push({ person: 'p_x', name: 'Xan', role: 'member' } as never)
@@ -259,7 +259,7 @@ describe('the serial worker', () => {
     land(s).needs.push({ id: 'N-93', ticket: 'DEMO-0053', kind: 'conflict', attempt: 13, agent: 'claude-code:s_f101:p_sev', person: true, open: true, at: s.store.now(), file: 'x.sql' })
     const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.id === 'land.need:N-93')!
     expect(d.options.map((o) => o.key)).toEqual(['self', 'agent', 'drop'])
-    expect((await run(s, 'resolve', { id: d.id, option: 'agent', confirmed: true })).message).toBe('Handed to Claude Code for Severin. Its resolution will void the approval.')
+    expect((await run(s, 'resolve', { id: d.id, option: 'agent', confirmed: true })).message).toBe('Handed to Claude Code for Anna Test. Its resolution will void the approval.')
   })
 
   it('red checks: the failing check is shown, the approval stands, and "Re-run the checks" queues the same code again', async () => {
@@ -610,7 +610,7 @@ describe('a void resets the quorum (core)', () => {
     const s = setup()
     const w = s.store.workspaces.find((x) => x.id === s.ws)!
     w.gates.plan.count = 2
-    // DEMO-0046: Severin approved the plan, then it was invalidated (plan changed).
+    // DEMO-0046: Anna Test approved the plan, then it was invalidated (plan changed).
     expect(s.store.ticket('DEMO-0046')!.gates.plan).toMatchObject({ state: 'invalidated', approvals: [] })
     const hash = s.store.ticket('DEMO-0046')!.gates.plan.hash
     await s.api.postAction('DEMO-0046', { action: 'approve', gate: 'plan', hash })

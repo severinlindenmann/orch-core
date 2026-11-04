@@ -111,7 +111,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         text: 'The browser shows the steps: Welcome, You, Agents may, Approval, Secret words, Review. Look at each.',
         points: [
           'Welcome: your folder is named; everything stays on this computer.',
-          'You: name (e.g. Severin) and short name RA (the ticket prefix, e.g. RA-0001). Continue stays grey until both are filled.',
+          'You: name (e.g. Anna Test) and short name RA (the ticket prefix, e.g. RA-0001). Continue stays grey until both are filled.',
           'What may agents do here: switches, each with a one-line description. Dashboard is on and cannot be turned off. Start agents, Command window and Work copies are already ticked (leave them on), and agent access of 3 days is already selected; the others are your choice. Check that the review at the end lists them.',
           'How do you want to approve things: choose Terminal. Then "Let agents work for you for": choose 3 days. Runner access: on. (Warning: a "relay and phone" option should NOT appear, it is a later add-on. If you see it, tell the lead.)',
           'Secret words: the passphrase is shown once, plus 24 numbered recovery words. Write them down on paper. Tick "I saved ...". Type the 3 words asked and press Confirm. Try one wrong word first: it says how many tries are left (5 in all; do not use them all). A wrong word clears only that field. The page never asks for the passphrase itself.',
@@ -201,7 +201,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'C3',
         title: 'Edit a ticket',
         text: 'Open the ticket page, "Edit text, checks, repositories and people". Press Approve, then the button again after a second, as in C2.',
-        see: 'ONE review for all changes (old to new is clear, e.g. "remove: Severin").',
+        see: 'ONE review for all changes (old to new is clear, e.g. "remove: Anna Test").',
         warn: 'This crashed before (KeyError: title): if it fails again, BLOCKING.',
       },
       {
@@ -254,7 +254,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'D1',
         title: 'Basic commands',
         commands: ['orch status', 'orch list', 'orch doctor', 'orch check'],
-        see: '"ok status person=Severin", no errors. If host.unavailable: orch host enable.',
+        see: '"ok status person=Anna Test", no errors. If host.unavailable: orch host enable.',
       },
       {
         id: 'D2',
@@ -414,7 +414,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'F4',
         title: 'Reads on the phone',
-        text: 'Live Home shows workspace RA (no Demo chip). Questions and tickets show; pull to refresh. Settings: custody Secure Enclave, realm relay.dev.severin.io.',
+        text: 'Live Home shows workspace RA (no Demo chip). Questions and tickets show; pull to refresh. Settings: custody Secure Enclave, realm relay.example.test.',
       },
       {
         id: 'F5',

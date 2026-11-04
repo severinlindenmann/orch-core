@@ -185,7 +185,7 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
   })
   it('plan: shows the verify command and what a task proves', async () => {
     const dialog = await renderDialog((t) => t, { kind: 'approve', gate: 'plan' })
-    await waitFor(() => expect(dialog).toHaveTextContent('Assignee: Severin'), T)
+    await waitFor(() => expect(dialog).toHaveTextContent('Assignee: Anna Test'), T)
     expect(dialog).toHaveTextContent('Assignee: Mara')
     expect(dialog).toHaveTextContent('Verify command: gh workflow run nightly')
     expect(dialog).toHaveTextContent('Proves: AC1')

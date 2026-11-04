@@ -77,7 +77,7 @@ it('viewer sees collapsed per-person summaries before individual decisions', asy
   const { user } = renderApp('/', { viewer: 'p_tom' })
   await screen.findByText(/Nothing needs you/)
   expect(screen.queryByTestId('card-question:DEMO-0043:Q2')).toBeNull()
-  await user.click(await screen.findByRole('button', { name: /^Severin decides · \d+ open/, expanded: false }))
+  await user.click(await screen.findByRole('button', { name: /^Anna Test decides · \d+ open/, expanded: false }))
   expect(await screen.findByTestId('card-question:DEMO-0043:Q2')).toBeInTheDocument()
 })
 

@@ -1,3 +1,4 @@
+import { isDemoBuild } from '@/lib/demo'
 import type { Rail } from '@/api/switch'
 // A simulated hub for the mockup and its tests (V3 A7). Scenario by address: `?hub=standalone|selective|full|offline|nottold`
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
@@ -156,7 +157,7 @@ function registerHubNetworkRoutes(r: MockRouter) {
 }
 
 export function registerHubRoutes(r: MockRouter) {
-  const mockup = () => new URL(import.meta.env.VITE_HUB_MOCKUP_URL || 'http://127.0.0.1:8787/hub/index.html')
+  const mockup = () => new URL(import.meta.env.VITE_HUB_MOCKUP_URL || (isDemoBuild ? '../hub/index.html' : 'http://127.0.0.1:8787/hub/index.html'), document.baseURI)
   r.add('GET', '/api/w/:ws/hub/rail', (store, c) => {
     const rail: Rail = scenario() === 'standalone' ? { hub: null, workspaces: [] } : {
       hub: { name: 'Company hub', origin: mockup().origin },

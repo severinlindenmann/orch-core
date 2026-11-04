@@ -6,7 +6,7 @@ import { TicketProgress } from './NextStep'
 
 // B11 (owner run 2, quick task): the plan gate said "Waiting for your approval" with no plan written, and Approve plan
 // was refused with gate.incomplete. Core's completeness rule (`missing`) now decides: never offer Approve while it lacks.
-const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
+const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Anna Test', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Anna Test' : String(id)), ready: true }
 
 async function planWaits() {
   const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)

@@ -107,7 +107,7 @@ function run(line: string, c: ShellCtx): CommandResult {
     const debug = rest.includes('--debug')
       ? ['> GET /api/2.0/preview/scim/v2/Me', `> * Host: ${env.DATABRICKS_HOST}`, `> * Authorization: Bearer ${env.DATABRICKS_TOKEN}`, '< HTTP/2.0 200 OK']
       : []
-    return { lines: [...debug, '{ "userName": "ci-orch@acme-energy.ch", "active": true }'] }
+    return { lines: [...debug, '{ "userName": "ci-orch@example.test", "active": true }'] }
   }
   // The re-login commands of the seeded connections: nothing is logged in here (the dashboard is a mockup).
   if ((cmd === 'databricks' || cmd === 'gh' || cmd === 'gcloud' || cmd === 'az') && /(^|\s)(auth|login)(\s|$)/.test(line)) {
@@ -119,7 +119,7 @@ function run(line: string, c: ShellCtx): CommandResult {
       lines: ['4be1f07 seeds: tariff_ch_2026 loader', '9a03c2d dbt: add price range test', 'c7e5b18 seeds: valid_from on every row', '1d2f9e4 reconcile: tolerance from settings', 'e60a7bb init: energy workspace'],
     }
   if (cmd === 'ls') return { lines: ['dbt_project.yml  models  seeds  tests  README.md'] }
-  if (cmd === 'pwd') return { lines: [`/Users/${c.user === 'claude' ? 'claude' : 'severin'}${c.cwd.replace(/^~/, '')}`] }
+  if (cmd === 'pwd') return { lines: [`/Users/${c.user === 'claude' ? 'claude' : 'demo'}${c.cwd.replace(/^~/, '')}`] }
   if (cmd === 'clear') return { lines: [], clear: true }
   if (cmd === 'help') return { lines: [`commands: ${HELP.join(', ')}`] }
   if (cmd === 'exit') return { lines: ['logout'], exit: true }

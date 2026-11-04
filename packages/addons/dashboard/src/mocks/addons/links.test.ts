@@ -165,7 +165,7 @@ describe('decisions (core renders and signs them)', () => {
     expect(await fail(answer(s, d, 'accept'))).toBe('409 links.relay_offline')
     relayOnline(s)
     // Core shows the terms line by line and posts them; an answer without them, or with others, is refused.
-    expect(d.terms).toEqual({ peer: 'Fabrikam Energy · DATA', comparison_code: expect.stringMatching(/^[0-9A-Z]{6}$/), carrier: 'relay https://relay.dev.severin.io', they_may_send_us: 'questions, Drop files', we_may_send_them: 'ticket handoffs, questions', expires_after: '90 days' })
+    expect(d.terms).toEqual({ peer: 'Fabrikam Energy · DATA', comparison_code: expect.stringMatching(/^[0-9A-Z]{6}$/), carrier: 'relay https://relay.example.test', they_may_send_us: 'questions, Drop files', we_may_send_them: 'ticket handoffs, questions', expires_after: '90 days' })
     expect(await fail(sign(s, 'decide_pairing', { id: d.id, option: 'accept' }))).toBe('409 decision.closed')
     expect(await fail(sign(s, 'decide_pairing', { id: d.id, option: 'accept', terms: { ...d.terms, expires_after: '365 days' } }))).toBe('409 decision.closed')
     expect((await answer(s, d, 'accept')).message).toMatch(/Linked with Fabrikam/)
@@ -251,7 +251,7 @@ describe('pairing (Set up)', () => {
     relayOnline(s)
     await run(s, 'simulate_peer')
     const args = await buttonArgs(s, 'confirm_pairing')
-    expect(args).toEqual({ pairing: raw(s).pending!.id, code: expect.stringMatching(/^[0-9A-Z]{6}$/), peer: 'CLI · Client VM', carrier: 'relay https://relay.dev.severin.io', they_may_send: 'ticket handoffs, questions, status updates', we_may_send: 'ticket handoffs, questions, status updates', expires_days: 90 })
+    expect(args).toEqual({ pairing: raw(s).pending!.id, code: expect.stringMatching(/^[0-9A-Z]{6}$/), peer: 'CLI · Client VM', carrier: 'relay https://relay.example.test', they_may_send: 'ticket handoffs, questions, status updates', we_may_send: 'ticket handoffs, questions, status updates', expires_days: 90 })
     // Every shown value is checked: a different one is refused.
     expect(await fail(sign(s, 'confirm_pairing', { ...args, they_may_send: 'questions' }))).toBe('409 links.stale')
     expect(await fail(sign(s, 'confirm_pairing', { ...args, expires_days: 365 }))).toBe('409 links.stale')

@@ -49,9 +49,9 @@ describe('Agents page', () => {
     const stopped = () => Number(/Stopped\s*·\s*(\d+)/.exec(screen.queryByRole('button', { name: /Stopped/ })?.textContent ?? '')?.[1] ?? 0)
     const before = stopped()
     // Grants are named by person, scope and end; the id is only the fine print.
-    expect(within(row).getByText("Severin's grant (all tickets · until 18:00)")).toBeInTheDocument()
+    expect(within(row).getByText("Anna Test's grant (all tickets · until 18:00)")).toBeInTheDocument()
     await user.click(within(row).getByRole('button', { name: 'Revoke' }))
-    expect(await screen.findByRole('heading', { name: "Revoke Severin's grant (all tickets · until 18:00)" })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: "Revoke Anna Test's grant (all tickets · until 18:00)" })).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: /Revoke grant/ }))
     expect(await within(screen.getByRole('row', { name: /gr_01J9Z8/ })).findByText('revoked')).toBeInTheDocument()
     await waitFor(() => expect(stopped()).toBeGreaterThan(before))
@@ -59,13 +59,13 @@ describe('Agents page', () => {
   it('stops the main session when its grant is revoked', async () => {
     const { user } = renderApp('/agents')
     const waiting = await screen.findByRole('region', { name: /Waiting on you/ })
-    expect(within(waiting).getByRole('listitem', { name: /Claude Code for Severin, waiting/ })).toBeInTheDocument()
+    expect(within(waiting).getByRole('listitem', { name: /Claude Code for Anna Test, waiting/ })).toBeInTheDocument()
     await user.click(within(await screen.findByRole('row', { name: /gr_01J9Z8/ })).getByRole('button', { name: 'Revoke' }))
     await user.click(await screen.findByRole('button', { name: /Revoke grant/ }))
     await within(screen.getByRole('row', { name: /gr_01J9Z8/ })).findByText('revoked')
-    await waitFor(() => expect(screen.queryByRole('listitem', { name: /Claude Code for Severin, waiting/ })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('listitem', { name: /Claude Code for Anna Test, waiting/ })).toBeNull())
     await user.click(screen.getByRole('button', { name: /Stopped/ }))
-    expect(within(screen.getByRole('region', { name: /Stopped/ })).getAllByRole('listitem', { name: /Claude Code for Severin, stopped/ }).length).toBeGreaterThan(0)
+    expect(within(screen.getByRole('region', { name: /Stopped/ })).getAllByRole('listitem', { name: /Claude Code for Anna Test, stopped/ }).length).toBeGreaterThan(0)
   })
   it('lists recent refusals in plain words, with no codes, and links to all activity', async () => {
     renderApp('/agents')

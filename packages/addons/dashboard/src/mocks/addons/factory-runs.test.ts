@@ -81,7 +81,7 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     expect(node).toMatch(/via the factory full run you signed on \d+ Oct \d\d:\d\d — no person reviewed this step/)
     // Another viewer reads the signer's name.
     s.store.setViewer('p_mara')
-    expect(JSON.stringify(s.view().runsNode)).toContain('via the factory full run Severin signed on')
+    expect(JSON.stringify(s.view().runsNode)).toContain('via the factory full run Anna Test signed on')
   })
   it('reaches the hold window: a calm notice, a core decision with one option, Stop', () => {
     const s = setup()
@@ -125,7 +125,7 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     s.view()
     expect(s.events('factory.delivered')).toHaveLength(0)
     expect(s.store.addonDecisions(s.ws).some((x) => x.id === 'factory.hold:R-1')).toBe(false)
-    expect(JSON.stringify(s.view().runsNode)).toMatch(/Stopped by Severin at .*: nothing went out/)
+    expect(JSON.stringify(s.view().runsNode)).toMatch(/Stopped by Anna Test at .*: nothing went out/)
   })
   it('the window ends with no Stop: delivered to exactly the signed destination', () => {
     const s = setup()
@@ -169,7 +169,7 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     expect(s.run('hold', { id: 'factory.hold:R-1', option: 'stop', ticket: EPIC, confirmed: true })).toMatchObject({ ok: false, status: 404, code: 'not_visible' })
     expect(s.run('prepare_run', { formData: { goal: 'X', goes_up_to: 'Preview' } })).toMatchObject({ ok: false, status: 404, code: 'not_visible' })
     expect(s.runs()[0].stage).toBe('holding')
-    // Severin, who can see it, still can.
+    // Anna Test, who can see it, still can.
     s.store.setViewer('p_sev')
     expect(s.store.addonDecisions(s.ws).some((d) => d.id === 'factory.hold:R-1')).toBe(true)
   })
@@ -272,7 +272,7 @@ describe('fix round 1: the code review gate stays human in a full run', () => {
     const r = s.runs()[0]
     expect(r.stage).toBe('working')
     expect(r.children.map((k) => [k.done, k.review?.waiting])).toEqual([[2, true], [2, true], [2, true]])
-    // The requester (Severin) counts as an assignee of the run's children: never their reviewer (D59).
+    // The requester (Anna Test) counts as an assignee of the run's children: never their reviewer (D59).
     expect(s.store.addonDecisions(s.ws).filter((d) => d.id.startsWith('factory.code:'))).toEqual([])
     s.store.setViewer('p_mara')
     const ds = s.store.addonDecisions(s.ws).filter((d) => d.id.startsWith('factory.code:'))
@@ -282,7 +282,7 @@ describe('fix round 1: the code review gate stays human in a full run', () => {
     expect(s.run('code_review', { id: ids[0], option: 'approve', ticket: ds[0].ticket, terms: ds[0].terms })).toMatchObject({ ok: false, code: 'confirm.required' })
     s.store.setViewer('p_sev')
     expect(JSON.stringify(s.view().runsNode)).toContain('Code review (waits for a person)')
-    // Severin and Tom cannot (requester; viewer): core finds no open decision for them.
+    // Anna Test and Tom cannot (requester; viewer): core finds no open decision for them.
     s.store.setViewer('p_tom')
     expect(s.run('code_review', { id: ids[0], option: 'approve', ticket: ds[0].ticket, terms: ds[0].terms, confirmed: true })).toMatchObject({ ok: false })
     s.store.setViewer('p_sev')

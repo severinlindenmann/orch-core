@@ -12,7 +12,7 @@ function setup() {
 const ids = (items: { ticket: string; kind: string; ref?: string }[]) => items.map((i) => `${i.kind}:${i.ticket}:${i.ref}`)
 
 describe('mock router: viewer-aware views and addon actions', () => {
-  it('needs_you differs for Severin, Mara and Tom', async () => {
+  it('needs_you differs for Anna Test, Mara and Tom', async () => {
     const { api, store } = setup()
     const ws = store.workspaces[0].id
     const sev = await api.getToday(ws)

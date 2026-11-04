@@ -89,7 +89,7 @@ describe('board grouped by epic (N2)', () => {
     expect(await screen.findByText('19 tickets')).toBeInTheDocument()
   })
 
-  it('is remembered per viewer: Tom does not inherit Severin\'s choice, and Tom can fold a lane', async () => {
+  it('is remembered per viewer: Tom does not inherit Anna Test\'s choice, and Tom can fold a lane', async () => {
     const { user } = renderApp('/board', { viewer: 'p_tom', storage: { [DISPLAY]: JSON.stringify({ group: 'none' }) } })
     const fold = await screen.findByRole('button', { name: /^Collapse DEMO-0040 /, expanded: true }, T)
     expect(screen.queryByTestId('card-DEMO-0040')).toBeNull()

@@ -32,7 +32,7 @@ describe('Repos page', () => {
     await user.click(screen.getByRole('button', { name: 'Check now' }))
     await user.click(screen.getByRole('tab', { name: 'Activity' }))
     expect(await screen.findByText('Checked all repo folders.', {}, T)).toBeInTheDocument()
-    expect(screen.getByText(/Severin · repos.checked/)).toBeInTheDocument()
+    expect(screen.getByText(/Anna Test · repos.checked/)).toBeInTheDocument()
   })
   it('Glance shows a calm readiness line and a missing repo needs attention', async () => {
     renderApp('/', { viewer: 'p_sev' })

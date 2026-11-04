@@ -212,9 +212,14 @@ class ShareItem:
             return f"needs you: {self.payload['type']}: {self.payload['title']}{extra}"
         if self.kind == "question":
             # W09 (#1074): the whole question the item sends (its text), on one line; not the cut title
-            whole = clean_line(self.payload.get("text") or self.payload["title"])
+            whole = clean_line(self.payload.get("text") or self.payload["title"])[:LINE_MAX]  # Opus W09: bounded
             return f"question on {clean_line(self.ticket_key)}: {whole}"
         return f"ticket {clean_line(self.ticket_key)}: {self.payload['title']}"
+
+
+#: a preview line is at most this many characters (a question is at most 140 today; the saved share state refuses a
+#: line over 1000)
+LINE_MAX = 600
 
 
 def _cut(text: str, n: int) -> str:

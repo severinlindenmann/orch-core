@@ -42,7 +42,7 @@ USAGE = (
     "usage: orch install server --role hub|edge [--domain BASE] [--domain-hub N] [--domain-relay N]\n"
     "                    [--domain-publish N] [--hub-vpn-only] [--vpn-ip IP[/PREFIX]]\n"
     "                    [--allow-non-cgnat] [--caddy-dir DIR] [--behind-proxy]\n"
-    "                    [--hub-name NAME | --no-hub-name]\n"
+    "                    [--hub-name NAME | --no-hub-name] [--trust-hub ID (edge only)]\n"
     "                    [--backup-drop DIR]\n"
     "                    [--publish-url U | --no-publish-url] [--relay-url U | --no-relay-url]\n"
     "                    [--port-base N] [--yes]\n"
@@ -786,7 +786,11 @@ def install_part(
     _version(ctx, rec, spec.binary, tool_env)
     save(lay, {**st, "parts": {**st["parts"], part: rec}})
     _report(ctx, part, rec)
-    if part in ("hub", "publish"):
+    if part == "publish" and load(lay).get("edge_trust"):
+        from .trust import apply
+
+        apply(ctx, tool_env)
+    elif part in ("hub", "publish"):
         pin_hub_at_publish(ctx, tool_env)
     if part == "publish":
         url = public_origin or url  # server = share = the https name when there is one
@@ -919,6 +923,15 @@ def status(ctx: Ctx, as_json: bool) -> int:
         where = r.get("service") or r.get("dir") or ""
         ver, sha, url = r.get("version") or "-", _short(r.get("ref")), r.get("url") or "-"
         ctx.say(f"{r['part']:<10}{r['state']:<15}{ver:<12}{sha:<14}{url:<28}{where}")
+    pinned = st["parts"].get("publish", {}).get("pinned_hub_id")
+    wanted = (st.get("edge_trust") or {}).get("hub_id")
+    if wanted and pinned:
+        ctx.say(f"Publish trusts hub {pinned}")
+    if wanted and pinned != wanted and _HUB_ID.fullmatch(str(wanted)):
+        ctx.say(
+            f"Publish does not trust hub {wanted} yet. "
+            f"Run `orch setup --server --role edge --trust-hub {wanted}` again."
+        )
     if dash:
         ctx.say(f"workspace dashboard login link (single use, 5 min):  {dashboard_login_hint(dash)}")
     return 0
@@ -1218,6 +1231,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--allow-non-cgnat", action="store_true")
     p.add_argument("--behind-proxy", action="store_true")
     p.add_argument("--port-base", type=int)
+    p.add_argument("--trust-hub")
     p.add_argument("--hub-name")
     p.add_argument("--no-hub-name", action="store_true")
     p.add_argument("--no-publish-url", action="store_true")
@@ -1235,6 +1249,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     if a.port_base is not None:
         ctx.port_base = a.port_base
     try:
+        if a.trust_hub is not None and a.cmd != "server":
+            raise InstallError("--trust-hub belongs to --role edge")
         if a.cmd == "status":
             return status(ctx, a.json)
         if a.cmd == "phone":
@@ -1261,6 +1277,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
                 behind_proxy=a.behind_proxy,
                 hub_name=a.hub_name,
                 no_hub_name=a.no_hub_name,
+                trust_hub=a.trust_hub,
                 publish_url=a.publish_url,
                 relay_url=a.relay_url,
                 no_publish_url=a.no_publish_url,

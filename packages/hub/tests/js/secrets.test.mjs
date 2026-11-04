@@ -7,7 +7,11 @@ import { createECDH } from "node:crypto";
 import { openFixed } from "./seal_seam.mjs";
 
 class Node_ {
-  constructor(tag, text) { this.tag = tag; this.nodeType = tag === "#text" ? 3 : 1; this.children = []; this.attrs = {}; this._text = text ?? ""; this.className = ""; this.listeners = {}; this.value = ""; }
+  constructor(tag, text) { this.tag = tag; this.nodeType = tag === "#text" ? 3 : 1; this.children = []; this.attrs = {}; this._text = text ?? ""; this.className = ""; this.listeners = {}; this._value = ""; }
+  get tagName() { return this.tag.toUpperCase(); }
+  get value() { return this.tag === "option" ? this.attrs.value ?? this.textContent : this._value; }
+  set value(v) { this._value = this.tag === "select" && !this.children.some((o) => o.value === v) ? "" : v; }
+  querySelectorAll() { return this.all().slice(1).filter((n) => ["input", "select", "textarea", "button", "summary", "details"].includes(n.tag)); }
   append(...kids) { for (const k of kids) this.children.push(k && k.nodeType ? k : new Node_("#text", String(k))); }
   replaceChildren(...kids) { this.children = []; this.append(...kids); }
   setAttribute(k, v) { this.attrs[k] = v; }
@@ -17,7 +21,7 @@ class Node_ {
   get textContent() { return this.tag === "#text" ? this._text : this._text + this.children.map((c) => c.textContent).join(""); }
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
-globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
+globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null, body: new Node_("body") };
 const mod = await import("../../src/orch_hub/web/pages/secrets.js");
 const { secretsView, saveSecret, valueProblem, nameProblem, page } = mod;
 const find = (n, pred) => n.all().filter(pred);
@@ -69,8 +73,8 @@ test("every value box is a password field that browsers do not remember or spell
 test("the page says in plain words who can read it and never uses the crypto words", () => {
   const t = secretsView(data, {}).textContent;
   assert.match(t, /The hub could read this value if it were taken over\./);
-  assert.match(t, /\u2713 Available/); assert.ok(!/Ready/.test(t)); assert.match(t, /Needs the value/); assert.match(t, /Enter the value/); assert.match(t, /Waiting for you to type the value again for this workspace/);
-  assert.match(t, /Valid until .*Used 12 times this week/); assert.match(t, /Shared with: Product, A workspace/);
+  assert.match(t, /\u2713 Available/); assert.ok(!/Ready/.test(t)); assert.match(t, /Needs the value/); assert.match(t, /Replace the value/); assert.match(t, /Waiting for you to type the value again for this workspace/);
+  assert.match(t, /Valid until /); assert.match(t, /Shared with: Product, A workspace/);
   assert.match(t, /Product/); assert.match(t, /A workspace/);
   assert.ok(!/WXK|\bseal|\bwrap|encrypt|ciphertext/i.test(t.replace(/\blocked\b/g, "")), t);
   assert.ok(!t.includes(WS[0]), "no ids on screen");
@@ -163,8 +167,8 @@ test("Enter the value again: one form per secret that keeps who can read it and 
   const seen = [];
   const view = secretsView(data, { save: async (f) => { seen.push(f); return { ok: true }; } });
   const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
-  const reenter = find(card, (n) => n.tag === "button" && n.textContent === "Enter the value")[0];
-  assert.equal(reenter.className, "primary", "highlighted when a workspace needs it");
+  const reenter = find(card, (n) => n.tag === "button" && n.textContent === "Replace the value")[0];
+  assert.ok(reenter);
   const again = find(card, (n) => n.className === "secret-entry")[0];
   assert.equal(again.hidden, true);
   reenter.listeners.click();
@@ -232,7 +236,7 @@ test("P10: no Enter-the-value button, hint or warning when every row is ready", 
   const ready = { ...data, secrets: [{ ...data.secrets[0], state: { [WS[0]]: { state: "ready" }, [WS[1]]: { state: "ready" } } }] };
   const view = secretsView(ready, {});
   assert.equal(button(view, "Enter the value"), undefined);
-  assert.ok(!/Waiting for you|Needs the value|Enter the value/.test(view.textContent));
+  assert.ok(!/Waiting for you|Needs the value|Enter the value/.test(visibleText(view)));
   assert.ok(!/Available/.test(view.textContent), "no Available chip when nothing needs the value");
 });
 
@@ -241,7 +245,7 @@ test("P07: the new-secret form starts on chosen workspaces with a reason, and th
   const box = find(view, (n) => n.className === "share-box")[0];
   const sel = find(box, (n) => n.tag === "select")[0];
   assert.equal(sel.value, "chosen");
-  assert.match(box.textContent, /Recommended: only the workspaces that need it\./);
+  assert.ok(!box.textContent.includes("Recommended: only"));
   assert.equal(find(box, (n) => n.attrs.role === "note")[0].hidden, true, "the hub warning shows only for All workspaces");
   sel.value = "all"; sel.listeners.change();
   assert.equal(find(box, (n) => n.attrs.role === "note")[0].hidden, false);
@@ -275,7 +279,7 @@ test("P07: Save with nothing ticked says so and sends nothing; after a good save
 test("P07: the card says Not used yet, and has no 'i' buttons; the page heading keeps its one", () => {
   const view = secretsView({ ...data, secrets: [{ ...data.secrets[0], used_this_week: 0 }] }, {});
   const card = find(view, (n) => n.attrs["data-secret"] === "crm-key")[0];
-  assert.match(card.textContent, /Valid until .* \u00b7 Not used yet/);
+  assert.match(card.textContent, /Needs the value/);
   assert.equal(find(card, (n) => n.tag === "details").length, 0, "no per-card info buttons");
   assert.equal(find(view, (n) => n.tag === "details").length, 1, "only the heading's");
   assert.match(card.textContent, /Needs the value/);
@@ -344,8 +348,8 @@ test("P04: the New secret form is folded behind Add a secret when a secret exist
   assert.equal(section.hidden, false);
   assert.equal(find(section, (n) => n.attrs["aria-label"] === "Name of the new secret")[0].value, "", "always opens empty");
   const empty = secretsView({ ...data, secrets: [] }, {});
-  assert.equal(find(empty, (n) => n.attrs["data-new-secret"] !== undefined)[0].hidden, undefined, "open with no secrets");
-  assert.equal(button(empty, "Add a secret"), undefined);
+  assert.equal(find(empty, (n) => n.attrs["data-new-secret"] !== undefined)[0].hidden, false, "open with no secrets");
+  assert.ok(button(empty, "Add a secret"));
 });
 
 test("P04: after save resolves the name field is empty, and the page's clear hook runs before the re-render", async () => {
@@ -379,4 +383,79 @@ test("#1431: per-workspace use is behind a small click, in plain words, with the
   btn.listeners.click();
   assert.equal(note.hidden, false);
   assert.match(view.textContent, /Valid until /); // run15c P07 wording
+});
+
+const secretCard = (view) => find(view, (n) => n.attrs["data-secret"])[0];
+const panelOf = (view) => find(view, (n) => n.attrs["data-manage"])[0];
+const visibleText = (n) => n.hidden ? "" : n._text + n.children.map(visibleText).join("");
+
+test("challenge 1: saved chosen/all options survive the shell restoration after saving a new secret", async () => {
+  const { replaceContent } = await import("../../src/orch_hub/web/feel.js");
+  for (const shared of ["chosen", "all"]) {
+    const container = new Node_("main");
+    let saved = [];
+    const d = {
+      state: { user: { is_admin: true }, rail: { rows: [] } }, pageLoading() {}, refresh: async () => true, loadRail: async () => {},
+      api: async (method, path, body) => {
+        if (path === "/admin/secrets/recipients") return { status: 200, body: REC };
+        if (method === "POST") { saved = [{ ...data.secrets[0], name: body.name, shared: body.shared }]; return { status: 200, body: {} }; }
+        return { status: 200, body: path === "/admin/secrets" ? { ...data, secrets: saved } : { items: [] } };
+      },
+      shell: (_page, ...nodes) => replaceContent(container, nodes.filter(Boolean)),
+    };
+    await mod.secretsPage(d);
+    const initial = find(container, (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it")[0];
+    initial.value = shared; tickAll(container); fill(container, "new-key", VALUE);
+    await button(container, "Save secret").listeners.click();
+    for (const view of [container, secretsView({ ...data, secrets: saved })]) {
+      const select = find(secretCard(view), (n) => n.tag === "select" && n.attrs["aria-label"] === "Who can read it")[0];
+      assert.equal(select.value, shared);
+      assert.equal(select.children.find((o) => o.value === select.value)?.textContent, shared === "all" ? "All workspaces" : "Only chosen workspaces");
+    }
+    assert.equal(find(container, (n) => n.attrs.role === "status")[0].textContent, "SavedDismiss");
+  }
+});
+
+test("challenge 2: adding a workspace opens Replace the value and saves for that selection", async () => {
+  let saved;
+  const view = secretsView({ ...data, secrets: [{ ...data.secrets[0], workspaces: [WS[0]] }] }, { save: async (f) => { saved = f; return { ok: true }; } });
+  button(view, "Manage").listeners.click();
+  const panel = panelOf(view), entry = find(panel, (n) => n.className === "secret-entry")[0];
+  assert.ok(button(panel, "Replace the value")); assert.equal(entry.hidden, true);
+  const extra = find(panel, (n) => n.attrs["data-ws"] === WS[1])[0]; extra.checked = true; extra.listeners.change();
+  assert.equal(entry.hidden, false); assert.match(visibleText(panel), /Enter the value again for the workspace you added/);
+  find(entry, (n) => n.attrs.type === "password")[0].value = VALUE;
+  await button(entry, "Save the value").listeners.click(); assert.deepEqual(saved.workspaces, WS);
+});
+
+test("challenge 3: collapsed rows have exactly one state and expiry stays in Manage", () => {
+  for (const [overrides, state] of [[{ expired: true }, "Expired"], [{}, "Needs the value"], [{ state: {}, used_this_week: 0 }, "Not used yet"], [{ state: {} }, "Used this week"]]) {
+    const card = secretCard(secretsView({ ...data, secrets: [{ ...data.secrets[0], ...overrides }] }));
+    assert.equal(visibleText(card), "crm-key" + state + "Shared with: Product, A workspaceManage");
+    assert.match(panelOf(card).textContent, /Valid until /);
+  }
+});
+
+test("challenge 4: confirmation is beside the heading and dismissible", () => {
+  const view = secretsView({ ...data, confirmation: "Saved" });
+  const status = find(view, (n) => n.attrs.role === "status")[0];
+  assert.ok(view.children[0].children.includes(status));
+  button(status, "Dismiss").listeners.click(); assert.equal(status.hidden, true);
+});
+
+test("challenge 5: Manage hides the access summary and add omits the repeated recommendation", () => {
+  const view = secretsView(data), card = secretCard(view);
+  button(card, "Manage").listeners.click(); assert.ok(!visibleText(card).includes("Shared with:"));
+  button(card, "Manage").listeners.click(); assert.match(visibleText(card), /Shared with:/);
+  assert.ok(!view.textContent.includes("Recommended: only the workspaces"));
+});
+
+test("challenge 6: Add and Manage close each other and Cancel clears the new value", () => {
+  const view = secretsView(data), section = find(view, (n) => n.attrs["data-new-secret"] !== undefined)[0];
+  button(view, "Manage").listeners.click(); button(view, "Add a secret").listeners.click();
+  assert.equal(panelOf(view).hidden, true); assert.equal(section.hidden, false);
+  const input = fill(view, "new-key", VALUE); button(view, "Cancel").listeners.click();
+  assert.equal(section.hidden, true); assert.equal(input.value, "");
+  button(view, "Add a secret").listeners.click(); button(view, "Manage").listeners.click();
+  assert.equal(section.hidden, true); assert.equal(panelOf(view).hidden, false);
 });

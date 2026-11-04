@@ -303,7 +303,10 @@ def test_stop_is_read_only(ws):
     log = ws.store_dir / "events" / "workspace.jsonl"
     before = sorted((p, p.stat().st_mtime_ns) for p in ws.root.rglob("*") if p.is_file())
     assert json.loads(_stop(ws)[1])["decision"] == "block"
-    assert sorted((p, p.stat().st_mtime_ns) for p in ws.root.rglob("*") if p.is_file()) == before
+    after = sorted(
+        (p, p.stat().st_mtime_ns) for p in ws.root.rglob("*") if p.is_file() and not p.name.endswith(".stops.json")
+    )
+    assert after == before  # W33: only the stop hook's own block counter may be written
     assert log.exists() and _markers(ws) == []
 
 
@@ -386,7 +389,35 @@ def test_stop_sends_the_agent_to_orch_wait_while_a_complete_gate_waits_for_the_p
     assert f"{gate} gate of DEMO-0001" in reason and "orch wait" in reason
     assert "this session" in reason  # the same session builds after the approval
     assert "approve?" not in reason
-    assert _stop(ws, active=True) == (0, "", "")  # at most once per stop
+
+
+def test_w33_while_a_complete_gate_waits_the_stop_hook_keeps_the_agent_waiting_three_times_then_says_why(ws):
+    """W33: an agent that ends its turn at a complete gate is sent back to orch wait (also when the harness says it
+    already blocked), at most three times per gate; then it may stop, with one plain line for the person."""
+    gate = _complete_gate(ws)
+    for active in (False, True, True):
+        doc = json.loads(_stop(ws, active=active)[1])
+        assert doc["decision"] == "block" and "orch wait" in doc["reason"]
+    code, out, err = _stop(ws, active=True)
+    assert code == 0 and err == ""
+    doc = json.loads(out)
+    assert "decision" not in doc and f"{gate} gate of DEMO-0001" in doc["systemMessage"]
+    assert "Continue building" in doc["systemMessage"]
+    assert _stop(ws, active=True) == (0, "", "")  # said once, then silent
+
+
+def test_w33_a_gap_still_blocks_only_once_per_stop(ws):
+    _claimed(ws)
+    _lacking(ws)
+    assert json.loads(_stop(ws)[1])["decision"] == "block"
+    assert _stop(ws, active=True) == (0, "", "")
+
+
+def test_w33_a_session_without_an_orch_gate_wait_is_never_blocked(ws):
+    Cli(ws)("new", "A ticket")  # nothing claimed by this session
+    for active in (False, True):
+        assert _stop(ws, active=active) == (0, "", "")
+    assert _stop(ws, ORCH_SESSION="") == (0, "", "")
 
 
 def test_next_hint_waits_for_the_person_while_a_complete_gate_is_open(ws):

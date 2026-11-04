@@ -63,6 +63,35 @@ def _marker(ctx: Context, ws: Any, event: str) -> Result:
 
 
 _ITEM = re.compile(r"[a-z][a-z_]{0,30}")
+#: W33: how often the Stop hook sends an agent back to orch wait while a complete gate waits for the person
+GATE_WAIT_BLOCKS = 3
+
+
+def _bump_stops(ctx: Context, ws: Any, key: str) -> int:
+    """W33: count this session's stops at ``key`` (``<ticket>:<gate>``) in ``<sessions dir>/<session>.stops.json``
+    (the hook's only write, a display-free counter). Returns the new count; a file it cannot read or write counts as
+    over the bound (never block on our own failure)."""
+    from orch.instructions import marker_path
+    from orch.ops.runtime import records_dir
+
+    layout = ws.layout
+    if layout is None or not ctx.session:
+        return GATE_WAIT_BLOCKS + 2
+    files = ctx.caps.files
+    path = marker_path(records_dir(layout), ctx.session).with_name(
+        marker_path(records_dir(layout), ctx.session).name.replace(".waiting.json", ".stops.json")
+    )
+    try:
+        counts = json.loads(files.read_text(path)) if files.lexists(path) else {}
+        if not isinstance(counts, dict):
+            counts = {}
+        n = int(counts.get(key, 0)) + 1
+        counts = {k: v for k, v in counts.items() if isinstance(v, int)} | {key: n}
+        files.mkdir(path.parent, parents=True)
+        files.write_text(path, json.dumps(counts, sort_keys=True))
+        return n
+    except (OSError, ValueError, TypeError):
+        return GATE_WAIT_BLOCKS + 2
 
 
 def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
@@ -78,8 +107,9 @@ def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
     try:
         c = Call.of(ctx, "instructions.hook")
         doc = json.loads(c.read_file_capped(src, 1 << 16))
-        if not isinstance(doc, dict) or doc.get("stop_hook_active") is not False:
-            return _silent("stop")  # active, or a shape we do not know: let the agent stop
+        if not isinstance(doc, dict) or type(doc.get("stop_hook_active")) is not bool:
+            return _silent("stop")  # a shape we do not know: let the agent stop
+        active = doc["stop_hook_active"]
         for v in c.mine():
             if any(not q.answered and q.blocking for q in v.questions):
                 continue  # it waits for the person, on purpose
@@ -92,9 +122,22 @@ def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
                 if gaps:
                     gate = g
                     break
+            if gaps and active:
+                return _silent("stop")  # a gap blocks at most once per stop (the harness says it already did)
             if not gaps:
                 if any(views.gate_missing(v, g) for g in gates):
                     continue  # it lacks only what has no one-line command (an artifact): let the agent stop
+                # W33: a complete gate waits for the person: keep the agent in orch wait, also when the harness says
+                # it already blocked, at most GATE_WAIT_BLOCKS times per gate; then it may stop with one plain line.
+                n = _bump_stops(ctx, ws, f"{v.key}:{gate}")
+                if n > GATE_WAIT_BLOCKS + 1:
+                    return _silent("stop")
+                if n == GATE_WAIT_BLOCKS + 1:
+                    note = (
+                        f"orch: the {gate} gate of {v.key} waits for the person's approval and the agent stopped"
+                        " waiting. Approve it in the dashboard, then press Continue building."
+                    )
+                    return Result(data={"event": "stop", "head": "", "raw": json.dumps({"systemMessage": note})})
                 # run-9 J04: every open gate is complete and waits for the person. Ending the turn here leaves an
                 # idle session that never builds: the agent waits in this session and builds once it is approved.
                 reason = (

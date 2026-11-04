@@ -1135,6 +1135,24 @@ def _ops(*groups: Iterable[str], but: Iterable[str] = ()) -> list[str]:
     return sorted({op for g in groups for op in g} - set(but))
 
 
+#: THE table of network-bound ops: module (``orch.host.<module>.execute`` runs the op off the worker, on the event loop)
+#: -> its ops. Each one waits on the hub, the publish server, a peer, DNS or git. SECOND_PHASE and
+#: :data:`NETWORK_BOUND_OPS` are both built from this one table, so they cannot drift: a new network op is added here
+#: (through its module's ``NETWORK_OPS``) or it is not a two-phase op at all.
+NETWORK_GROUPS: dict[str, list[str]] = {
+    "publishing": _ops(PUBLISH_NETWORK_OPS, {"publish.list"}),  # P5: server calls (publish.list asks the server live)
+    "appops": _ops(APP_NETWORK_OPS),  # #1455: the upload, off the worker
+    "hubops": _ops(HUB_NETWORK_OPS),  # V3 C2a: the hub link, off the worker
+    "shareops": _ops(SHARE_NETWORK_OPS),  # V3 C6
+    "marketops": _ops(MARKET_NETWORK_OPS),  # V3 G2: DNS and git, no lock held
+    "spaceops": _ops(SPACE_NETWORK_OPS),  # V3 C13
+    "orgops": _ops(ORG_NETWORK_OPS),  # M3 H-2: org.sync
+    "peerops": _ops(PEER_NETWORK_OPS),  # V3 C12: peer.send / peer.reply
+}
+#: Every op that may wait on the network. A client must never send one over a connection that other calls share (the
+#: dashboard server keeps one per workspace, answering one call at a time): the dashboard routes by this set.
+NETWORK_BOUND_OPS: frozenset[str] = frozenset(op for ops in NETWORK_GROUPS.values() for op in ops)
+
 #: THE list of two-phase ops (review F3): op -> its second phase, on the event loop, given the worker's answer. That
 #: answer is internal (a plan, a checked launch, a pending read): :meth:`RegistryBackend.serve` hands it over as
 #: :func:`plain` data, never redacted, because a random base64url key, signature or payload in it can look like a token
@@ -1150,13 +1168,6 @@ SECOND_PHASE: dict[str, SecondPhase] = {
     **dict.fromkeys(_ops(GRANT_OPS), _in("runnergrants", "complete")),  # H11c: the runner grant table
     # H11d: runner git, then registration
     **dict.fromkeys(_ops(WORKTREE_OPS, but={"worktree.list", "worktree.diff"}), _in("worktrees", "execute")),
-    **dict.fromkeys(_ops(PUBLISH_NETWORK_OPS, {"publish.list"}), _in("publishing", "execute")),  # P5: server calls
-    **dict.fromkeys(_ops(APP_NETWORK_OPS), _in("appops", "execute")),  # #1455: the upload, off the worker
-    **dict.fromkeys(_ops(HUB_NETWORK_OPS), _in("hubops", "execute")),  # V3 C2a: the hub link, off the worker
-    **dict.fromkeys(_ops(SHARE_NETWORK_OPS), _in("shareops", "execute")),  # V3 C6
-    **dict.fromkeys(_ops(MARKET_NETWORK_OPS), _in("marketops", "execute")),  # V3 G2: DNS and git, no lock held
-    **dict.fromkeys(_ops(SPACE_NETWORK_OPS), _in("spaceops", "execute")),  # V3 C13
-    **dict.fromkeys(_ops(ORG_NETWORK_OPS), _in("orgops", "execute")),  # M3 H-2: org.sync
-    **dict.fromkeys(_ops(PEER_NETWORK_OPS), _in("peerops", "execute")),  # V3 C12: peer.send / peer.reply
+    **{op: _in(module, "execute") for module, ops in NETWORK_GROUPS.items() for op in ops},
 }
 TWO_PHASE_OPS = frozenset(SECOND_PHASE)

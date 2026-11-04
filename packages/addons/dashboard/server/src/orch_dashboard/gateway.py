@@ -245,6 +245,7 @@ class Gateway:
                 # A dev host is just another socket. Its identity still has to match the registry pin.
                 path = os.environ.get("ORCH_HOST_SOCKET") or self.run / ws / "host.sock"
                 existing = HostLink.connect(path, pin["host_uid"], ws)
+                existing.own = lambda: self.new_link(ws)  # network-bound ops leave this shared link (hostlink.call)
                 self.links[ws] = existing
             if existing.welcome["peer"]["person"] != pin["peers"][str(os.getuid())]["person"]:
                 existing.close()

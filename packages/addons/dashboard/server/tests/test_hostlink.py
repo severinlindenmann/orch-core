@@ -412,3 +412,114 @@ def test_a_task_started_in_a_request_reads_fresh_after_the_request_ends():
 
     asyncio.run(main())
     assert Link.calls == 3  # one in the request, then one per call: the closed memo is never used
+
+
+# --- W34b: a network-bound op never rides the link the workspace's other calls share ------------------------------
+
+
+def _serving_link(ops, answer, seen):
+    """A HostLink on a socketpair whose fake host answers every request with `answer(op)` and records the op."""
+    a, b = socket.socketpair()
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome(ops={op: 1 for op in ops}, caps=["ops/1", "publish/1", "hub/1"])))
+            try:
+                while True:
+                    req = receive(b)
+                    seen.append(req["op"])
+                    b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": answer(req["op"])}}))
+            except (HostError, OSError, EOFError):
+                return
+
+    t = threading.Thread(target=host, daemon=True)
+    t.start()
+    return HostLink(a, os.getuid(), WS), t
+
+
+NETWORK_SAMPLE = [
+    ("publish.send", {"staged_id": "x"}, True),
+    ("hub.refresh", {}, True),
+    ("peer.send", {}, True),
+    ("share.sync", {}, True),
+    ("app.send", {}, True),
+    ("publish.list", {}, False),
+    ("hub.shared", {}, False),
+]
+
+
+@pytest.mark.parametrize(("op", "args", "write"), NETWORK_SAMPLE)
+def test_a_network_op_on_the_shared_link_goes_to_a_link_of_its_own(op, args, write):
+    shared_seen, own_seen, made = [], [], []
+    shared, t1 = _serving_link([op, "whoami"], lambda o: {"on": "shared"}, shared_seen)
+    own, t2 = _serving_link([op, "whoami"], lambda o: {"on": "own"}, own_seen)
+
+    def factory():
+        made.append(own)
+        return own
+
+    shared.own = factory
+    try:
+        # the shared link is busy (a long read holds its lock): the network op must not wait for it
+        assert shared.lock.acquire(timeout=1)
+        try:
+            kw = {"write": True, "idem": "i" * 8} if write else {}
+            assert shared.call(op, args, **kw) == {"on": "own"}
+        finally:
+            shared.lock.release()
+        assert made == [own] and own_seen == [op] and shared_seen == []
+        assert own.sock.fileno() == -1  # short-lived: closed after its one answer
+        assert shared.sock.fileno() != -1  # the shared link is untouched
+    finally:
+        shared.close()
+        t1.join(2)
+        t2.join(2)
+
+
+def test_a_non_network_op_keeps_the_shared_link():
+    shared_seen = []
+    shared, t = _serving_link(["whoami"], lambda o: {"on": "shared"}, shared_seen)
+
+    def factory():
+        raise AssertionError("a local read must not open a link")
+
+    shared.own = factory
+    try:
+        assert shared.call("whoami") == {"on": "shared"} and shared_seen == ["whoami"]
+    finally:
+        shared.close()
+        t.join(2)
+
+
+def test_a_link_of_its_own_does_not_route_again():
+    seen = []
+    link, t = _serving_link(["hub.refresh"], lambda o: {"ok": 1}, seen)
+    try:
+        assert link.own is None
+        assert link.call("hub.refresh", {}, write=True, idem="i" * 8) == {"ok": 1} and seen == ["hub.refresh"]
+    finally:
+        link.close()
+        t.join(2)
+
+
+def test_the_gateway_gives_its_shared_links_the_routing_and_links_of_its_own_none(tmp_path, monkeypatch):
+    from orch_dashboard import gateway as gw
+
+    made = []
+
+    class Fake:
+        sock = socket.socket()
+        welcome = {"peer": {"person": "p"}}
+        own = None
+
+    monkeypatch.setattr(gw.HostLink, "connect", classmethod(lambda cls, path, uid, ws: made.append(Fake()) or made[-1]))
+    g = gw.Gateway.__new__(gw.Gateway)
+    g.state, g.run, g.links, g.control, g.lock = tmp_path, tmp_path, {}, None, threading.RLock()
+    monkeypatch.setattr(
+        g, "_pins", lambda: {WS: {"host_uid": 1, "peers": {str(os.getuid()): {"person": "p"}}}}, raising=False
+    )
+    shared = g.link(WS)
+    assert callable(shared.own)
+    fresh = g.new_link(WS)
+    assert fresh is not shared and fresh.own is None

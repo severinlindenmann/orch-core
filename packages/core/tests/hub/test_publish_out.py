@@ -258,12 +258,14 @@ def test_a_request_over_the_link_frame_is_refused_before_anything_is_sent(joined
 
 def test_hub_file_max_is_one_frame_less_the_overhead_and_halved_for_hex():
     # the hub's link frame cap (orch_hub.link.framing.MAX_FRAME) is 1_500_000; core never imports the hub, so it is here
+    assert hp.HUB_PART == 384 * 1024
+    assert hp.HUB_PART < hp.HUB_FILE_MAX
     assert hp.HUB_FILE_MAX == (hp.REQUEST_MAX - hp.REQUEST_OVERHEAD) // 2
     assert hp.HUB_FILE_MAX * 2 + hp.REQUEST_OVERHEAD <= 1_500_000
     assert hp.HUB_FILE_MAX * 2 + hp.REQUEST_OVERHEAD <= hp.REQUEST_MAX
 
 
-def test_a_file_of_hub_file_max_goes_through_and_one_byte_more_does_not(joined_link):
+def test_the_transport_still_bounds_individual_frames(joined_link):
     hub, link = joined_link
     client = _client(hub, link)
     with pytest.raises(HubRefused) as exc:

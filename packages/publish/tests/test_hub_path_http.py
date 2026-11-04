@@ -307,7 +307,7 @@ def test_non_ascii_host_target_or_method_is_malformed_not_a_crash():
     assert x.value.code == "malformed"
 
 
-def test_non_ascii_target_at_the_asgi_layer_is_malformed(env):
+def test_non_ascii_target_at_the_asgi_layer_is_not_found(env):
     """A raw non-ASCII request target (the HTTP client would percent-encode it, a raw socket may not)."""
     import asyncio
 
@@ -326,8 +326,8 @@ def test_non_ascii_target_at_the_asgi_layer_is_malformed(env):
         "query_string": b"", "headers": [(k.lower().encode(), v.encode()) for k, v in h.items()],
     }  # fmt: skip
     asyncio.run(env.app(scope, receive, send))
-    assert out[0]["status"] == 400
-    assert json.loads(out[1]["body"]) == {"error": "malformed"}
+    assert out[0]["status"] == 404
+    assert json.loads(out[1]["body"]) == {"error": "not_found"}
 
 
 def test_dev_hub_is_refused_by_a_real_publish(env):

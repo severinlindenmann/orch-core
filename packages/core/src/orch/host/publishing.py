@@ -600,19 +600,7 @@ def _ticket(call: Call, ref: str) -> Any:
     return Viewer.of(call).ticket(call.service.store, ref)
 
 
-def _hub_too_big(name: str, size: int) -> HostError:
-    """The refusal of a file that does not fit one ``publish_out`` frame: said at prepare, before anything is staged or
-    signed (``publish.send`` keeps its own check). The limit comes from the one number in the hub client."""
-    from orch.hubclient.publish import HUB_FILE_MAX
-
-    return HostError(
-        "quota.host",
-        f"Files over {approval.human_size(HUB_FILE_MAX)} can't go through the hub yet. "
-        f"({name} is {approval.human_size(size)}.)",
-    )
-
-
-def _artifact_bytes(call: Call, view: Any, name: str, room: int, hub_max: int | None = None) -> tuple[bytes, str]:
+def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes, str]:
     """One artifact of the ticket, by the ticket manifest and its digest (as ``artifact.get``): opened without following
     a link, one hard link, a regular file, hashed to the digest the log names."""
     from .visibility import Viewer
@@ -630,8 +618,6 @@ def _artifact_bytes(call: Call, view: Any, name: str, room: int, hub_max: int | 
         info = os.fstat(handle.fileno())
         if info.st_size > approval.LIMITS["file_bytes"]:
             raise HostError("quota.host", f"{art.name} is over {approval.human_size(approval.LIMITS['file_bytes'])}")
-        if hub_max is not None and info.st_size > hub_max:
-            raise _hub_too_big(art.name, info.st_size)
         if info.st_size > room:  # before a byte is read: the stage cap (workspace) and the share cap
             raise HostError("quota.host", "the staged copies would use too much room: discard some")
         data = handle.read(approval.LIMITS["file_bytes"] + 1)
@@ -649,7 +635,6 @@ def _work_files(
     blobs: list[bytes],
     used: int,
     total: int,
-    hub_max: int | None = None,
 ) -> None:
     """P03: files of the ticket's own work folder, by plain name. The host resolves each below
     ``<project>/.orch-work/<KEY>`` through descriptors (no link followed, no path), checks the name like any share
@@ -673,8 +658,6 @@ def _work_files(
         except ValueError as exc:
             raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total, approval.LIMITS["file_bytes"])
-        if hub_max is not None:
-            room = min(room, hub_max)
         try:
             data = workdir_read(service.store.layout, view.key, name, max(room, 0))
         except WorkdirTooBig as exc:
@@ -682,8 +665,6 @@ def _work_files(
                 raise HostError(
                     "quota.host", f"{name} is over {approval.human_size(approval.LIMITS['file_bytes'])}"
                 ) from None
-            if hub_max is not None and exc.size > hub_max:
-                raise _hub_too_big(name, exc.size) from None
             if (
                 approval.LIMITS["share_bytes"] - total <= STAGE_BYTES - used - total
             ):  # the share cap binds, not the stage
@@ -717,12 +698,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         raise HostError("op.not_allowed", "an agent prepares shares only on the ticket its session claims")
     _gate(call)
     cfg = _config(service)
-    route = _hub_route(service, sending=True)  # a hub that cannot carry the share is said now, before any copy
-    hub_max = None
-    if route is not None:  # a share through the hub travels in one link frame: say the file limit before the review
-        from orch.hubclient.publish import HUB_FILE_MAX
-
-        hub_max = HUB_FILE_MAX
+    _hub_route(service, sending=True)  # check connectivity before staging
     kind = args.get("kind", "secret")
     days = args.get("days", 7)
     views = args.get("views", 1 if kind == "once" else 0)
@@ -760,7 +736,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         except ValueError as exc:
             raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
-        data, digest = _artifact_bytes(call, view, name, room, hub_max)
+        data, digest = _artifact_bytes(call, view, name, room)
         total += len(data)
         if total > approval.LIMITS["share_bytes"]:
             raise HostError(
@@ -769,11 +745,9 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         files.append({"name": name, "size": len(data), "sha256": digest})
         blobs.append(data)
     if work_names:
-        _work_files(call, view, work_names, files, blobs, used, total, hub_max)
+        _work_files(call, view, work_names, files, blobs, used, total)
         total = sum(f["size"] for f in files)
     for meta_up in picked:  # the picked files: read and hashed again now; the stage's hash is what is signed
-        if hub_max is not None and meta_up["size"] > hub_max:
-            raise _hub_too_big(meta_up["name"], meta_up["size"])
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
         data = _upload_read(service, meta_up, room)
         total += len(data)
@@ -1476,8 +1450,30 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                     rows = [r for r in _records(service) if r.get("id") != rec["id"]]
                     _save_records(service, _prune_failed([*rows, {**rec, "state": "failed"}], service.clock()))
             raise
+        from orch.hubclient.publish import HUB_PART
+
+        def still_valid() -> None:
+            # A long upload (parts, backoff) must not outlive the person's signature or the share's end: checked before
+            # every part and again before the commit that makes the share live.
+            if not _signed_approval(call, meta, _text(service, meta, cfg)):
+                raise HostError("publish.not_approved", "the share approval is no longer valid: sign this share again")
+            if _now_ms(service) >= send["expires_ms"]:
+                raise HostError("publish.changed", "the share expired: prepare the share again")
+
+        class FreshPartsClient:
+            def request(self, *args: Any, **kwargs: Any) -> Any:
+                still_valid()
+                return client.request(*args, **kwargs)
+
         for entry, data in zip(meta["files"], blobs, strict=True):
-            flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
+            if plan["hub"] is not None and len(data) > HUB_PART:
+                flow.put_file_parts(
+                    FreshPartsClient(), service.workspace_id, meta["share_id"], entry["name"], data, part_size=HUB_PART
+                )
+            else:
+                still_valid()
+                flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
+        still_valid()
         flow.commit(client, service.workspace_id, meta["share_id"])
         link = f"{cfg['share']}/s/{meta['share_id']}#t={token}"
         with _MU:

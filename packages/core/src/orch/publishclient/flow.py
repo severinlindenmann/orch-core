@@ -1,8 +1,9 @@
 """The calls the Publish add-on makes to orch-publish, one function each (design-publish-addon §2.5).
 
 Thin on purpose: a :class:`~orch.publishclient.client.PublishClient` does the signing, the retries and the error
-codes; these functions only name the routes and shape the bodies. Nothing here logs, and no function takes or returns
-a share token: the server only ever sees ``token_hash`` (sha256 hex of the token string).
+codes; these functions name the routes and shape the bodies. Part uploads own their resume and retry loop.
+Nothing here logs, and no function takes or returns a share token: the server only ever sees ``token_hash``
+(sha256 hex of the token string).
 
 A share goes up as: ``PUT shares/<id>`` (the manifest), one ``PUT shares/<id>/files/<name>`` per file, then
 ``POST shares/<id>/commit``. Every step is safe to send again (the server answers ``unchanged``), so a lost answer
@@ -13,8 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+import time
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
+
+from orch.hubclient.errors import HubRefused
 
 from .client import PublishClient, PublishError, share_target
 
@@ -26,6 +30,7 @@ __all__ = [
     "put_app_file",
     "put_app_meta",
     "put_file",
+    "put_file_parts",
     "put_meta",
     "revoke",
     "set_password",
@@ -76,6 +81,98 @@ def put_meta(client: PublishClient, workspace_id: str, share_id: str, meta: byte
 def put_file(client: PublishClient, workspace_id: str, share_id: str, name: str, data: bytes) -> dict[str, Any]:
     got = client.request("PUT", share_target(workspace_id, "shares", share_id, "files", name), data).json()
     return got if isinstance(got, dict) else {}
+
+
+def put_file_parts(
+    client: PublishClient,
+    ws: str,
+    sid: str,
+    name: str,
+    data: bytes,
+    *,
+    part_size: int,
+    sleep: Callable[[float], None] = time.sleep,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> dict[str, Any]:
+    """Append bounded parts, always resuming at Publish's authoritative byte count.
+
+    Own retries here so each failed attempt counts once and each retry is signed anew.
+    Only a completed response (``done``) finishes the upload, including an empty file.
+    """
+    if type(part_size) is not int or part_size <= 0:
+        raise ValueError("part_size must be a positive integer")
+    offset = failures = 0
+    restarted = False
+    conflict_offset = None
+    # A bound on the whole loop: no answer pattern (no progress, offsets bouncing back) can keep it running forever.
+    budget = 3 * (len(data) // part_size + 1) + 20
+
+    def received(value: Any) -> int:
+        if type(value) is not int or not 0 <= value <= len(data):
+            raise PublishError("bad_reply", method="PUT")
+        return value
+
+    while True:
+        budget -= 1
+        if budget < 0:
+            raise PublishError("bad_reply", method="PUT")
+        target = share_target(ws, "shares", sid, "parts", str(offset), *name.split("/"))
+        try:
+            reply = client.request("PUT", target, data[offset : offset + part_size], idempotent=False)
+            got = reply.json()
+        except (PublishError, HubRefused) as exc:
+            previous_conflict = conflict_offset
+            conflict_offset = None
+            if isinstance(exc, PublishError) and exc.code in {"part_out_of_order", "part_conflict"}:
+                if exc.code == "part_conflict":
+                    if previous_conflict == offset:
+                        raise
+                    conflict_offset = offset
+                offset = received(exc.received)
+                failures = 0
+                continue
+            if isinstance(exc, PublishError) and exc.code == "content_mismatch":
+                if restarted:
+                    raise
+                if received(exc.received) != 0:
+                    raise PublishError("bad_reply", exc.status, method="PUT") from None
+                restarted = True
+                offset = failures = 0
+                continue
+            retryable = (
+                exc.code in {"unavailable", "hub_unreachable"}
+                if isinstance(exc, HubRefused)
+                else exc.code in {"part_busy", "rate_limited", "network"} or exc.status in {502, 503, 504}
+            )
+            if not retryable:
+                raise
+            failures += 1
+            if failures >= 5:
+                raise
+            sleep(min(2 ** (failures - 1), 16))
+            continue
+        if (
+            not isinstance(got, dict)
+            or type(got.get("done")) is not bool
+            or got.get("result") not in {"stored", "unchanged"}
+        ):
+            raise PublishError("bad_reply", reply.status, method="PUT")
+        before, offset = offset, received(got.get("received"))
+        if got["done"] and offset != len(data):
+            raise PublishError("bad_reply", reply.status, method="PUT")
+        # an answer that does not move forward (also a full length that is not done); a lower received is resumed from
+        if not got["done"] and offset <= before:
+            failures += 1
+            if failures >= 5:
+                raise PublishError("bad_reply", reply.status, method="PUT")
+            sleep(min(2 ** (failures - 1), 16))
+            continue
+        failures = 0
+        conflict_offset = None
+        if on_progress is not None:
+            on_progress(offset, len(data))
+        if got["done"]:
+            return got
 
 
 def put_app_meta(client: PublishClient, workspace_id: str, app_id: str, version: str, meta: bytes) -> dict[str, Any]:

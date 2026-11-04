@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { agentsCan, answers, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { agentsCan, answers, groupProgress, plainLines, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -102,6 +102,8 @@ function fake(
     suggested?: Record<string, unknown>
     os?: string
     host?: string
+    hostname?: string
+    remote?: boolean
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -120,6 +122,8 @@ function fake(
         ...(options.claudeAvailable ? { claude: { available: true } } : {}),
         ...(options.os ? { os: options.os } : {}),
         ...(options.host ? { host: options.host } : {}),
+        ...(options.hostname ? { hostname: options.hostname } : {}),
+        ...(options.remote ? { remote: true } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
         ...(options.complete ? { complete: true } : {}),
@@ -930,7 +934,7 @@ test('a review item of a kind this page does not know is named in the summary an
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Something new to sign')
   expect(screen.getByText('Details').closest('details')).not.toHaveAttribute('open')
-  expect(screen.getByText('Do the new thing')).toBeInTheDocument()
+  expect(screen.getAllByText('Do the new thing').length).toBeGreaterThan(0) // plain headline and the technical row
 })
 
 test('a settings change this page does not know is named, not summarised away', async () => {
@@ -1892,10 +1896,10 @@ test('security review: the agents summary names only the add-ons that are on', (
   expect(agentsCan([])).toBe('Agents start only when you start them in a terminal.')
 })
 
-test('P24: approval cards keep each radio with its label, show both methods and name the host', async () => {
+test('P24: approval cards keep each radio with its label and show both methods (W35: in words of "this computer")', async () => {
   render(<Setup api={fake({ host: 'build-server', suggested: { method: 'terminal' } }).api} />)
   await approval()
-  const click = screen.getByRole('radio', { name: /One click on build-server/ })
+  const click = screen.getByRole('radio', { name: /One click on this computer/ })
   const password = screen.getByRole('radio', { name: /Password/ })
   for (const radio of [click, password]) {
     expect(radio).toBeVisible()
@@ -1905,11 +1909,11 @@ test('P24: approval cards keep each radio with its label, show both methods and 
   expect(password).toBeChecked()
   expect(click.closest('label')).toHaveTextContent('Recommended')
   expect(click.closest('label')).toHaveTextContent('No typing. Best on your own computer.')
-  const consequence = within(click.closest('label')!).getByText('Anything running as you on build-server could approve too.')
+  const consequence = within(click.closest('label')!).getByText('Anything running as you on this computer could approve too.')
   expect(consequence).toBeVisible()
   expect(consequence.closest('details')).toBeNull()
-  expect(password.closest('label')).toHaveTextContent('Safest if others use build-server.')
-  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Your history stays on build-server.')
+  expect(password.closest('label')).toHaveTextContent('Safest if others use this computer.')
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Your history stays on this computer.')
 })
 
 test('P44: one access switch hides durations when off and sends the original profile fields for every choice', async () => {
@@ -1985,14 +1989,14 @@ test('P52 styling: Review places quiet Back beside primary Create workspace and 
 })
 
 
-test.each([undefined, 'build-server'])('access switch explains the runner grant on %s', async (host) => {
+test.each([undefined, 'build-server'])('access switch explains the runner grant on this computer (host %s)', async (host) => {
   await toAgents(fake({ host }))
   const toggle = screen.getByRole('switch', { name: /Allow agents to work/ })
   const text = toggle.closest('label')!.querySelector('small')!
-  expect(text).toHaveTextContent(`Turning this on lets agents start on ${host || 'this computer'} for the chosen time.`)
+  expect(text).toHaveTextContent(`Turning this on lets agents start on this computer for the chosen time.`)
   fireEvent.click(toggle)
   fireEvent.click(screen.getByRole('button', { name: '1 day' }))
-  expect(text).toHaveTextContent(`Turning this on lets agents start on ${host || 'this computer'} for 1 day.`)
+  expect(text).toHaveTextContent(`Turning this on lets agents start on this computer for 1 day.`)
   expect(screen.getByText('Allowing agents to work does not start a task.')).toBeVisible()
 })
 
@@ -2016,7 +2020,7 @@ test('finish review with agent_grant false and nonzero hours never claims agents
 test('review grant names the host and takes precedence over a different duration setting', () => {
   const grant = { ...review.items[0], id: 'runner_grant', type: 'grant.issued', fields: { hours: 8, scope: 'workable', verbs: 'agent' } }
   const facts = reviewFacts({ ...review, items: [...review.items, grant] }, 'build-server', true)
-  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('Agents may work on their own on build-server for 8 hours.')
+  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('Agents may work on their own on this computer for 8 hours.')
   expect(facts.some((f) => f.value.includes('access time') || f.value.includes('access duration'))).toBe(false)
 })
 
@@ -2037,7 +2041,7 @@ test('security delta: an applied runner grant never reads as "may not work", wha
   const base = { items: [], flags: [], review_id: 'r', digest: 'd' } as unknown as Parameters<typeof reviewFacts>[0]
   const odd = { ...base, items: [{ id: 'runner_grant', title: 'g', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 'later', scope: 'workable', verbs: 'agent' } }] } as unknown as typeof base
   const text = reviewFacts(odd, 'build-server').map((f) => f.value).join(' ')
-  expect(text).toContain('Agents may work on their own on build-server.')
+  expect(text).toContain('Agents may work on their own on this computer.')
   expect(text).not.toContain('may not work')
 })
 
@@ -2060,4 +2064,114 @@ test('step position and current name remain outside the compact dot labels throu
   fireEvent.click(screen.getByLabelText(/Own copy per ticket/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(await screen.findByText('Step 2 of 2: Review')).toBeVisible()
+})
+
+// ---- W35: the computer by its friendly name, never the raw host name ----
+async function toReview(api: SetupAPI) {
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your recovery words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+}
+
+test('W35: the friendly name is shown once (Computer row); sentences say this computer; the raw host name only on the Computer row and in Details', async () => {
+  const { api } = withReview({
+    flags: [{ id: 'custody', text: 'Approvals on this machine need one click.' }],
+    items: [{ id: 'runner_grant', title: 'Agent access', lines: ['Agent access'], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [] }],
+  }, { host: 'Lume’s MacBook', hostname: 'lumes-Virtual-Machine.local', suggested: { method: 'click', agent_hours: 72, agent_grant: true } })
+  await toReview(api)
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent('ComputerLume’s MacBook')
+  expect(summary).toHaveTextContent('Agents may work on their own on this computer for 3 days.')
+  expect(summary).toHaveTextContent('You approve with One click on this computer.')
+  expect(summary).toHaveTextContent('ComputerLume’s MacBook (lumes-Virtual-Machine.local)') // both names where they differ
+  expect(summary.textContent!.split('Lume’s MacBook').length).toBe(2) // the friendly name once
+  const technical = document.querySelector('.review-technical')!
+  expect(technical.textContent).toContain('lumes-Virtual-Machine.local')
+  // the raw name is never in a sentence: only the Computer row and Details
+  expect((document.body.textContent ?? '').replace(technical.textContent ?? '', '').split('lumes-Virtual-Machine').length).toBe(2)
+})
+
+test('W35: without a friendly name there is no Computer row and no raw host name outside Details', async () => {
+  const { api } = withReview({}, { hostname: 'web' })
+  await toReview(api)
+  expect(document.querySelector('.review-summary')).not.toHaveTextContent('Computer')
+  const technical = document.querySelector('.review-technical')!
+  const outside = (document.body.textContent ?? '').replace(technical.textContent ?? '', '')
+  expect(outside).not.toMatch(/\bweb\b/)
+  expect(technical.textContent).toContain('web')
+})
+
+// ---- W36: Review > Details shows plain headlines first, every raw row behind "Technical details" ----
+test('W36: Details shows each step as its headline and plain lines; rows, hashes and JSON only inside Technical details; nothing signed is missing', async () => {
+  const { api } = withReview({
+    items: [
+      {
+        id: 'addon:dashboard', title: 'Dashboard', type: 'addon.granted', placeholders: [], placeholder_details: [], volatile: [],
+        fields: { name: 'dashboard', package_sha256: 'sha256:6e98390', capabilities: ['serve_http'] },
+        lines: ['Turn on Dashboard: it says it will serve web pages from this computer', '', 'Fields', '  add-on: dashboard', '  version: 0.1.0', '', 'An add-on runs its own code on this computer as you; turn it on only if you trust it.'],
+        details: ['capabilities: ["serve_http"]', 'package_sha256: sha256:6e98390', 'type: addon.granted'],
+      },
+      {
+        id: 'settings', title: 'Workspace settings', type: 'settings.changed', placeholders: [], placeholder_details: [], volatile: [],
+        fields: { set: { grant_hours: 72 } },
+        lines: ['Change the workspace settings', '', 'Changes', '  grant_hours: 72'],
+        details: ['set: {"grant_hours":72}', 'type: settings.changed'],
+      },
+    ],
+  })
+  await toReview(api)
+  const fold = document.querySelector('.review-technical') as HTMLElement
+  const plain = fold.querySelector('.review-plain') as HTMLElement
+  expect(plain).toHaveTextContent('Turn on Dashboard: it says it will serve web pages from this computer')
+  expect(plain).toHaveTextContent('An add-on runs its own code on this computer as you')
+  expect(plain).toHaveTextContent('Change the workspace settings')
+  for (const raw of [/package_sha256/, /serve_http/, /addon\.granted/, /grant_hours/, /Fields/, /settings\.changed/]) expect(plain.textContent).not.toMatch(raw)
+  const tech = within(fold).getByText('Technical details').closest('details') as HTMLDetailsElement
+  expect(tech.open).toBe(false)
+  for (const raw of ['package_sha256: sha256:6e98390', 'capabilities: ["serve_http"]', 'type: addon.granted', 'set: {"grant_hours":72}', 'add-on: dashboard', 'grant_hours: 72'])
+    expect(tech.textContent).toContain(raw)
+  expect(fold.textContent).not.toContain('—') // no visible-space markers in front of rows
+})
+
+test('W36: plainLines drops only bare block titles and rows; every other unindented sentence stays', () => {
+  expect(
+    plainLines([
+      'Turn on Dashboard', '', 'Fields', '  add-on: dashboard', '',
+      'Removes write permission from these folders, where you own them:', '  ~/ws-a', '', 'Only continue if you trust it.',
+    ]),
+  ).toEqual(['Turn on Dashboard', 'Removes write permission from these folders, where you own them:', 'Only continue if you trust it.'])
+})
+
+test('W36: a signed item note shows in the plain part of Details, not only in Technical details', async () => {
+  const { api } = withReview({
+    items: [{ id: 'runner_grant', title: 'Agent access', lines: ['Agent access', '', 'Fields', '  hours: 72'], details: [], volatile: [], type: 'grant.issued',
+      fields: { hours: 72, scope: 'workable', verbs: 'agent' }, placeholders: [], placeholder_details: [],
+      note: 're-issues agent access; an earlier grant was not confirmed (or was revoked)' }],
+  })
+  await toReview(api)
+  expect(document.querySelector('.review-plain')).toHaveTextContent('re-issues agent access; an earlier grant was not confirmed (or was revoked)')
+})
+
+test('W35: a remote (ssh) setup names the computer in the One click sentences and shows both names on the Computer row', async () => {
+  const opts = { host: 'Lume’s MacBook', hostname: 'lumes-vm.local', remote: true, suggested: { method: 'click', agent_hours: 72, agent_grant: true } }
+  render(<Setup api={fake(opts).api} />)
+  await approval()
+  expect(screen.getByRole('radio', { name: /One click on Lume’s MacBook/ })).toBeInTheDocument()
+  expect(screen.getByRole('radio', { name: /One click on Lume’s MacBook/ }).closest('label')).toHaveTextContent('Anything running as you on Lume’s MacBook could approve too.')
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent(/Your history stays on \u2068Lume’s MacBook\u2069\./) // plain(): isolated name
+  cleanup()
+  const { api } = withReview({ flags: [{ id: 'custody', text: 'Approvals need one click.' }] }, opts)
+  await toReview(api)
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent('ComputerLume’s MacBook (lumes-vm.local)')
+  expect(summary).toHaveTextContent('You approve with One click on Lume’s MacBook.')
+})
+
+test('W35: a remote setup without a friendly name names the host name', async () => {
+  render(<Setup api={fake({ hostname: 'web', remote: true, suggested: { method: 'click' } }).api} />)
+  await approval()
+  expect(screen.getByRole('radio', { name: /One click on web/ })).toBeInTheDocument()
 })

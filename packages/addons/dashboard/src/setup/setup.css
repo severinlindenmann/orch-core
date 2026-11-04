@@ -663,3 +663,18 @@ body:has(> #root > .setup) {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.setup .review-plain .review-item p {
+  margin: 2px 0;
+}
+.setup .review-raw {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.setup .review-raw p {
+  margin: 2px 0;
+}
+.setup .review-plain bdi {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}

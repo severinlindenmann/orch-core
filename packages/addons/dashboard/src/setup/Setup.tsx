@@ -1379,7 +1379,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                       <h3>New workspace</h3>
                       {review.workspace.lines.map((line, i) => (
                         <p key={i}>
-                          <Raw>{line}</Raw>
+                          <Name>{line}</Name>
                         </p>
                       ))}
                     </section>
@@ -1389,11 +1389,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                     return (
                       <section className="review-item" key={item.id}>
                         <h3>
-                          <Raw>{headline ?? item.title}</Raw>
+                          <Name>{headline ?? item.title}</Name>
                         </h3>
                         {rest.map((line, i) => (
                           <p key={i}>
-                            <Raw>{line}</Raw>
+                            <Name>{line}</Name>
                           </p>
                         ))}
                       </section>
@@ -1402,7 +1402,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   {review.flags.filter((f) => f.detail).map((f) => (
                     <section className="review-item" key={`flag-${f.id}`}>
                       <p>
-                        <Raw>{f.text}</Raw>
+                        <Name>{f.text}</Name>
                       </p>
                     </section>
                   ))}

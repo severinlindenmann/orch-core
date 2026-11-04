@@ -187,14 +187,14 @@ def build():
         ("start_no_current_version", None, False),
         ("start_meta_hash_mismatch", 7, True),
     ]:
-        start_body = {**copy.deepcopy(body), "op": "start", "meta_hash": new_hash}
+        start_body = {**copy.deepcopy(body), "op": "start"}
         if mismatch:
             start_body["meta_hash"] = digest(b"different approved meta")
         result["start_cases"].append({"name": name, "status": "pending",
-            "body": start_body, "meta": copy.deepcopy(new_meta), "stored_files": stored,
+            "body": start_body, "meta": copy.deepcopy(meta), "stored_files": stored,
             "method": "POST", "target": f"/v1/ws/{ws}/apps/{app}/start",
             "initial_state": {"running": False, "current_version": current},
-            "approval": "otherwise valid owner approval; signer has signed this grant's commit approval",
+            "approval": "otherwise valid ordinary owner approval for this exact start request",
             "expect": {"error": "meta_mismatch" if mismatch else "version_not_current", "running": False}})
     for field in ("app_id", "new"):
         invalid = copy.deepcopy(event)
@@ -207,7 +207,69 @@ def build():
         invalid["release"][field] = value
         result["release_note_cases"].append({"name": name, "event": invalid,
             "event_canonical_utf8": cj(invalid).decode(), "expect": {"ok": False}})
-    for category in ("create", "start", "release_note"):
+    # Pending server transitions: newness must be checked without relying on PUT.
+    for name, op, initial in [
+        ("new_commit_after_current_refused", "commit",
+         {"current_version": 8, "ever_had_current_version": True, "ever_started_or_stopped": False}),
+        ("new_start_after_stop_refused", "start",
+         {"current_version": 7, "ever_had_current_version": True, "ever_started_or_stopped": True}),
+        ("new_byte_identical_restage_refused", "commit",
+         {"current_version": 8, "ever_had_current_version": True, "ever_started_or_stopped": True}),
+    ]:
+        result["state_cases"].append({
+            "name": name, "status": "pending", "meta": copy.deepcopy(new_meta),
+            "stored_meta_utf8": cj(new_meta).decode(), "stored_files": stored,
+            "body": {**copy.deepcopy(body), "op": op, "meta_hash": new_hash},
+            "method": "POST", "target": f"/v1/ws/{ws}/apps/{app}/{op}",
+            "initial_state": {"running": False, **initial},
+            "meta_put_skipped": True,
+            "restaged_meta_utf8": cj(new_meta).decode(),
+            "approval": "otherwise valid owner approval for this exact request",
+            "expect": {"error": "not_new", "http_status": 409, "state_unchanged": True},
+        })
+    result["create_cases"][0]["initial_state"]["existing_app_workspace_id"] = "99" * 16
+    result["create_cases"].append({
+        "name": "creation_meta_put_retry_unchanged", "status": "pending",
+        "meta": copy.deepcopy(new_meta), "stored_meta_utf8": cj(new_meta).decode(),
+        "request_meta_utf8": cj(new_meta).decode(), "version": 7,
+        "initial_state": {"app_id": app, "created_by_this_meta_put": True,
+                          "creation_version": 7, "current_version": None,
+                          "ever_had_current_version": False, "running": False},
+        "method": "PUT", "target": f"/v1/ws/{ws}/apps/{app}/versions/7",
+        "expect": {"error": None, "result": "unchanged", "state_unchanged": True},
+    })
+    legacy_meta = {k: v for k, v in meta.items() if k not in {"app_id", "new"}}
+    legacy_hash = digest(b"orch/v2/app-meta|" + cj(legacy_meta))
+    result["meta_hash_cases"] = []
+    for name, variant in [
+        ("meta_hash_amended", meta),
+        ("meta_hash_app_id_changed", {**meta, "app_id": "99" * 16}),
+        ("meta_hash_new_changed", new_meta),
+        ("meta_hash_legacy_stored_bytes", legacy_meta),
+    ]:
+        result["meta_hash_cases"].append({
+            "name": name, "meta": copy.deepcopy(variant),
+            "stored_meta_utf8": cj(variant).decode(),
+            "hash": digest(b"orch/v2/app-meta|" + cj(variant)),
+            "reach_hash": body["reach_hash"],
+        })
+    for op in ("commit", "rollback", "start"):
+        case = {"name": f"legacy_app_{op}_ok", "status": "pending",
+                **copy.deepcopy(base), "meta": copy.deepcopy(legacy_meta),
+                "stored_meta_utf8": cj(legacy_meta).decode(),
+                "effective_app_id": app, "effective_new": False,
+                "body": {**copy.deepcopy(body), "op": op, "meta_hash": legacy_hash},
+                "method": "POST", "target": f"/v1/ws/{ws}/apps/{app}/{op}",
+                "initial_state": {"running": False, "current_version": 7 if op == "start" else 8,
+                                  "ever_had_current_version": True, "ever_started_or_stopped": True},
+                "approval": "ordinary owner approval for this exact request",
+                "expect": {"error": None, "current_version": 7, "running": op == "start"}}
+        result["start_cases" if op == "start" else "state_cases"].append(case)
+    result["publication_requirement"] = (
+        "When the build lands, vectors_published.json gains the meta_hash_cases variants and "
+        "all start_cases here, including ordinary current-version/meta refusals and legacy start."
+    )
+    for category in ("create", "start", "release_note", "state", "meta_hash"):
         result["required"][category] = [c["name"] for c in result[category + "_cases"]]
     return result
 

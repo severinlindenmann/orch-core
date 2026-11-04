@@ -263,3 +263,15 @@ def test_release_grant_create(c):
 @pytest.mark.skip(reason="Pending start current-version and RG-3 stored-meta checks")
 def test_release_grant_start(c):
     pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["meta_hash_cases"], ids=lambda c: c["name"])
+def test_release_grant_meta_hash(c):
+    # Hash-only vectors are runnable now; legacy bytes must not gain defaults.
+    assert P.meta_hash(c["meta"]) == c["hash"]
+    assert P.reach_hash(c["meta"]["reach"]) == c["reach_hash"]
+
+
+def test_release_grant_required_cases_exist():
+    for section, required in RG_VEC["required"].items():
+        assert set(required) <= {c["name"] for c in RG_VEC[section + "_cases"]}

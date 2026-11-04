@@ -252,6 +252,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                   </div>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-text-muted">
                     <span>{deviceLine(m.devices, mine)}</span>
+                    {lastOwner && <span data-testid="only-owner-note">{mine ? 'You are the only owner. To change your role, make someone else an owner first.' : 'The only owner. To change this role, make someone else an owner first.'}</span>}
                     {below && <button type="button" data-testid="device-needs-update" onClick={() => { const d = document.getElementById(`person-details-${idx}`) as HTMLDetailsElement | null; if (d) { d.open = true; d.scrollIntoView({ block: 'nearest' }) } }} className="rounded-full border border-warning/50 px-2 py-px text-[11px] text-warning hover:bg-warning/10">Device update needed</button>}
                   </div>
                 </div>
@@ -270,13 +271,11 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                     <option key={r} value={r}>{ROLE_LABEL[r]}</option>
                   ))}
                 </select>
-                {mayRemove(m.role) && (
+                {mayRemove(m.role) && !mine && !lastOwner && (
                   <Button
                     variant="outline"
                     size="sm"
                     aria-label={`Remove ${name}`}
-                    disabled={mine || lastOwner}
-                    title={mine ? 'You cannot remove yourself.' : lastOwner ? 'The last owner cannot be removed.' : undefined}
                     onClick={() => ask({ title: `Remove ${name}`, action: { action: 'member_remove', person: m.person },  })}
                   >
                     Remove

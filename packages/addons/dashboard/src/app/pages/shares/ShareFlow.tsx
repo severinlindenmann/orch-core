@@ -252,7 +252,10 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
     const fail = (e: unknown, connected?: boolean) => {
       void refreshShares(qc, ws)
       // W22: the signature is no longer good (expired, or the settings changed): back to the review, to sign again
-      if (e instanceof ApiError && e.code === 'publish.not_approved') return setStage({ at: 'confirm', staged: { ...staged, signed: false } })
+      if (e instanceof ApiError && e.code === 'publish.not_approved') {
+        sendIdem.current = null // a fresh request after the new signature, never a replay of this refusal
+        return setStage({ at: 'confirm', staged: { ...staged, signed: false } })
+      }
       setStage({ at: 'send', staged, ...(connected ? { connected } : {}), error: { text: shareError(e), unknown: isUnknownWorkspace(e), unreachable: isUnreachable(e) } })
     }
     try {

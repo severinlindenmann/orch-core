@@ -87,7 +87,7 @@ def build():
                "Commit cases assume valid request approval and exercise stored-meta verification only.",
         "status": "pending", "pending_reason": "Spec-only amendment: release fields and the commit meta_hash check are not implemented",
         "required": {"commit": [c["name"] for c in cases], "release_note": ["release_note_fields"],
-                     "state": ["commit_to_stopped_app_stays_stopped"]},
+                     "state": ["commit_to_stopped_app_stays_stopped", "first_commit_new_app_stays_stopped"]},
         "commit_cases": cases,
         "state_cases": [{
             "name": "commit_to_stopped_app_stays_stopped", "status": "pending",
@@ -97,7 +97,16 @@ def build():
             "expect": {"error": None, "running": False, "current_version": 7},
             "scope": "orch-publish commit state transition, even with valid approval; "
                      "only app.start with its own approval starts the app. "
-                     "Separately, the signer must refuse a grant approval for a last-known stopped app.",
+                     "The signer state check is advisory, from its own last committed or started record; "
+                     "orch-publish preserves running state regardless of that check.",
+        }, {
+            "name": "first_commit_new_app_stays_stopped", "status": "pending",
+            **copy.deepcopy(base),
+            "initial_state": {"exists": False},
+            "approval": "otherwise valid owner approval for this exact commit request",
+            "expect": {"error": None, "running": False, "current_version": 7},
+            "scope": "New app creation is stopped and first commit preserves that state; "
+                     "the commit press does not approve app.start. Start approval design is pending.",
         }],
         "release_note_cases": [{
             "name": "release_note_fields", "event": event,

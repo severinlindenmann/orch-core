@@ -309,7 +309,8 @@
    "release_note_fields"
   ],
   "state": [
-   "commit_to_stopped_app_stays_stopped"
+   "commit_to_stopped_app_stays_stopped",
+   "first_commit_new_app_stays_stopped"
   ]
  },
  "state_cases": [
@@ -358,7 +359,60 @@
     "ticket": "01J9ZP00000000000000000001"
    },
    "name": "commit_to_stopped_app_stays_stopped",
-   "scope": "orch-publish commit state transition, even with valid approval; only app.start with its own approval starts the app. Separately, the signer must refuse a grant approval for a last-known stopped app.",
+   "scope": "orch-publish commit state transition, even with valid approval; only app.start with its own approval starts the app. The signer state check is advisory, from its own last committed or started record; orch-publish preserves running state regardless of that check.",
+   "status": "pending",
+   "stored_files": {
+    "index.html": [
+     20,
+     "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441"
+    ]
+   }
+  },
+  {
+   "approval": "otherwise valid owner approval for this exact commit request",
+   "body": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "meta_hash": "XLqDo080YvloGCfSXIpn_u7C8xqrvskDkDIWjRXxQ1o",
+    "op": "commit",
+    "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+    "version": 7
+   },
+   "expect": {
+    "current_version": 7,
+    "error": null,
+    "running": false
+   },
+   "forbidden": [
+    "https://hub.example.com",
+    "https://publish.example.com"
+   ],
+   "initial_state": {
+    "exists": false
+   },
+   "meta": {
+    "access": "group",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "first_commit_new_app_stays_stopped",
+   "scope": "New app creation is stopped and first commit preserves that state; the commit press does not approve app.start. Start approval design is pending.",
    "status": "pending",
    "stored_files": {
     "index.html": [

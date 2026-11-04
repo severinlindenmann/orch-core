@@ -298,7 +298,25 @@ def receive(sock) -> dict:
         sock.settimeout(original_timeout)
 
 
+def network_bound(op: str) -> bool:
+    """Does the host run `op` off its worker because it waits on the network (the hub, the publish server, a peer)?
+    Core's one set (``orch.host.dispatch.NETWORK_BOUND_OPS``), read once on first use."""
+    global _NETWORK_BOUND
+    if _NETWORK_BOUND is None:
+        from orch.host.dispatch import NETWORK_BOUND_OPS
+
+        _NETWORK_BOUND = NETWORK_BOUND_OPS
+    return op in _NETWORK_BOUND
+
+
+_NETWORK_BOUND: frozenset[str] | None = None
+
+
 class HostLink:
+    #: W34b, set by the gateway on the link it SHARES between a workspace's calls: a callable giving a fresh link. A
+    #: network-bound op sent on a shared link is sent on a short-lived link of its own instead (see `call`).
+    own = None
+
     def __init__(self, sock, host_uid: int, workspace_id: str | None):
         self.sock, self.lock, self.send_lock = sock, threading.Lock(), threading.Lock()
         self.events = deque(maxlen=256)
@@ -393,6 +411,16 @@ class HostLink:
             raise ValueError("files are only for human.prepare (the inner op's files, host contract R9)")
         if write and not dry_run and not idem:
             raise ValueError("every write requires its logical call's idem")
+        if self.own is not None and network_bound(op):
+            # THE routing point (W34b). This link answers one call at a time and holds its lock until the host answers,
+            # with a 30 s socket timeout that closes it under every other caller. An op that waits on the hub, the
+            # publish server or a peer must never hold it: whatever route called (`gateway.call`, `link_for(..).call`,
+            # `gateway.enabled(..).call`), it lands here.
+            own = self.own()
+            try:
+                return own.call(op, args, write=write, idem=idem, dry_run=dry_run, files=files)
+            finally:
+                own.close()
         cap = (
             "phone/1"
             if op.startswith("phone.")

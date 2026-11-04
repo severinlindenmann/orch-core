@@ -6,6 +6,7 @@ The raw host name is a separate field the page keeps under Details."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import unicodedata
 from collections.abc import Callable
@@ -18,7 +19,17 @@ _MACHINE_INFO = Path("/etc/machine-info")
 
 
 def _run(argv: list[str], timeout: float) -> str:
-    done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, shell=False)  # noqa: S603
+    from orch import childenv
+
+    done = subprocess.run(  # noqa: S603
+        argv,
+        env=childenv.minimal(os.environ),  # the one env cleaner (#1734 spawn guard)
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        shell=False,
+    )
     return done.stdout if done.returncode == 0 else ""
 
 

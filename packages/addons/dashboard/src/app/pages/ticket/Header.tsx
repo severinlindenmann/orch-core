@@ -325,13 +325,14 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, shareFil
             Change agent or model…
           </DropdownMenuItem>
         )}
-        {(shareFiles?.shown || share?.shown) && <DropdownMenuItem onSelect={() => setChoosingShare(true)}><Share2 />Share…</DropdownMenuItem>}
+        {/* W5 challenge: with only one possible choice the menu item opens it directly (no one-button chooser) */}
+        {(shareFiles?.shown || share?.shown) && <DropdownMenuItem onSelect={() => (share?.shown && shareFiles?.shown ? setChoosingShare(true) : share?.shown ? share.run() : shareFiles?.run())}><Share2 />Share…</DropdownMenuItem>}
         {share?.shown && share.shared && <DropdownMenuItem onSelect={share.stop ?? share.run}>Stop sharing</DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
     {choosingShare && <Dialog open onOpenChange={setChoosingShare}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Share</DialogTitle><DialogDescription>What would you like to share?</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Share</DialogTitle><DialogDescription className="sr-only">Choose how to share this ticket</DialogDescription></DialogHeader>
         {share?.shown && <Button variant="outline" onClick={() => { setChoosingShare(false); share.run() }}>Share with a colleague</Button>}
         {shareFiles?.shown && <Button variant="outline" onClick={() => { setChoosingShare(false); shareFiles.run() }}>Make a link to a file</Button>}
       </DialogContent>

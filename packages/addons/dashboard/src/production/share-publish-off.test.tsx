@@ -54,7 +54,6 @@ it('the ticket Actions menu offers Share files... while Publish is off and opens
   show('/w/DEMO/ticket/DEMO-0001')
   await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
   await user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
-  await user.click(await screen.findByRole('button', { name: 'Make a link to a file' }, T))
   const dialog = await screen.findByRole('dialog', { name: 'Turn on Publish' }, T)
   expect(dialog).toHaveTextContent('Nothing leaves this computer until you sign')
   expect(within(dialog).getByRole('button', { name: 'Turn on Publish' })).toBeInTheDocument()
@@ -73,7 +72,6 @@ it('with Publish on, Share files... opens the share dialog straight away', async
   show('/w/DEMO/ticket/DEMO-0001')
   await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
   await user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
-  await user.click(await screen.findByRole('button', { name: 'Make a link to a file' }, T))
   const dialog = await screen.findByRole('dialog', { name: 'Share files' }, T)
   expect(within(dialog).getByRole('button', { name: 'Add a file' })).toBeInTheDocument()
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Turn on Publish' })).toBeNull(), T)
@@ -92,7 +90,6 @@ const openShare = async (user: ReturnType<typeof userEvent.setup>) => {
   show('/w/DEMO/ticket/DEMO-0001')
   await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
   await user.click(await screen.findByRole('menuitem', { name: 'Share…' }, T))
-  await user.click(await screen.findByRole('button', { name: 'Make a link to a file' }, T))
 }
 
 it('run17 P01b: a suggested address skips the address dialog; the review opens at once, nothing is signed', async () => {

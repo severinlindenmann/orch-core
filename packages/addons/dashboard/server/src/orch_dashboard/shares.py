@@ -205,6 +205,7 @@ def staged_row(data) -> dict | None:
         "days": data.get("days") if data.get("days") in DAYS else None,
         "views": data.get("views") if data.get("views") in VIEWS else None,
         "origin": data.get("origin") if data.get("origin") in ("agent", "person") else None,
+        "signed": data.get("signed") is True,  # W22: signed by this person, the send has not gone through yet
         "files": files,
         "created_at": _time(data.get("created_at")),
     }

@@ -7,7 +7,7 @@ import type { ProfileFields } from '@/api/profile' // type only: a runtime impor
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
-export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update', 'closing', 'delivery'] as const
+export const HUB_SCENARIOS = ['standalone', 'selective', 'full', 'offline', 'nottold', 'update', 'closing', 'delivery', 'alone'] as const
 export type HubScenario = (typeof HUB_SCENARIOS)[number]
 const KEY = 'orch.mock.hub'
 
@@ -45,6 +45,7 @@ export function mockHubStatus(s: HubScenario = scenario()): HubStatus {
   const joined = { ...BASE, joined: true, hub_id: HUB_ID, link: 'bound' as const, groups: { read: 3, edit: 8, admin: 2 }, snapshot_version: 4 }
   switch (s) {
     case 'delivery':
+    case 'alone': // B13: joined, but nobody else is on the hub yet
     case 'selective': return { ...joined, mode: 'selective', hub_card: JSON.stringify({ o: { hub_id: HUB_ID }, sig: 'x' }) }
     case 'full': return { ...joined, mode: 'full', member: true }
     case 'update': return { ...joined, mode: 'full', member: true, update_target: '0.2.0' }
@@ -64,7 +65,7 @@ const DELIVERY = [...SHARED, { key: 'DEMO-0042', title: 'Fix login redirect' }, 
 const selectedTickets = () => scenario() === 'delivery' ? DELIVERY : SHARED
 
 function mockShare(): HubShare {
-  const joined = scenario() === 'delivery' || scenario() === 'selective' || scenario() === 'offline' || scenario() === 'full'
+  const joined = scenario() === 'delivery' || scenario() === 'alone' || scenario() === 'selective' || scenario() === 'offline' || scenario() === 'full'
   if (!joined) return { available: true, rules: [], shared: 0, refused: [], tickets: [], tickets_complete: true }
   return {
     available: true,
@@ -178,7 +179,7 @@ export function registerHubRoutes(r: MockRouter) {
   // Shared spaces: none in the mock (the page and its tests spy the api); the real host lists them from the hub.
   r.add('GET', '/api/w/:ws/spaces', () => ok({ spaces: [], note: 'from the hub, not signed' }))
   r.add('GET', '/api/w/:ws/spaces/:id', (_s, c) => ok({ id: c.params.id, items: [], refused: 0, note: 'from the hub, not signed' }))
-  r.add('GET', '/api/w/:ws/hub/share/audience', () => ok(MOCK_AUDIENCE))
+  r.add('GET', '/api/w/:ws/hub/share/audience', () => ok(scenario() === 'alone' ? { ...MOCK_AUDIENCE, people: [], teams: [] } : MOCK_AUDIENCE))
   r.add('POST', '/api/w/:ws/hub/share/preview', (_s, c) => ok(mockPreview(c.body as { add?: HubRule; remove?: HubRule } | null)))
   // Stopping sharing: a plain owner click (the server's full-session and owner checks are its own tests).
   r.add('POST', '/api/w/:ws/hub/share/revoke', (_s, c) => {

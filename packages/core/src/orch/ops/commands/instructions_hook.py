@@ -116,6 +116,42 @@ def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
     return _silent("stop")
 
 
+def hand_session(env: Any, ws: Any, now: Any) -> str | None:
+    """W28 (#950): a Claude Code started by hand has no ``ORCH_SESSION``. At its session start, inside a workspace this
+    machine pinned, append ``export ORCH_SESSION=s_<ULID>`` to Claude Code's ``CLAUDE_ENV_FILE`` (it exports the file
+    for every later command of that session) and return the id. Runs in the agent's own CLI process (never the host).
+    Nothing when the session already has an id, outside a pinned workspace, or when the file is not an existing regular
+    file (no symlink, never created here). A session id is a label, not a credential (the grant is)."""
+    import os
+    import stat
+
+    from orch.identity.grants import new_ulid
+
+    path = env.get("CLAUDE_ENV_FILE") or ""
+    if env.get("ORCH_SESSION") or not os.path.isabs(path):
+        return None
+    try:
+        if ws.root is None:
+            return None
+        cfg = ws.config or {}
+        wid = cfg.get("workspace", {}).get("id", "")
+        if not wid or not (ws.state_dir / "hosts" / wid / "genesis").is_file():
+            return None
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0))
+    except (OSError, ValueError, AttributeError, OrchError):
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        sid = "s_" + new_ulid(int(now() * 1000))
+        os.write(fd, f"export ORCH_SESSION={sid}\n".encode())
+        return sid
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(fd)
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.instructions import pre_compact_lines, session_start_lines, stale_findings
     from orch.ops.commands import status

@@ -450,3 +450,55 @@ def test_submit_hint_says_show_when_only_an_artifact_is_missing():
     with pytest.raises(OrchError) as e:
         submit.build(None, p, {})
     assert e.value.hint == "orch wait"
+
+
+# W28 (#950): a Claude Code started by hand has no ORCH_SESSION; the session-start hook gives it one through
+# Claude Code's CLAUDE_ENV_FILE (exported for every later command of that session).
+SESSION = __import__("re").compile(r"^export ORCH_SESSION=s_[0-7][0-9A-HJKMNP-TV-Z]{25}\n$")
+
+
+def test_w28_a_hand_started_session_gets_its_own_session_id(ws, tmp_path):
+    envfile = tmp_path / "claude-env.sh"
+    envfile.write_text("")
+    code, out, err = hook(ws, "session-start", ORCH_SESSION="", CLAUDE_ENV_FILE=str(envfile))
+    assert code == 0, out + err
+    assert SESSION.fullmatch(envfile.read_text())
+    assert out.splitlines()[0].startswith("ok session-start ")
+
+
+def test_w28_a_session_that_has_an_id_keeps_it(ws, tmp_path):
+    envfile = tmp_path / "claude-env.sh"
+    envfile.write_text("export X=1\n")
+    hook(ws, "session-start", CLAUDE_ENV_FILE=str(envfile))  # ws.env() carries ORCH_SESSION
+    assert envfile.read_text() == "export X=1\n"
+
+
+@pytest.mark.parametrize("kind", ["unset", "missing", "symlink", "dir"])
+def test_w28_no_usable_env_file_writes_nothing(ws, tmp_path, kind):
+    target = tmp_path / "real.sh"
+    target.write_text("")
+    env = {"ORCH_SESSION": ""}
+    if kind == "missing":
+        env["CLAUDE_ENV_FILE"] = str(tmp_path / "nope.sh")
+    elif kind == "symlink":
+        (tmp_path / "link.sh").symlink_to(target)
+        env["CLAUDE_ENV_FILE"] = str(tmp_path / "link.sh")
+    elif kind == "dir":
+        env["CLAUDE_ENV_FILE"] = str(tmp_path)
+    code, out, _ = hook(ws, "session-start", **env)
+    assert code == 0 and out.startswith("ok session-start ")
+    assert target.read_text() == "" and not (tmp_path / "nope.sh").exists()
+
+
+def test_w28_outside_a_workspace_nothing_is_written(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    envfile = tmp_path / "claude-env.sh"
+    envfile.write_text("")
+    out = io.StringIO()
+    main(
+        ["instructions", "hook", "session-start"],
+        env={"HOME": str(tmp_path), "CLAUDE_ENV_FILE": str(envfile)},
+        stdout=out,
+        stderr=io.StringIO(),
+    )
+    assert envfile.read_text() == ""

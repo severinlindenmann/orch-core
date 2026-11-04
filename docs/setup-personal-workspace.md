@@ -257,22 +257,20 @@ orch shows what you are granting; you type `GRANT`, then your passphrase.
 An agent needs two environment variables: the grant and a session id. Mission Control's "Start agent" sets both for you.
 To start Claude Code by hand, in the agent's window, in the workspace folder:
 
-> **Temporary step (until [#950](https://github.com/severinlindenmann/orch-core/issues/950) is fixed).** Today nothing hands a
-> hand-started agent a session id, so you make one with the `ORCH_SESSION` line below. When #950 is fixed orch will do it.
-
 ```bash
 export ORCH_GRANT=gr_...                    # the value from 9.1
-export ORCH_SESSION=s_01$(LC_ALL=C tr -dc '0-9A-HJKMNP-TV-Z' </dev/urandom | head -c 24)
 claude
 ```
 
-Use a new `ORCH_SESSION` for each ticket: a session holds one claim. Then tell Claude: *"File a ticket to add a hello page,
+orch's session-start hook gives the new Claude Code session its own `ORCH_SESSION` (through Claude Code's
+`CLAUDE_ENV_FILE`), so you do not set one. Start a new Claude Code session for each ticket: a session holds one claim. Then tell Claude: *"File a ticket to add a hello page,
 write the requirements and a plan, and wait for my approval."*
 
 **What you should see:** Claude runs `orch status`, files a ticket, fills its sections and stops at the gate.
 
-**If not:** `ORCH_SESSION is not set: an agent event needs its session id` means you started `claude` without the second
-variable. Quit, export both and start again.
+**If not:** `ORCH_SESSION is not set: an agent event needs its session id` means the orch plugin's hooks did not run
+(Claude Code started outside the workspace folder, or without the orch plugin). Quit, `cd` into the workspace folder and
+start `claude` again.
 
 To try it without an agent, type the agent's commands yourself in the agent's window (with both variables exported):
 

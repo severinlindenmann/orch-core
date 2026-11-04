@@ -9,7 +9,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import { toastApiError } from '@/app/toast'
 import { ago, fmtTime, Mono, Pill, Section } from '../../ticket/shared'
-import { PairDialog } from './PairDialog'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
 import { fmtDay } from '@/lib/time'
 import { queries } from '@/api/queries'
@@ -43,21 +42,20 @@ function EpochCell({ d, epoch }: { d: RelayDevice; epoch: number }) {
   return <span className="text-warning">epoch {d.epoch} · new key waiting</span>
 }
 
-/** Settings > Relay & devices (Preview): the relay link, paired devices, pairing and the sync queue, all simulated. */
+/** Settings > Relay & devices (Preview): the relay link, devices and the sync queue, all simulated (phones pair through the hub, not here). */
 export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; canEdit: boolean; viewer: string }) {
   const qc = useQueryClient()
   const signed = useSignedAction()
-  const [pairing, setPairing] = useState(false)
   const [removing, setRemoving] = useState<RelayDevice | null>(null)
   const [stopping, setStopping] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const relay = useQuery({
     ...queries.relay(workspace.id),
-    // Poll while something is moving: the link settling, the queue draining, a pairing code open.
+    // Poll while something is moving: the link settling, the queue draining.
     refetchInterval: (q) => {
       const r = q.state.data?.state
       if (!r) return false
-      const moving = r.link === 'connecting' || r.link === 'reconnecting' || (r.link === 'online' && r.queue.some((i) => i.state === 'queued')) || !!r.pairing
+      const moving = r.link === 'connecting' || r.link === 'reconnecting' || (r.link === 'online' && r.queue.some((i) => i.state === 'queued'))
       return moving ? 1000 : false
     },
   })
@@ -74,15 +72,6 @@ export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; ca
   const L = LINK[r.link]
   const on = r.link !== 'off' && r.link !== 'stopped'
   const refresh = () => qc.invalidateQueries({ queryKey: ['relay', workspace.id] })
-  const startPairing = async () => {
-    try {
-      await api.postRelay(workspace.id, { op: 'pair.start' })
-      await refresh()
-      setPairing(true)
-    } catch (e) {
-      toastApiError(e, 'Could not make a pairing code')
-    }
-  }
   const remaining = r.devices.filter((d) => !d.this_device && d.id !== removing?.id).length
   const queued = r.queue.filter((i) => i.state === 'queued')
   const sent = r.queue.filter((i) => i.state === 'sent').reverse().slice(0, 5)
@@ -161,16 +150,6 @@ export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; ca
 
       <Section
         title={`Devices (${r.devices.length})`}
-        aside={
-          canEdit && (
-            <span className="flex items-center gap-2">
-              {r.link !== 'online' && <span className="text-[12px] text-text-faint">Connect the relay first</span>}
-              <Button size="sm" variant="outline" disabled={r.link !== 'online'} onClick={() => void startPairing()}>
-                Pair a device
-              </Button>
-            </span>
-          )
-        }
         className="[&>div]:p-0"
       >
         <Table>
@@ -254,7 +233,6 @@ export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; ca
           }}
         />
       )}
-      {pairing && relay.data && <PairDialog workspace={workspace} relay={r} fetchedAt={relay.data.at} onClose={() => setPairing(false)} />}
       {stopping && (
         <SignPrompt
           title="Stop the relay link"

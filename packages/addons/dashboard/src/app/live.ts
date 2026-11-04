@@ -2,7 +2,7 @@
 // items (api/useLiveUpdates.ts, the design's invalidation table); an open ticket that is no longer visible is closed.
 import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { isRealHost } from '@/api/features'
@@ -68,8 +68,10 @@ function useStreamUpdates() {
   }, [revoked])
 }
 
-// The host kind never changes while the app runs, so the same hook runs on every render.
+// The host kind is read once, at mount, so the same hook runs on every render (the dev layout preview switches the
+// features of a mounted app; production sets them before the router exists).
 export function useLiveUpdates() {
   useSigningMethodRefresh()
-  return (isRealHost() ? useStreamUpdates : usePollUpdates)()
+  const [real] = useState(isRealHost)
+  return (real ? useStreamUpdates : usePollUpdates)()
 }

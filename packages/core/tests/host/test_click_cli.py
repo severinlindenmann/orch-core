@@ -94,13 +94,13 @@ def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, mon
     monkeypatch.setattr(select, "status", lambda st, wid: {**real(st, wid), "custody": "passphrase"})
     code, out, _ = run("host", "convenience", "off", "--state", state)
     # a key already in passphrase custody signs in the Terminal: no "stays in one-click custody" claim
-    assert "Sign in the terminal with orch sign" in out and "stays in one-click custody" not in out
+    assert "Sign in the terminal with the action’s CLI command" in out and "stays in one-click custody" not in out
     monkeypatch.setattr(select, "status", lambda st, wid: {**real(st, wid), "custody": "convenience"})
     code, out, _ = run("host", "convenience", "off", "--state", state)
     assert (
         code == 0 and "stays in one-click custody" in out and "orch keys custody passphrase" in out
     )  # F1: the way to a passphrase
-    assert "Sign in the terminal with orch sign" not in out
+    assert "Sign in the terminal with the action’s CLI command" not in out
     monkeypatch.setattr(select, "status", real)
     monkeypatch.chdir("/")
     monkeypatch.setenv("PWD", "/")

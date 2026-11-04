@@ -1,0 +1,11 @@
+ok describe schedule.list
+List manual schedules across visible tickets.
+usage: orch schedule list [REF]
+who: read · emits: -
+args:
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
+out: ok schedule.list {total}

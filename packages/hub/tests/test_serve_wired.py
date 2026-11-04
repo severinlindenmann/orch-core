@@ -16,7 +16,7 @@ import threading
 import time
 
 import pytest
-from channels_helpers import PW, new_channel, prove
+from channels_helpers import PW, new_channel, prove, wall_codes
 from cryptography.hazmat.primitives.asymmetric import ec
 from custodial_helpers import LOG, WK, core_seal
 from publish_helpers import FakeUpstream, _signed, pub_b64
@@ -26,7 +26,7 @@ from view_helpers import OWNER, Host
 from orch_hub import serve as SV
 from orch_hub.access import Access
 from orch_hub.channels import Channels
-from orch_hub.channels.service import CHANNELS_FILE, totp_code
+from orch_hub.channels.service import CHANNELS_FILE
 from orch_hub.config import HubConfig
 from orch_hub.contract import channelapi as CA
 from orch_hub.contract import keystore as KS
@@ -77,8 +77,18 @@ def until(fn, what: str, secs: float = 10.0):
 
 @pytest.fixture
 def hub(tmp_path):
+    yield from _hub(tmp_path, real=False)
+
+
+@pytest.fixture
+def hub_real(tmp_path):
+    """The same wired hub as a NON-dev hub (card dev: false), the kind a normal install runs (run-11 B1)."""
+    yield from _hub(tmp_path, real=True)
+
+
+def _hub(tmp_path, real):
     state = tmp_path / "hub"
-    keys = HubKeys.init(state, relay_url="http://127.0.0.1:9")
+    keys = HubKeys.init(state, relay_url="http://127.0.0.1:9", real=real)
     # the operator side, before the hub runs: a user with password and TOTP, a group with edit on the workspace, an
     # admin-issued invite that names the user as the workspace owner, a pairing code for the user's phone
     acc = Access(str(state / "access.db"))
@@ -87,7 +97,7 @@ def hub(tmp_path):
     acc.add_group("team")
     acc.add_member("team", user)
     acc.grant(WS, "team", "edit")
-    ch = Channels(keys, acc, state / CHANNELS_FILE, dev_mode=True)
+    ch = Channels(keys, acc, state / CHANNELS_FILE, dev_mode=not real)
     ch.set_password(user, PW)
     b32 = ch.new_totp(user)["secret"]
     secret = base64.b32decode(b32 + "=" * (-len(b32) % 8))
@@ -153,7 +163,7 @@ def host_link(h) -> LinkClient:
 
 
 def sign_in(h) -> str:
-    code = totp_code(h["secret"], now_ms() // 30_000)
+    (code,) = wall_codes(h["secret"])
     s, o = h["web"].call("POST", "/session", {"user_id": h["user"], "password": PW, "totp": code, "client": "app"})
     assert s == 200, o
     return o["token"]

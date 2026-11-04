@@ -1,5 +1,6 @@
 """Host discovery. Only local trusted pins choose sockets; browser input never chooses paths."""
 
+import copy
 import json
 import os
 import re
@@ -11,7 +12,7 @@ from . import adapters
 from .adapters.addons import runner
 from .click_signer import Signer
 from .errors import HostError, fail
-from .hostlink import HostLink
+from .hostlink import REQUEST_MEMO, HostLink
 from .text import hidden
 
 WORKSPACE_ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$")
@@ -41,7 +42,8 @@ def run_dir(state: Path, env=None) -> Path:
     return run
 
 
-def read_pins(path):
+def read_rows(path):
+    """The registry's rows, from a file this user owns and no one else can read or write."""
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         s = os.fstat(fd)
@@ -50,20 +52,44 @@ def read_pins(path):
         with os.fdopen(fd, "r", closefd=False) as f:
             data = json.load(f)
         # Provisional container shape, isolated pending stream A's host.list/registry schema.
-        rows = data["workspaces"]
+        rows = data["workspaces"] if isinstance(data, dict) else None
         if not isinstance(rows, list):
             raise ValueError("registry workspaces must be a list")
-        pins = {}
-        for row in rows:
-            wid = row["workspace_id"]
-            peer = row["peers"].get(str(os.getuid()), {})
-            if not WORKSPACE_ID.fullmatch(wid) or row["host_uid"] != os.getuid():
-                raise fail("peer.denied", exit=3)
-            if peer.get("class") == "person" and peer.get("person"):
-                pins[wid] = row
-        return pins
+        return rows
     finally:
         os.close(fd)
+
+
+def read_pins(path):
+    pins = {}
+    for row in read_rows(path):
+        wid = row["workspace_id"]
+        peer = row["peers"].get(str(os.getuid()), {})
+        if not WORKSPACE_ID.fullmatch(wid) or row["host_uid"] != os.getuid():
+            raise fail("peer.denied", exit=3)
+        if peer.get("class") == "person" and peer.get("person"):
+            pins[wid] = row
+    return pins
+
+
+def read_people(path):
+    """``{workspace id: person}`` of this computer's user, like `read_pins` but forgiving: a malformed row (missing or
+    mistyped id, host uid, peers or person) is SKIPPED, never trusted and never an error for the others."""
+    uid = os.getuid()
+    people = {}
+    for row in read_rows(path):
+        if not isinstance(row, dict):
+            continue
+        wid, host_uid, peers = row.get("workspace_id"), row.get("host_uid"), row.get("peers")
+        if not isinstance(wid, str) or not WORKSPACE_ID.fullmatch(wid) or not isinstance(peers, dict):
+            continue
+        if isinstance(host_uid, bool) or host_uid != uid:
+            continue
+        peer = peers.get(str(uid))
+        person = peer.get("person") if isinstance(peer, dict) and peer.get("class") == "person" else None
+        if isinstance(person, str) and person:
+            people[wid] = person
+    return people
 
 
 # The inner ops of the settings hand-offs (M4). `grant` (issuing) is not here: the signer draws the secret.
@@ -174,6 +200,14 @@ class Gateway:
         except (OSError, ValueError, KeyError):
             raise fail("host.unavailable", "Host registry unavailable") from None
 
+    def people(self):
+        """``{workspace id: person}``: who this computer's user is in each pinned workspace (the registry pins, no host
+        call). Empty when the registry cannot be read; a malformed row is skipped (enrolment must never fail on it)."""
+        try:
+            return read_people(self.state / "host/workspaces.json")
+        except (OSError, ValueError, HostError):
+            return {}
+
     def workspace_folder(self, ws):
         """``(project folder, store folder)`` of workspace ``ws`` from the trusted host registry (the store is the
         project's ``.orch``). The File Explorer's root; browser input never names it."""
@@ -231,10 +265,31 @@ class Gateway:
 
     def enabled(self, ws):
         link = self.link(ws)
-        addons = link.call("addon.list")["addons"]
+        addons = self.addon_rows(link)
         if not any(a["name"] == "dashboard" and a["enabled"] is True for a in addons):
             raise fail("addon.disabled", exit=3)
         return link
+
+    def paused_unverified(self, ws) -> bool:
+        """Is the dashboard add-on only paused because a joined hub has not confirmed its first snapshot yet? Read-only,
+        for the words the page shows; the pause itself (fail closed, hubpolicy) is the host's and is not touched."""
+        try:
+            row = next((a for a in self.link(ws).call("addon.list")["addons"] if a.get("name") == "dashboard"), {})
+        except (HostError, KeyError, TypeError, AttributeError):
+            return False
+        paused = row.get("paused")
+        return row.get("state") == "paused" and isinstance(paused, dict) and paused.get("cause") == "unverified"
+
+    @staticmethod
+    def addon_rows(link):
+        """`addon.list` once per HTTP request (a write clears it): the gates of one request share one read."""
+        memo = REQUEST_MEMO.get()
+        if memo is None or memo.get("closed"):
+            return link.call("addon.list")["addons"]
+        key = ("addon.list", id(link))
+        if key not in memo:
+            memo[key] = link.call("addon.list")["addons"]
+        return copy.deepcopy(memo[key])
 
     #: the last state `addon.list` gave per (link, add-on): a transient error keeps it instead of reading as off
     _addon_seen: dict = {}
@@ -248,7 +303,7 @@ class Gateway:
         ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
         key = (ws or id(link), name)
         try:
-            rows = link.call("addon.list")["addons"]
+            rows = cls.addon_rows(link)
         except (HostError, KeyError, TypeError):
             return cls._addon_seen.get(key, False)
         on = any(isinstance(a, dict) and a.get("name") == name and a.get("state") == "active" for a in rows)
@@ -263,7 +318,7 @@ class Gateway:
         ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
         key = (ws or id(link), "capability:" + capability)
         try:
-            rows = link.call("addon.list")["addons"]
+            rows = cls.addon_rows(link)
         except (HostError, KeyError, TypeError):
             return cls._addon_seen.get(key, False)
         on = any(
@@ -342,6 +397,8 @@ class Gateway:
             # V3 A10: the Add-ons page (Browse, Installed, Marketplaces); every install is a terminal hand-off
             "market": [(op, "ops/1") for op in MARKET_PAGE_OPS],
             # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a terminal command).
+            # R2 (#1590): Settings > Devices > Remote access (the page also needs a session opened on this computer).
+            "remote": [("remote.status", "ops/1")],
             "hub": [
                 ("hub.status", "hub/1")
             ],  # share.* is checked by its own routes: an older host degrades in the page
@@ -360,10 +417,13 @@ class Gateway:
         if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
             # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
             features.append("usage")
+        if link.supports("follow_up.list", "ops/1") and self.addon_on(link, "schedules"):
+            features.append("schedules")  # Follow-ups (#720)
         if self.addon_on(link, "focus"):
             features.append("focus")
         if self.addon_on(link, "wiki"):
             features.append("wiki")
+            features.append("addons")  # declarative add-on pages (the Wiki view) are served
         if "quick" in features and self.addon_on(link, "quick"):
             features.append("quick_on")  # the menu entry and the page's controls; Off: the page says so
         if self.addon_on(link, "estimate"):
@@ -430,13 +490,10 @@ class Gateway:
                 ):
                     # Not repaired, not shown: invisible or bidi characters could make a name pass for another.
                     raise fail("workspace.name_invalid", "The workspace name has invisible characters.", exit=3)
-                icon, icon_known = None, False
-                if link.supports("workspace.settings", "settings/1"):
-                    try:  # the first page is enough: the icon is not a repo; a failed read only means "no icon"
-                        shown = link.call("workspace.settings", {})
-                        icon, icon_known = adapters.shell.workspace_icon(shown), "icon" in shown
-                    except HostError:
-                        pass
+                icon, icon_known = (
+                    adapters.shell.workspace_icon(show),
+                    "icon" in show,
+                )  # D6: unsigned, from workspace.show
                 result.append(
                     adapters.Workspace(
                         icon=icon,
@@ -461,7 +518,9 @@ class Gateway:
                         id=ws,
                         prefix=adapters.pinned_prefix(pins[ws]),
                         name=ws,
-                        host_state=exc.error["code"],
+                        host_state="addon.paused"
+                        if exc.error["code"] == "addon.disabled" and self.paused_unverified(ws)
+                        else exc.error["code"],
                         host_message=adapters.unavailable_reason(exc.error),
                     )
                 )
@@ -477,6 +536,20 @@ class Gateway:
 
     def call(self, ws, op, args=None):
         return self.enabled(ws).call(op, args)
+
+    def call_own(self, ws, op, args=None, **kw):
+        """One call on a host connection of its own, for an op that waits on the network (the hub, the publish server).
+
+        The workspace's shared link answers one call at a time and holds its lock until the answer comes, so a slow
+        network op on it would make every other read of the workspace wait, and its 30 s socket timeout would close the
+        link under them (W34: while the hub was cut, /today and the ticket page answered 503). Workspace reads must not
+        depend on the hub."""
+        self.enabled(ws)
+        link = self.new_link(ws)
+        try:
+            return link.call(op, args, **kw)
+        finally:
+            link.close()
 
     def close(self):
         self.click.close()

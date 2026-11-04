@@ -6,15 +6,12 @@ from __future__ import annotations
 
 import json
 import os
-import pty
 import re
-import threading
 import time
 
 import pytest
 
 from orch.host import signcontent, signer
-from orch.ops import human as ops_human
 from tests.host import human_helpers
 from tests.host.test_human import ready
 
@@ -46,7 +43,7 @@ Acceptance criteria
 
 Applies under
   type: feature
-  rule for this gate: 1 approval from owner; applies to all tickets
+  Who approves the requirements: 1 approval from owner; applies to all tickets
 
 Empty, not shown: Summary.
 """
@@ -157,82 +154,10 @@ def test_the_view_of_a_click_carries_the_headline_and_the_content_next_to_the_un
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("log", {"ref": key, "text": "note"})
     v = view.build(p, WS, device=p["events"][0]["actor"]["device"], expires_at="2026-01-01T00:00:00Z", artifacts=None)
-    assert v["headline"].startswith("Add a note to DEMO-0001") and v["content"]["sections"][0]["text"] == "note"
+    assert v["headline"] == "Add a note: DEMO-0001" and v["content"]["sections"][0]["text"] == "note"
+    assert v["headline_detail"] is None  # a note's events do not state the ticket's title: no free text at all
     assert v["lines"] == signer.render(p, WS).rstrip("\n").split("\n")  # the full review is still there, line for line
     assert v["risk"]
-
-
-# --- the prompt -------------------------------------------------------------------------------------------------------
-
-
-def _prompt(monkeypatch, text, answers):
-    """Run ``review_prompt`` on a pty; the test types ``answers``, one after each prompt. Returns (result, shown)."""
-    master, slave = pty.openpty()
-    monkeypatch.setattr(ops_human, "open_tty", lambda flags: os.dup(slave))
-    shown = bytearray()
-    done = threading.Event()
-
-    def person():
-        queue = list(answers)
-        seen = 0
-        while queue and not done.is_set():
-            try:
-                shown.extend(os.read(master, 65536))
-            except OSError:
-                return
-            prompts = shown.count(b"): ") + shown.count(b"stops: ")
-            if prompts > seen:
-                seen = prompts
-                time.sleep(0.3)  # the prompt flushes pending input once it is written: type after that
-                os.write(master, queue.pop(0).encode() + b"\n")
-
-    t = threading.Thread(target=person, daemon=True)
-    t.start()
-    watchdog = threading.Timer(8, lambda: os.write(master, b"\n"))  # never hang a test run
-    watchdog.start()
-    try:
-        result = ops_human.review_prompt(text, "DEMO-0001/ABCD1234")
-    finally:
-        watchdog.cancel()
-        done.set()
-        os.close(slave)
-        t.join(2)
-        os.close(master)
-    return result, shown.decode()
-
-
-def _review():
-    r = signer.Review("Approve the requirements of DEMO-0001\n\n")
-    r.details = "FULL DUMP\nfingerprint: abc\n"
-    return r
-
-
-def test_the_prompt_shows_the_plain_view_and_d_prints_the_full_dump(monkeypatch):
-    ok, shown = _prompt(monkeypatch, _review(), ["d", "DEMO-0001/ABCD1234"])
-    assert ok and "Type DEMO-0001/ABCD1234 to continue (d = details): " in shown
-    assert shown.index("Approve the requirements") < shown.index("FULL DUMP")  # plain first, details on request
-
-
-def test_without_d_the_details_are_not_shown(monkeypatch):
-    ok, shown = _prompt(monkeypatch, _review(), ["DEMO-0001/ABCD1234"])
-    assert ok and "FULL DUMP" not in shown
-
-
-def test_a_wrong_word_stops(monkeypatch):
-    ok, _ = _prompt(monkeypatch, _review(), ["d", "yes"])
-    assert not ok
-
-
-def test_details_first_shows_the_dump_without_d(monkeypatch):
-    r = _review()
-    r.details_first = True
-    ok, shown = _prompt(monkeypatch, r, ["DEMO-0001/ABCD1234"])
-    assert ok and "FULL DUMP" in shown and "Approve the requirements" not in shown
-
-
-def test_a_review_without_details_keeps_the_old_prompt(monkeypatch):
-    ok, shown = _prompt(monkeypatch, "plain text\n", ["DEMO-0001/ABCD1234"])
-    assert ok and "and Enter to continue; anything else stops: " in shown
 
 
 # --- the invariant: nothing that carries authority or identity is left out of the plain view -----------------------------
@@ -284,7 +209,7 @@ def test_every_schema_property_of_a_person_event_is_classified(typ):
 VALUES = {
     "log": "marker-log", "receipt": {"cmd": "marker-command", "exit": 0, "ms": 1, "repo": None, "commit": None},
     "name": "Marker-Name", "kind": "marker-kind", "label": "marker-label", "ac": "AC9", "task": "T9", "ref": "marker-ref",
-    "addon": "marker-addon", "bytes": 4242, "sha256": "sha256:" + "ab" * 32, "version": "9.9.9", "package_sha256": "sha256:" + "cd" * 32,
+    "addon": "marker-addon", "staged": "st_" + "3" * 32, "bytes": 4242, "sha256": "sha256:" + "ab" * 32, "version": "9.9.9", "package_sha256": "sha256:" + "cd" * 32,
     "capabilities": ["marker-cap"], "artifact_kinds": ["marker-akind"], "fields": ["marker-field"], "replaces": "marker-old",
     "device": "d_" + "1" * 32, "cert": CERT, "device_cert": CERT, "pk_pub": "marker-pubkey", "person": "p_" + "2" * 32,
     "role": "maintainer", "outcome": "pass", "text": "marker text", "source_sha": [{"repo": "app", "ref": "refs/heads/x", "sha": "a" * 40}],
@@ -292,10 +217,18 @@ VALUES = {
     "expires_at": "2026-10-16T17:00:00Z", "reason": "marker-reason", "question": "q1", "option": "a", "qid": "q9",
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
+    "schedule": "sc_marker", "via": {"anchor": "marker-anchor"},
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
     "runtime": {"kind": "python-requirements", "lock": "marker-lock.txt", "packages": 3},
+    "events": [{"kind": "run.finished", "title": "Run finished", "statuses": ["ok"], "ref": "int", "interval_s": 300}],
     "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
+    "level": "work", "level_cap": "view", "until_ms": 1_800_000_000_000, "expires_ms": 1_800_000_000_000, "premises": "no",
+    "agents_risk": True, "on": True, "hub_mode": "none", "remote_v": 0, "presence_kind": "platform",
+    "transport_pub": "3J02PWPii0wd9JGl1e8ylfF2OQt3ZHwobpD22e-Sb2g",
+    "presence_pub": "BM_dyBP9WmXDUz13KE9_OxWamJkWSLgLBQcQLqipmcxXtMqQz7yTIYqposCv27jyI50SgrbdmxV0_M5PHktruNY",
+    "fingerprint": "09f2da73415b22423ee0075a56f2cec02b69bf851471bf17707d6c9345368e3f", "code_id": "rc_" + "6" * 32,
+    "device_id": "rd_" + "7" * 32,
     "aliases": [{"person_id": "9" * 32, "user_id": "a" * 32}], "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
 }  # fmt: skip
 
@@ -376,6 +309,8 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
                     "source_sha": "aaaaaaaaaaaa",
                 }[key]
             )
+        elif key == "events":
+            needles.append("Run finished")  # the title the person reads
         elif key == "aliases":
             needles.append("a" * 32)  # the hub name of the person
         elif key in ("gate", "question"):
@@ -429,11 +364,10 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     rows = {r["field"]: r["after"] for r in build(p)["fields_changed"]}
-    assert "approval" in rows["rule for this gate"] and "owner" in rows["rule for this gate"]
+    assert "approval" in rows["Who approves the requirements"] and "owner" in rows["Who approves the requirements"]
 
 
 def _tz(monkeypatch, name):
-    import time
 
     monkeypatch.setenv("TZ", name)
     time.tzset()
@@ -441,7 +375,6 @@ def _tz(monkeypatch, name):
 
 @pytest.fixture
 def restore_tz():
-    import os
     import time
 
     old = os.environ.get("TZ")
@@ -577,8 +510,8 @@ def test_an_unverified_build_labels_every_before_and_leaves_out_the_policy(human
     (row,) = build(s, verified=False)["fields_changed"]
     assert row["before_note"] == "per host, not checked"
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
-    assert "rule for this gate" in {r["field"] for r in build(p, verified=True)["fields_changed"]}
-    assert "rule for this gate" not in {r["field"] for r in build(p, verified=False)["fields_changed"]}
+    assert "Who approves the requirements" in {r["field"] for r in build(p, verified=True)["fields_changed"]}
+    assert "Who approves the requirements" not in {r["field"] for r in build(p, verified=False)["fields_changed"]}
     settings = sample("settings.changed")
     c = build(
         {"op": "settings.set", "events": [settings], "material": material_for("settings.changed", settings)}, False
@@ -876,6 +809,63 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
     none = build(_addon(name="worktrees", capabilities=[]))
     assert none["headline"] == "Turn on Worktrees: it declares no capabilities"
     assert signcontent.ADDON_TRUST in none["notes"]
+
+
+def _terminals_digest():
+    from orch.addons import builtin
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    return package_digest({MANIFEST_FILE: builtin.manifest_bytes("terminals")})
+
+
+def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_package():
+    real = build(_addon(package_sha256=_terminals_digest()))
+    assert real["headline"] == "Turn on Command window: it says it will open terminals on this computer, as you"
+    assert real["title"] == "Turn on Command window" and real["summary"]["title"] == "Turn on Command window"
+    assert {r["field"]: r["after"] for r in real["fields_changed"]}[
+        "add-on"
+    ] == "terminals"  # the signed name stays visible
+    # a package that only carries the name (any other digest) keeps the mechanical name and the same raw row
+    fake = build(_addon(package_sha256="sha256:" + "bb" * 32))
+    assert "Command window" not in flat(fake) and fake["title"] == "Turn on Terminals"
+    assert {r["field"]: r["after"] for r in fake["fields_changed"]}["add-on"] == "terminals"
+    # turning it off carries no package: the display name goes by id (safe direction); the raw name stays in the event
+    off = build(
+        {
+            "op": "addon.disable",
+            "events": [{"type": "addon.disabled", "name": "terminals"}],
+            "material": {"kind": "payload", "ticket": None},
+        }
+    )
+    assert off["headline"] == "Turn off Command window"
+    assert {r["field"]: r["after"] for r in off["fields_changed"]} == {
+        "add-on": "terminals"
+    }  # the signed value is visible
+    assert "Turn off Terminals" not in flat(off)
+    # W07: turning off shows what changes, like turning on does
+    assert off["summary"]["title"] == "Turn off Command window"
+    assert off["summary"]["lines"] == [
+        "Command window stops working in this workspace until you turn it on again.",
+        "Its settings and saved data stay in this workspace.",
+        "Waiting follow-ups and scheduled runs that depend on it are cancelled and do not come back.",
+    ]
+    other = build(
+        {
+            "op": "addon.disable",
+            "events": [{"type": "addon.disabled", "name": "worktrees"}],
+            "material": {"kind": "payload", "ticket": None},
+        }
+    )
+    assert other["headline"] == "Turn off Worktrees"
+
+
+def test_run18_the_two_terminals_manifests_are_byte_identical():
+    from pathlib import Path
+
+    from orch.addons import builtin
+
+    own = Path(__file__).resolve().parents[3] / "addons" / "terminals" / "orch-addon.json"
+    assert own.read_bytes() == builtin.manifest_bytes("terminals")
 
 
 def _explorer_digest():
@@ -1193,16 +1183,36 @@ def test_v4_a_share_approval_leads_with_a_plain_summary_and_keeps_the_signed_tex
     lines = c["summary"]["lines"]
     assert c["summary"]["title"] == "Share these files"
     joined = "\n".join(lines)
-    for needle in ("report.md", "data.csv", "https://pub.example.com", "https://share.example.com", "7 days"):
-        assert needle in joined
-    assert "Anyone who has the link can open the files." in joined
+    # r12-P11: reach words and no duplicated file list on the main lines; names, URLs, who prepared it and the ticket
+    # are whole in the signed text (the "What you sign" fold)
+    assert "Anyone who has the link can open the files, for 7 days." in joined
+    assert "public address" in joined
+    for gone in ("report.md", "https://pub.example.com", "key per host", "Prepared by", "Files:"):
+        assert gone not in joined
+    signed = [s for s in c["sections"] if s["id"] == "share"][0]["text"]
+    for kept in (
+        "report.md",
+        "data.csv",
+        "https://pub.example.com",
+        "https://share.example.com",
+        "Prepared by: you",
+        "Ticket: ",
+    ):
+        assert kept in signed
     assert [s for s in c["sections"] if s["id"] == "share"][0]["text"] == text  # the exact signed text is still there
+
+
+def test_r12_p11_an_agent_prepared_copy_says_so_on_the_main_lines():
+    text = _share_text().replace("Prepared by: you", "Prepared by: an agent")
+    c = _share_build(text)
+    assert "An agent prepared this copy." in c["summary"]["lines"]
+    assert "Prepared by: an agent" in [s for s in c["sections"] if s["id"] == "share"][0]["text"]
 
 
 def test_v4_a_limited_view_link_says_how_many_views():
     c = _share_build(_share_text(kind="once", views=3, days=1))
     joined = "\n".join(c["summary"]["lines"])
-    assert "at most 3 times" in joined and "1 day " in joined
+    assert "at most 3 times" in joined and "for 1 day." in joined
 
 
 @pytest.mark.parametrize(

@@ -196,9 +196,11 @@
           "properties": {
             "kind": {
               "enum": [
-                "person"
+                "person",
+                "agent"
               ]
-            }
+            },
+            "unattended": false
           },
           "required": [
             "kind"

@@ -9,7 +9,6 @@ export interface HandoffSpec {
   title: string
   action: HandoffAction | null
   /** Prepare as the dialog opens (the page already holds the whole choice). Without it the dialog shows `form` first. */
-  autoStart?: boolean
   confirmLabel?: string
   hint?: string | null
   form?: ReactNode
@@ -23,8 +22,11 @@ export interface HandoffSpec {
   onEnd?: (signed: boolean) => void
   /** Show the review under the row (an accordion) instead of a popover. */
   inline?: boolean
-  /** The press was the deliberate gesture: with One click on, sign directly. */
-  autoSign?: boolean
+  /** The person's own press (a button in a dialog that said what happens) opened this: the host's review opens at once.
+   * Prepare only, never armed: Sign stays the person's own press. */
+  prepareOnOpen?: boolean
+  /** Lines kept in the review's main view above the host's review (e.g. where files go, by name). */
+  lead?: ReactNode | ((content: import('@/api/signing').SignContent | undefined) => ReactNode)
 }
 
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void | Promise<unknown>): { ask: (spec: HandoffSpec) => void; dialog: ReactNode; inline: boolean } {
@@ -36,12 +38,13 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       title={spec.title}
       ws={ws}
       action={spec.action}
-      autoStart={spec.autoStart}
+      prepareOnOpen={spec.prepareOnOpen}
+      autoStart={spec.prepareOnOpen ? false : undefined}
       confirmLabel={spec.confirmLabel}
       hint={spec.hint}
       summary={spec.summary}
+      lead={spec.lead}
       inline={spec.inline}
-      autoSign={spec.autoSign}
       doneToast={spec.doneToast}
       onSigning={spec.onSigning}
       onSettled={(phase) => {

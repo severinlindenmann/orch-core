@@ -86,6 +86,8 @@ HUMAN_ONLY: frozenset[str] = frozenset(
         "addon.purge",
         "answer",
         "approve",
+        "follow_up.reschedule",
+        "follow_up.undo",
         "close",
         "grant",
         "grant.revoke",
@@ -95,6 +97,8 @@ HUMAN_ONLY: frozenset[str] = frozenset(
         "member.role",
         "reopen",
         "request_changes",
+        "schedule.add",
+        "schedule.cancel",
         "verdict",
     }
 )
@@ -113,4 +117,22 @@ EMITS_V2: dict[str, frozenset[str]] = {**EMITS_V1, "grant": frozenset({"grant.is
 # tasks names ``task.add`` or ``agent``, which cover every ``ticket.updated``). Only the registry and person ops move.
 EMITS_V3: dict[str, frozenset[str]] = {**EMITS_V2, "task.edit": frozenset({"ticket.updated"})}
 
-CURRENT = EMITS_V3
+EMITS_V4: dict[str, frozenset[str]] = {
+    **EMITS_V3,
+    "follow_up": frozenset({"followup.set"}),
+    "follow_up.reschedule": frozenset({"followup.rescheduled"}),
+    "follow_up.undo": frozenset({"followup.restored"}),
+    "follow_up.cancel": frozenset({"followup.cancelled"}),
+}
+
+# Manual schedules: two person operations (NEW keys, both in HUMAN_ONLY), so no EMITS_V1 verdict changes. The firing,
+# its outcome and the run's writes are the host's and the derived grant's, never a verb a grant names.
+EMITS_V5: dict[str, frozenset[str]] = {
+    **EMITS_V4,
+    "schedule.add": frozenset({"schedule.set"}),
+    "schedule.cancel": frozenset({"schedule.cancelled"}),
+}
+
+EMITS_V6 = {**EMITS_V5, "schedule.add": frozenset({"ticket.created", "schedule.set"})}
+
+CURRENT = EMITS_V6

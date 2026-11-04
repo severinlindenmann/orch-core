@@ -9,10 +9,12 @@ import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { agentsApi, LOGIN_NOTICE, type AgentPreview, type Runner } from '@/api/agents'
 import { api } from '@/api/client'
 import { ARM_MS, CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK, type ClickViewAnswer } from '@/api/click'
-import { mergeRunItems, type Run, type RunList } from '@/api/runs'
+import { mergeRunItems, runsApi, type Run, type RunList } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { nowMs } from '@/lib/time'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import * as gesture from '@/components/sign/trustedPress'
+import { openInfo } from '@/test/info'
 import { EXECUTION_LINE } from './executionLine'
 import { RunnerGrantCard, StartAgentDialog } from './StartAgentDialog'
 
@@ -53,8 +55,7 @@ const CHOICES: RoutingChoices = {
 let s: Record<string, ReturnType<typeof vi.spyOn>>
 beforeEach(() => {
   vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 168, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(routingApi, 'choices').mockResolvedValue(CHOICES)
   s = {
     preview: vi.spyOn(agentsApi, 'preview').mockResolvedValue(preview()),
@@ -86,6 +87,14 @@ function mount(onStarted = vi.fn(), onClose = vi.fn(), extra: { choose?: boolean
   return { qc, onStarted, onClose }
 }
 const card = () => screen.getByTestId('runner-grant-card')
+/** The access review (it holds the length select, so it never prepares by itself): its outcome button prepares on a
+ * real press. fireEvent is untrusted, so trustedPress stands in for the real press. Resolves to the signer's View. */
+async function prepareAccess() {
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  expect(s.prepare).not.toHaveBeenCalled() // nothing is prepared before the outcome button is pressed
+  fireEvent.click(await screen.findByRole('button', { name: /^Sign and start agent$/ }, T))
+  return screen.findByTestId('click-panel', {}, T)
+}
 /** The runner grant card on its own (Settings > Agent access uses it for Extend; Start agent signs through the popover). */
 async function mountCard(over: Partial<Runner> = {}, onChanged = vi.fn()) {
   const p = await agentsApi.preview(WS, { harness: 'claude-code', mode: 'work', worktree: true })
@@ -100,7 +109,11 @@ describe('the preview', () => {
     expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent('A worktree for DEMO-1 in billing will be created at /w/billing.worktrees/0a1b2c3d-DEMO-1.')
     expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true, policy: { delegate: false, max_children: 3 } })
     expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
-    expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
+    // The scope and end stay in view; only the grant id sits behind the "i".
+    const grant = screen.getByTestId('agent-grant')
+    expect(grant).toHaveTextContent('Tickets you may work on, until')
+    expect(grant).not.toHaveTextContent(GRANT)
+    expect(await openInfo(grant)).toHaveTextContent(GRANT)
   })
 
   it('says "shared working copy" in the approved words for cwd.kind repo', async () => {
@@ -227,6 +240,21 @@ describe('start', () => {
     expect(b[3]).toBe(a[3])
   })
 
+  it('stopFirst: the idle run is stopped only when Start is pressed, before the start; cancelling leaves it alone', async () => {
+    const stop = vi.spyOn(runsApi, 'stop').mockResolvedValue({ state: 'exited', cleanup: 'complete' } as never)
+    const order: string[] = []
+    stop.mockImplementation(async () => { order.push('stop'); return { state: 'exited', cleanup: 'complete' } as never })
+    s.start.mockImplementation(async () => { order.push('start'); return { run } })
+    const { onStarted, onClose } = mount(vi.fn(), vi.fn(), { initial: { mode: 'continue', stopFirst: 'r_idle' } })
+    await screen.findByTestId('agent-preview', {}, T)
+    expect(stop).not.toHaveBeenCalled() // the dialog is open; nothing stopped yet
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), T)
+    expect(stop).toHaveBeenCalledWith(WS, 'r_idle')
+    expect(order).toEqual(['stop', 'start'])
+  })
+
   it('a changed choice must be previewed again before Start', async () => {
     mount()
     await screen.findByTestId('agent-preview', {}, T)
@@ -258,11 +286,16 @@ describe('start', () => {
 const noGrant = (reason: 'none' | 'expiring' | 'scope' | 'revoked' = 'none') =>
   preview({ grant: null, blocked: { code: 'launch.no_grant', message: 'no runner grant', detail: { reason } } })
 
+const realTrusted = gesture.trustedPress
+/** From here on every press stands in for a trusted one, judged by the real rule (a key repeat still blocks it). */
+const trustedPresses = () => vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => realTrusted({ isTrusted: true, repeat: e.repeat }))
+
 async function issueAndSign() {
   fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
   const panel = await screen.findByTestId('click-panel', {}, T)
   const sign = within(panel).getByRole('button', { name: /^Sign and allow access$/ })
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
+  trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
   fireEvent.pointerDown(sign)
   fireEvent.click(sign)
   await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: 3000 })
@@ -276,19 +309,6 @@ describe('the runner grant', () => {
     expect(screen.getByTestId('runner-grant-issue')).toBeDisabled()
   })
 
-  it('M-2: while the terminal waits for the signature and r, the card says so instead of "issue one"', async () => {
-    vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'stop here', retryable: false }))
-    vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: 72, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
-    vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.mocked(api.getSignDefault).mockResolvedValue({ method: 'terminal' } as Awaited<ReturnType<typeof api.getSignDefault>>)
-    s.preview.mockResolvedValue(noGrant())
-    await mountCard()
-    await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
-    expect(screen.getByTestId('runner-grant-needed')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('runner-grant-issue'))
-    expect(await screen.findByTestId('runner-grant-waiting', {}, T)).toHaveTextContent('press r')
-    expect(screen.queryByTestId('runner-grant-needed')).toBeNull()
-  })
 
   it.each([
     ['expiring', 'less than 15 minutes'],
@@ -403,11 +423,13 @@ describe('a short, calm dialog (U6)', () => {
     expect(screen.queryByTestId('agent-access')).toBeNull() // access is valid: no select
   })
 
-  it('the login-shell notice is shown in the first-time notice', async () => {
+  it('P16: the login-shell notice is never in the amber box; the host sentence sits under Details', async () => {
     s.preview.mockResolvedValue(preview({ login_shell: true, warnings: [LOGIN_NOTICE] }))
     mount()
     expect(await screen.findByTestId('agent-login-notice', {}, T)).toHaveTextContent('login shell')
-    expect(within(screen.getByTestId('agent-risk-full')).getByTestId('agent-login-notice')).toBeInTheDocument()
+    expect(within(screen.getByTestId('agent-risk-full')).queryByTestId('agent-login-notice')).toBeNull()
+    expect(within(screen.getByTestId('agent-risk-full')).getByTestId('agent-login-plain')).toHaveTextContent('Runs as you, with your usual terminal settings.') // both notices open: the plain line is in the box
+    expect(within(screen.getByTestId('agent-details')).getByTestId('agent-login-notice')).toBeInTheDocument()
   })
 
   it('acknowledged: one small line, the same words under Details, the login-shell notice there too', async () => {
@@ -423,20 +445,27 @@ describe('a short, calm dialog (U6)', () => {
     expect(within(details).getByTestId('agent-login-notice')).toHaveTextContent('login shell')
   })
 
-  it('MED-2: the login-shell notice is its own notice: full the first time even when the main notice was read', async () => {
+  it('P16: only the login-shell notice open: a plain muted line, no amber box, no I understand; Start is the one click and saves it', async () => {
     s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
     s.acknowledge.mockResolvedValue({ acknowledged: { start_agent: true, login_shell: true } })
     s.preview.mockResolvedValue(preview({ login_shell: true, warnings: [LOGIN_NOTICE] }))
     mount()
-    const full = await screen.findByTestId('agent-risk-full', {}, T)
-    expect(within(full).getByTestId('agent-login-notice')).toHaveTextContent('login shell')
-    expect(within(full).queryByTestId('execution-line')).toBeNull()
-    expect(within(screen.getByTestId('agent-details')).getByTestId('execution-line')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('agent-risk-ack'))
-    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'login_shell'))
+    await screen.findByTestId('agent-preview', {}, T)
+    expect(screen.queryByTestId('agent-risk-full')).toBeNull()
+    expect(screen.queryByTestId('agent-risk-ack')).toBeNull()
+    expect(screen.queryByText('I understand')).toBeNull()
+    const details = screen.getByTestId('agent-details')
+    expect(details).not.toHaveAttribute('open')
+    expect(within(details).getByText(/Runs as you, with your usual terminal settings\./)).toBeInTheDocument()
+    expect(details.querySelector('summary')).not.toHaveTextContent(/login shell|shell profile/) // the visible line is plain; the host's words are inside the fold
+    expect(within(details).getByTestId('agent-login-notice')).toHaveTextContent('your login shell') // still one click away
+    expect(within(details).getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    expect(s.acknowledge).not.toHaveBeenCalled() // reading nothing yet, Start counts as reading
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'login_shell'), T)
     expect(s.acknowledge).not.toHaveBeenCalledWith(WS, 'start_agent')
-    await waitFor(() => expect(screen.queryByTestId('agent-risk-full')).toBeNull())
-    expect(within(screen.getByTestId('agent-details')).getByTestId('agent-login-notice')).toBeInTheDocument()
+    expect(s.start).toHaveBeenCalledTimes(1)
   })
 
   it('MED-2: only the host\'s exact sentence is the login-shell notice; other warnings stay visible', async () => {
@@ -509,8 +538,8 @@ describe('a short, calm dialog (U6)', () => {
     await screen.findByTestId('agent-access', {}, T)
     await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
     fireEvent.click(screen.getByTestId('agent-start'))
-    await screen.findByTestId('click-panel', {}, T)
-    expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
+    await prepareAccess()
+    expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 168, scope: 'workable' }) // run 14: preselected = the length chosen at setup (the workspace's access setting, 7 days here)
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     s.preview.mockResolvedValue(preview())
     const sign = screen.getByRole('button', { name: /^Sign and start agent$/ })
@@ -537,7 +566,7 @@ describe('a short, calm dialog (U6)', () => {
     await screen.findByTestId('agent-access', {}, T)
     await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
     fireEvent.click(screen.getByTestId('agent-start'))
-    await screen.findByTestId('click-panel', {}, T)
+    await prepareAccess()
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     s.preview.mockResolvedValue(after)
     const sign = screen.getByRole('button', { name: /^Sign and start agent$/ })
@@ -697,7 +726,7 @@ describe('sheet risk notice', () => {
     const d = await screen.findByTestId('grant-risk-details')
     expect(d).toHaveTextContent('Runs as you on this computer')
     expect(d).not.toHaveAttribute('open')
-    expect(d).toHaveTextContent('standing authority')
+    expect(d).toHaveTextContent('could use this access while it lasts')
   })
   it('acknowledged: quiet line only; unreadable answer: full notice (fail closed)', async () => {
     s.notices.mockResolvedValue({ acknowledged: { grant: true } })
@@ -721,39 +750,25 @@ it.each([4, 24, 500])('caps runner lengths at workspace hours %s and 168', async
   expect(Number(select.value)).toBeLessThanOrEqual(Math.min(limit, 168))
 })
 
-it('B12A old 12: the lengths come from the SIGNED settings when the workspace list carries no grant_hours', async () => {
-  vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
-  vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: ['terminal'], grant_hours: 72 } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  s.preview.mockResolvedValue(noGrant())
-  await mountCard()
-  await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
-  await waitFor(() => expect([...(screen.getByLabelText('Length') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['8 hours', '1 day', '3 days']))
-  expect([...(screen.getByLabelText('Tickets') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['Tickets you may work on', 'All tickets'])
-})
 
-it('B12A N16: at the maximum, Extend says how long the workspace allows and why there is no choice', async () => {
-  vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: null, grant_hours: 72 } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  const until = new Date(nowMs() + 100 * 3_600_000).toISOString()
-  render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><RunnerGrantCard ws={WS} runner={runner({ grant: { id: GRANT, until, scope: 'all' } })} loading={false} blocked={null} extend={{ id: GRANT, scope: 'all', until }} onChanged={() => {}} /></TooltipProvider></QueryClientProvider>)
-  expect(await screen.findByTestId('runner-grant-longest')).toHaveTextContent('as long as this workspace allows (3 days)')
-})
 
 describe('terminal-approval workspace (no one-click)', () => {
   beforeEach(() => {
     vi.mocked(api.getWorkspaces).mockResolvedValue([{ id: WS, grant_hours: 72, click: { custody: 'passphrase', enabled: false, available: false } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
-    vi.mocked(api.getHostSettings).mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.mocked(api.getSignDefault).mockResolvedValue({ method: 'terminal' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+    vi.mocked(api.getHostSettings).mockResolvedValue({ } as Awaited<ReturnType<typeof api.getHostSettings>>)
   })
-  it('issues the runner grant through the terminal hand-off, never click/prepare, and offers 8 h up to the workspace maximum', async () => {
-    const handoff = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'stop here', retryable: false }))
+  it('without One click the runner grant is not prepared at all (no terminal hand-off): the review says to turn One click on; 8 h up to the workspace maximum', async () => {
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
     s.preview.mockResolvedValue(noGrant())
     await mountCard()
     await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled())
     expect([...(screen.getByLabelText('Length') as HTMLSelectElement).options].map(o => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
     fireEvent.click(screen.getByTestId('runner-grant-issue'))
-    await waitFor(() => expect(handoff).toHaveBeenCalled())
-    expect(handoff.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
+    expect(await screen.findByText('One click is not ready on this computer.', {}, T)).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, 50))
     expect(s.prepare).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('handoff-command')).toBeNull()
+    expect(screen.queryByText(/orch sign/)).not.toBeInTheDocument()
     expect(screen.queryByText(/convenience/i)).not.toBeInTheDocument()
   })
   it('Extend hides lengths shorter than the access it replaces', async () => {
@@ -810,5 +825,61 @@ describe('prefilled by the New ticket form (initial)', () => {
     fireEvent.click(start)
     await waitFor(() => expect(s.start).toHaveBeenCalled(), T)
     expect(s.start.mock.calls[0][3]).toBe('idem-from-review')
+  })
+})
+
+// P03-sec: ONE consent state. The folder consent is recorded only when its line was on screen and still ticked.
+describe('the Claude Code folder consent', () => {
+  const trust = { available: true, on: false, config: 'missing' as const, offered: true, why_not: '', parent_config: '', agent_needs_consent: true, agent_why_not: '' }
+  let grant: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 168, click: { custody: 'convenience', enabled: true, available: true }, members: [{ person: 'p_me', role: 'owner' }] }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.spyOn(api, 'getMe').mockResolvedValue({ person: 'p_me' } as Awaited<ReturnType<typeof api.getMe>>)
+    vi.spyOn(api, 'getClaudeTrust').mockResolvedValue(trust)
+    grant = vi.spyOn(api, 'grantClaudeTrust').mockResolvedValue({ on: true })
+  })
+  async function signAccess(tick: boolean) {
+    s.runner.mockResolvedValue({ runner: runner() })
+    s.preview.mockResolvedValue(preview({ spec: null, grant: null, blocked: { code: 'launch.no_grant', message: null, detail: {} } }))
+    const { onStarted } = mount()
+    await screen.findByTestId('agent-access', {}, T)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await prepareAccess()
+    const line = await screen.findByTestId('claude-consent', {}, T)
+    if (!tick) fireEvent.click(within(line).getByRole('checkbox'))
+    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
+    s.preview.mockResolvedValue(preview())
+    const sign = screen.getByRole('button', { name: /^Sign and start agent$/ })
+    await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(sign)
+    fireEvent.click(sign)
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), { timeout: 8000 })
+  }
+  it('signing the access with the line shown and ticked records the consent once', async () => {
+    await signAccess(true)
+    expect(grant).toHaveBeenCalledTimes(1)
+    expect(grant).toHaveBeenCalledWith(WS, false)
+  }, 15000)
+  it('signing the access with the line unticked records nothing, and the agent still starts', async () => {
+    await signAccess(false)
+    expect(grant).not.toHaveBeenCalled()
+    expect(s.start).toHaveBeenCalledTimes(1)
+  }, 15000)
+  it('access already there: the line is in the form, ticked, and Start records it first', async () => {
+    mount()
+    const line = await screen.findByTestId('claude-consent', {}, T)
+    expect(within(line).getByRole('checkbox')).toBeChecked()
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
+    expect(grant).toHaveBeenCalledTimes(1)
+  })
+  it('the instant path (nothing to read) shows no line and records nothing: the form opens instead', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
+    const { onStarted } = mount(vi.fn(), vi.fn(), {})
+    expect(await screen.findByTestId('claude-consent', {}, T)).toBeInTheDocument()
+    expect(onStarted).not.toHaveBeenCalled()
+    expect(grant).not.toHaveBeenCalled()
   })
 })

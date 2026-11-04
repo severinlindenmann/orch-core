@@ -30,6 +30,6 @@ export function TerminalHeader({ session, interactive, rail, picker, leaveRef, c
       {interactive && <Button variant="ghost" size="xs" onClick={onEnd}>End session</Button>}
     </>}
     <IconButton label={interactive ? 'Leave terminal (Esc Esc)' : 'Leave terminal (Tab)'} onClick={onLeave} innerRef={leaveRef}><ArrowRightFromLine /></IconButton>
-    {rail && <Button variant="ghost" size="xs" onClick={onOpen}>Open in Terminals</Button>}
+    {rail && <Button variant="ghost" size="xs" onClick={onOpen}>Open in Command window</Button>}
   </header>
 }

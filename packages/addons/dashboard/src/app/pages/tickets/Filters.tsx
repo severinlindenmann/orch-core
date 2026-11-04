@@ -18,7 +18,7 @@ export interface FilterOptions {
 const chip = (on: boolean) =>
   cn(
     'inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-brand',
-    on ? 'border-brand bg-brand-soft text-brand' : 'border-input text-text-muted hover:bg-accent hover:text-text',
+    on ? 'border-brand bg-brand-soft text-brand-chip-text' : 'border-input text-text-muted hover:bg-accent hover:text-text',
   )
 
 const toggle = <T,>(list: T[] | undefined, v: T): T[] | undefined => {

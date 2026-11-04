@@ -29,6 +29,7 @@ SWITCHABLE = (
     "wiki",
     "quick",
     "focus",
+    "schedules",
 )
 #: what the dashboard cannot turn off or on at all
 LOCKED = {
@@ -109,7 +110,7 @@ def needs(name: str, runner: dict | None) -> str | None:
         if not runner["enabled"]:
             return "Needs dashboard execution first. Turn it on here, then switch this on."
         if name == "terminals" and not runner["terminals"]:
-            return "Terminals are not turned on in dashboard execution here. Turn them on here, then switch this on."
+            return "Command window is not turned on in dashboard execution here. Turn it on here, then switch this on."
     return None
 
 
@@ -196,6 +197,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                     "state": state,
                     "needs": setting,
                     "set_up": set_up,
+                    **(suggest_fields(gateway, ws) if info.id == "publish" else {"suggest": None}),
                     "locked": None,
                     "blocked": blocked,
                     "runner_switch": (not on) and can_sign and runner_fix(info.id, runner),
@@ -203,6 +205,77 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 }
             )
         return {"available": True, "add_ons": rows}
+
+
+def suggest_fields(gateway: Gateway, ws: str) -> dict:
+    """The Publish form's suggestion and where it comes from (#1838). The Publish server installed on this computer
+    wins; otherwise, when this workspace is joined to a hub, the ``publish_where`` that hub SIGNED and core verified
+    against the card pinned now (``hub.status``): nothing else, the legacy unsigned hint is gone. Whatever is turned on
+    is still signed and shown in the review.
+
+    * ``suggest_where`` is ``{server, share}`` (the new shape) and ``suggest_from`` is ``computer`` or ``hub``;
+      ``suggest_hub`` is the hub's display name from the hub state.
+    * ``suggest`` is the same ``server`` origin as one string: the dashboard reads that until it moves to
+      ``suggest_where`` (to be dropped then).
+    * ``hub_moved`` (with ``why: "hub_moved"``) is ``{server, share}``, the hub's new values, when the settings came
+      from this hub and the hub has since moved off them: sharing is paused until the person signs the new values."""
+    from orch.wsproto import wire
+
+    def origins(where: object) -> dict | None:
+        if not isinstance(where, dict):
+            return None
+        try:
+            return {k: wire.check_origin(where[k]) for k in ("server", "share")}
+        except Exception:  # noqa: BLE001 - an address core would refuse is not suggested
+            return None
+
+    try:
+        st = gateway.call(ws, "hub.status")
+    except Exception:  # noqa: BLE001 - an unreadable hub status is "nothing from the hub"
+        st = None
+    st = st if isinstance(st, dict) else {}
+    out: dict = {"suggest": None}
+    if (moved := origins(st.get("publish_moved"))) is not None:
+        out |= {"hub_moved": moved, "why": "hub_moved"}
+    local = suggested_publish()
+    if local:
+        return out | {
+            "suggest": local,
+            "suggest_where": {"server": local, "share": local},
+            "suggest_from": "computer",
+            "suggest_hub": None,
+        }
+    where = origins(st.get("publish_where"))
+    if where is None:
+        return out
+    name = (st.get("publish_where") or {}).get("hub_name")
+    return out | {
+        "suggest": where["server"],
+        "suggest_where": where,
+        "suggest_from": "hub",
+        "suggest_hub": name if isinstance(name, str) and name else None,
+    }
+
+
+def suggested_publish() -> str | None:
+    """The address of the Publish server installed on this computer (``orch install publish``), or ``None``: no
+    installer state (Publish is hosted elsewhere), no such part, or an address core would refuse. A hint for the form
+    only; whatever is turned on is still signed and shown in the review."""
+    import os
+
+    from orch.install import state
+    from orch.wsproto import wire
+
+    try:
+        url = wire.check_origin(state.load(state.Layout(os.environ))["parts"]["publish"]["url"])
+    except Exception:  # noqa: BLE001 - unreadable or odd installer state is "nothing to suggest"
+        return None
+    # the dialog says "on this computer": only a loopback address may be called that (a public or office address in a
+    # tampered or odd installer file is not suggested; the person types it and the signed review names its reach)
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    return url if host in ("localhost", "127.0.0.1", "::1") else None
 
 
 def check_off(gateway: Gateway, ws: str, name: str) -> None:

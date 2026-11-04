@@ -11,8 +11,13 @@ export async function waitForTarget(url, { fetcher = fetch, pause = sleep } = {}
   throw new Error(`No dev server at ${url}: start the target server or pass --url`)
 }
 
-export async function waitForDevTools(portFile, { read = (path) => readFileSync(path, 'utf8'), fetcher = fetch, pause = sleep, alive = () => true } = {}) {
-  for (let i = 0; i < 100; i++) {
+// A cold Chrome on a fresh CI runner can take well over 10 s before it writes DevToolsActivePort (#1662 shard 7/8):
+// wait up to a fixed deadline, not a count of 100 ms pauses. Chrome exiting still fails at once.
+export const DEVTOOLS_DEADLINE_MS = 60_000
+
+export async function waitForDevTools(portFile, { read = (path) => readFileSync(path, 'utf8'), fetcher = fetch, pause = sleep, alive = () => true, now = Date.now, deadlineMs = DEVTOOLS_DEADLINE_MS } = {}) {
+  const until = now() + deadlineMs
+  while (now() < until) {
     if (!alive()) throw new Error('Chrome exited before its DevTools endpoint was ready')
     try {
       const [port, browser] = read(portFile).split('\n')

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.agents_running",
+    "message": "agent runs are active",
+    "hint": "let them finish or run orch stop all",
+    "fix": {
+      "argv": [
+        "orch",
+        "update",
+        "--check"
+      ]
+    },
+    "retryable": true
+  }
+}

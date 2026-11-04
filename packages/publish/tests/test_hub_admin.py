@@ -260,8 +260,8 @@ def test_serve_dev_mode_flag_reaches_the_app(monkeypatch, tmp_path, flag, want):
     seen = {}
     real = app_mod.create_app
 
-    def spy(data, host, clock=None, dev_mode=False):
-        a = real(data, host, clock, dev_mode)
+    def spy(data, host, clock=None, dev_mode=False, **kw):
+        a = real(data, host, clock, dev_mode, **kw)
         seen["dev"] = a.state.settings.dev_mode
         return a
 

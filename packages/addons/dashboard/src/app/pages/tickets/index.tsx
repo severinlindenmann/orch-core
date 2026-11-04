@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouter, useSearch } from '@tanstack/react-router'
-import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
+import { ChevronDown, Tag, X } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
+import { useShellActions } from '@/app/shell/ShellUi'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import type { BoardPeople } from '../board/TicketCard'
 import { STATUS_LABEL } from '../board/lib'
@@ -21,6 +22,7 @@ import { groupByEpic, hasEpics, isCollapsed, NO_EPIC } from '../board/grouping'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useTicketsGroup } from './group'
 import { Filters } from './Filters'
+import { SharedWithYou } from './SharedWithYou'
 import { SavedViews } from './SavedViews'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { TicketRowsSkeleton } from '../skeletons'
@@ -31,8 +33,8 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { plural } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { useMe } from '@/app/useMe'
+import { hubQueries } from '@/api/hub'
 
-const CLI_HINT = 'orch list --status open'
 
 /** Keys typed into a text field, or while a menu/dialog is open, must not trigger list shortcuts. */
 function typingTarget(el: EventTarget | null): boolean {
@@ -125,6 +127,7 @@ export function TicketsPage() {
   const meQ = useMe()
   const me = meQ.data
   const role = useRole()
+  const { openNewTicket } = useShellActions()
   // A real host moves one ticket at a time, each signed in the terminal: no bulk move there.
   const canBulk = can(role, 'ticket.move') && !handoffMode(wsId)
 
@@ -151,6 +154,7 @@ export function TicketsPage() {
   const rows = useMemo(() => (pool ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [pool, search.status])
   const [grouping, setGrouping] = useTicketsGroup(me?.person)
   const dirty = hasFilters(search)
+  const hasShared = ((useQuery({ ...hubQueries.shared(wsId!), enabled: !!wsId }).data?.items) ?? []).length > 0
   const grouped = grouping.group === 'epic' && hasEpics(everything)
   const filtering = dirty || !!search.status?.length
   const groups = useMemo(() => (grouped ? groupByEpic(everything, rows, filtering) : null), [grouped, everything, rows, filtering])
@@ -283,18 +287,20 @@ export function TicketsPage() {
     <div ref={frame} className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Tickets</h1>
-        <span className="font-mono text-[11px] text-text-faint" aria-live="polite">
-          {countLabel}
-        </span>
+        {allCards > 0 && (
+          <span className="text-[11px] text-text-faint" aria-live="polite">
+            {countLabel}
+          </span>
+        )}
         <span className="flex-1" />
         {hasEpics(everything) && (
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] text-text-faint">Group</span>
             <ToggleGroup type="single" variant="outline" size="sm" value={grouping.group} onValueChange={(v) => v && setGrouping({ group: v as 'epic' | 'none' })} aria-label="Group by">
-              <ToggleGroupItem value="epic" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+              <ToggleGroupItem value="epic" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
                 Epic
               </ToggleGroupItem>
-              <ToggleGroupItem value="none" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+              <ToggleGroupItem value="none" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
                 None
               </ToggleGroupItem>
             </ToggleGroup>
@@ -326,19 +332,30 @@ export function TicketsPage() {
         compact={compact}
       />
       {canBulk && picked.length > 0 && <BulkBar keys={picked} onDone={() => setSelected(new Set())} />}
+      {wsId && <SharedWithYou ws={wsId} limit={3} />}
       {meQ.isError ? (
         <LoadFailed what="tickets" onRetry={() => void meQ.refetch()} />
       ) : isPending || !me ? (
         <TicketRowsSkeleton />
       ) : shown.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-8 text-center" role="status">
-          <p className="text-[13px] text-text">No tickets match.</p>
-          <Button variant="link" size="sm" className="text-[13px]" onClick={clear}>
-            Clear filters
-          </Button>
-          <p className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-text-faint">
-            <Terminal className="size-3.5" aria-hidden /> From the terminal: <code className="font-mono text-text-muted">{CLI_HINT}</code>
-          </p>
+          {dirty || qInput !== '' ? (
+            <>
+              <p className="text-[13px] text-text">No tickets match.</p>
+              <Button variant="link" size="sm" className="text-[13px]" onClick={clear}>
+                Clear filters
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-[13px] text-text">{hasShared ? 'You have no tickets of your own yet.' : 'No tickets yet.'}</p>
+              {can(role, 'ticket.create') && (
+                <Button size="sm" className="mt-2" onClick={openNewTicket}>
+                  New ticket
+                </Button>
+              )}
+            </>
+          )}
         </div>
       ) : (
         <>
@@ -367,7 +384,6 @@ export function TicketsPage() {
                 · <kbd className="font-mono">x</kbd> select
               </>
             )}{' '}
-            · CLI: <code className="font-mono">{CLI_HINT}</code>
           </p>
         </>
       )}

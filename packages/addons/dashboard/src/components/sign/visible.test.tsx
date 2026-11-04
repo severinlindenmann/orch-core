@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { plain, prose, Raw, visible, visibleValue } from './visible'
+import { Name, plain, prose, Raw, visible, visibleValue } from './visible'
 
 // Strings a malicious addon could send to make two values look alike or to hide or reorder text.
 const TRICKY = ['ab\u202Ecd', 'ab\u200Bcd', 'abcd', 'a\n\nb', 'a b', ' x ', 'x', '', '\u2066evil\u2069']
@@ -28,6 +28,19 @@ describe('visible: what core shows for a string it did not write', () => {
     })
     expect(new Set(shown).size).toBe(TRICKY.length)
     for (const s of shown) expect(s).not.toMatch(/[\u200B\u202E\u2066\u2069\n]/)
+  })
+  it('P17: Name encodes exactly like Raw (hidden and bidi characters stay visible) and only drops the mono font', () => {
+    for (const t of [...TRICKY, 'Anna\u202Egnp.exe', 'zero\u200Bwidth', ' pad ', '']) {
+      const a = render(<Raw>{t}</Raw>); const raw = a.container.querySelector('bdi')!; const rawText = raw.textContent; a.unmount()
+      const b = render(<Name>{t}</Name>); const el = b.container.querySelector('bdi')!
+      expect(el.textContent).toBe(rawText)
+      expect(el.textContent).toBe(visible(t))
+      expect(el.className).toMatch(/\[unicode-bidi:isolate\]/)
+      expect(el.className).not.toMatch(/font-mono/)
+      b.unmount()
+    }
+    const { container } = render(<Name>{'Pay\u202Ebob\u200B'}</Name>)
+    expect(container.textContent).toBe('Pay\\u{202e}bob\\u{200b}')
   })
   it('plain() isolates anything beyond printable ASCII for text contexts and leaves plain ids alone', () => {
     expect(plain('schedules')).toBe('schedules')

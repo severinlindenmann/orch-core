@@ -13,6 +13,21 @@ from orch import canon
 from tests.ops.helpers import OTHER, SESSION, Cli
 
 
+@pytest.fixture(autouse=True)
+def _plan_gate_off(ws, request):
+    """r10-P02: an agent builds only after the plan is approved. These tests are about tasks and receipts, not the
+    plan gate: the workspace turns it off (a signed policy change, as a person would make it), except in the tests
+    that approve the plan themselves."""
+    if request.function.__name__ not in PLAN_GATE_ON:
+        ws.plan_gate_off()
+
+
+PLAN_GATE_ON = {
+    "test_submit_lists_what_is_missing_then_moves_to_testing",
+    "test_task_edit_voids_the_plan_and_the_gates_after_it",
+}
+
+
 def py(code: str) -> str:
     """A verify command as a ticket holds it: an argument list in one string (``--run`` has no shell)."""
     return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"

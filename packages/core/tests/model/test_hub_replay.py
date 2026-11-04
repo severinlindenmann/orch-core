@@ -138,7 +138,7 @@ def ws_with(mode: str, aliases: dict, members: dict, roles: dict, joined: bool =
     ws.members = {p: Member(p, p[2:6], r, "k") for p, r in members.items()}
     ws.hub = {
         "status": "joined" if joined else "left", "hub_id": HUB, "mode": mode, "alias_book": {HUB: aliases},
-        "ledger": {HUB: {"snapshot": {"o": {"roles": roles}}}},
+        "ledger": {HUB: {"snapshot": {"o": {"roles": roles, "ends_ms": {}}}}},
     }  # fmt: skip
     return ws
 

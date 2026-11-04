@@ -57,7 +57,7 @@ def setup(tmp_path):
                     status, out = 410, {"error": {"code": "secrets.shown", "message": "already shown"}}
                 else:
                     facts["revealed"] = True
-                    out = {"passphrase": SECRET, "recovery_words": [SECRET] * 24, "check_positions": [8, 17, 23]}
+                    out = {"passphrase": SECRET, "recovery_words": [SECRET] * 24}
             elif self.path == "/api/setup/profile":
                 assert json.loads(raw)["name"] == SECRET
             elif self.path == "/api/setup/state":
@@ -118,7 +118,11 @@ def claim(client, auth=None):
 
 def test_scope_claim_and_no_workspace(setup):
     client, auth, _, _, _ = setup
-    assert client.get("/setup").status_code == 200
+    page = client.get("/setup")
+    assert page.status_code == 200
+    csp = page.headers["content-security-policy"]  # run16 P06: the document at /setup carries the setup CSP ...
+    assert "connect-src 'self' http://127.0.0.1:*" in csp
+    assert "http://127.0.0.1:*" not in client.get("/").headers["content-security-policy"]  # ... and / does not
     headers = claim(client)
     token = headers["X-Setup-Token"]
     assert not auth.valid(token) and auth.valid_setup(token)
@@ -372,3 +376,12 @@ def test_real_core_finish_keeps_service_login_url(tmp_path):
                 assert done.get("url") == SERVICE_URL, done
         finally:
             core.stop()
+
+
+def test_w01_try_again_reaches_the_setup(setup):
+    """W01: the page's Try again (POST /api/setup/retry) is forwarded, never 404 setup.not_found."""
+    client, *_ = setup
+    headers = claim(client)
+    res = client.post("/api/setup/retry", json={}, headers=headers)
+    assert res.status_code == 200, res.text
+    assert client.get("/api/setup/retry", headers=headers).status_code == 404  # POST only

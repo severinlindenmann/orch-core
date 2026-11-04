@@ -11,6 +11,7 @@ import { b64urlEncode, RevealKey } from '@/api/sealed'
 import { importKeyPair } from '@/api/sealed.testing'
 import * as sealed from '@/api/sealed'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { trustedPresses } from '@/test/hostHarness'
 import { GrantReveal } from './GrantReveal'
 
 type Jwk = { x: string; y: string; d: string }
@@ -65,6 +66,7 @@ async function signAndWait() {
   await signButton()
   await waitFor(() => expect(screen.getByRole('button', { name: 'Sign and show the secret' })).toBeEnabled(), { timeout: ARM_MS + 3000 })
   const b = screen.getByRole('button', { name: 'Sign and show the secret' })
+  trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
   fireEvent.pointerDown(b)
   fireEvent.click(b)
 }

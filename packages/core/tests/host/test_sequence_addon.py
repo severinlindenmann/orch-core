@@ -333,6 +333,16 @@ def test_ae3_publish_is_one_plain_click_and_the_view_shows_both_servers(click, s
     assert v["view"]["confirm"] == {"kind": "click"}
     shown = "\n".join(v["view"]["lines"])
     assert PUBLISH["server"] in shown and PUBLISH["share"] in shown  # what is signed is on screen
+    # r12-P11: the main words are one plain line in reach words; the addresses stay in the (folded) rows and the lines
+    c = v["view"]["content"]
+    want = "Files you share go to a public address; anyone with the link can read them."
+    assert c["notes"][0] == want
+    # the rows (addresses, add-on, version, capabilities) sit under the technical details
+    assert c["fields_inline"] is False
+    flat = json_text(c)
+    for kept in (PUBLISH["server"], PUBLISH["share"], "it says it will", "per host, not signed"):
+        assert kept in flat
+    assert not any(n.startswith("Files are sent to: ") or "signed by this workspace" in n for n in c["notes"])
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     assert out["duplicate"] is False and click.signatures == 2
@@ -372,19 +382,21 @@ def test_a_grant_step_with_capabilities_is_a_click_for_every_add_on(human):
 
 def handoff_first(rig):
     op, args = sequence.step_args(rig.intent, 0, None)
-    return ok(rig.h.c.req("human.prepare", {"op": op, "args": args, "handoff": True, "sequence": rig.meta0()}))["data"]
+    return ok(rig.h.c.req("human.prepare", {"op": op, "args": args, "signer": rig.h.signer, "sequence": rig.meta0()}))[
+        "data"
+    ]
 
 
 @pytest.mark.parametrize("name", ["publish"])
 def test_the_terminal_signs_both_add_ons_with_the_add_on_word_and_one_review(human, served, tmp_path, name):
     import contextlib
 
-    from tests.host.test_handoff import Shown
+    from tests.host.terminal_helpers import Shown
     from tests.host.test_sequence import terminal
 
     rig = Rig(human, tmp_path, enable(human, name))
     p = handoff_first(rig)
-    assert p["request"]["code"] and p["op"] == "settings.set"
+    assert p["request"]["id"] and p["op"] == "settings.set"
     unlocks = []
 
     class OpenOnce:
@@ -400,14 +412,16 @@ def test_the_terminal_signs_both_add_ons_with_the_add_on_word_and_one_review(hum
             return cm()
 
     shown = Shown()
-    result = terminal(rig, served, shown, p["request"]["code"], backend=OpenOnce())
+    result = terminal(rig, served, shown, p["request"]["id"], backend=OpenOnce())
     assert result["steps"] == 2 and result["key"] is None
-    assert shown.words == [f"{name}~{served.wid[-8:]}"]  # the add-on's word, not the SETTINGS word
+    assert len(shown.plain) == 1
     assert len(unlocks) == 1 and unlocks[0][2] == (canon.LABELS["sig_ws_event"].encode("ascii"),)
     title = needs.TITLES[name]
     plain = shown.plain[0]
     assert f"Turn on {title}" in plain
-    assert "Settings are signed first, then the add-on is turned on" in shown.texts[0] + plain
+    # P04: the order and the partial-failure note are in the technical details (the full review), not the plain text
+    assert "Settings are signed first, then the add-on is turned on" in shown.texts[0]
+    assert "settings stay" not in plain and "signed first" not in plain
     assert "2 signatures, ONE confirmation" in shown.texts[0]
     assert on(human, name) and needs.is_set(settings_of(human), name)
 
@@ -426,12 +440,19 @@ def test_the_review_says_the_settings_and_the_grant_in_words(human, tmp_path):
         flat = json_text(content)
         assert all(x in flat for x in expect), (name, flat[:1500])
         assert "it says it will" in flat or "capabilities" in flat  # the grant is in the same review
-        assert any("the settings stay and the add-on stays off" in n for n in content["notes"])
-        assert any("2 steps" in n for n in content["notes"])
+        assert not any("settings stay" in n or "signed first" in n for n in content["notes"])  # P04: technical details
+        assert not any(
+            "runs its own code" in n for n in content["notes"]
+        )  # P04: built-in Publish is not third-party code
+        assert not any("steps" in n for n in content["notes"])  # r7-P10: the step count is in the technical review
         from orch.host import signer
 
         text = signer.render(first, lambda w: ("ws", "ORCH"))
         assert "2 signatures, ONE confirmation" in text
+        assert "One confirmation signs all 2 steps" in text
+        assert (
+            "If signing stops in between, the settings stay and the add-on stays off" in text
+        )  # P04: nothing is hidden
         assert text.count("--- event ") == 2
 
 
@@ -439,19 +460,6 @@ def json_text(content):
     import json
 
     return json.dumps(content, sort_keys=True)
-
-
-def test_ae3_the_terminal_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
-    from orch.host import signer
-
-    rig = Rig(human, tmp_path, enable(human, "publish"))
-    first = rig.first()
-    want = f"publish~{human.served.wid[-8:]}"
-    assert signer.confirm_word(first) == want
-    plain = human.prepare("settings.set", {"set": {"grant_hours": 9}})
-    assert signer.confirm_word(plain, lambda w: ("Acme", "DEMO")).endswith(
-        "/SETTINGS"
-    )  # a plain settings.set: unchanged
 
 
 # --- AE4: never on without settings (one rule, every path) ----------------------------------------
@@ -745,3 +753,50 @@ def test_the_publish_addresses_are_read_by_a_person_not_by_an_agent_with_a_grant
     assert ok(human.c.req("workspace.settings"))["data"]["publish"] == value
     agent = ok(human.c.req("workspace.settings", grant=served.grant, session=human_helpers.SESSION))["data"]
     assert "publish" not in agent  # column G
+
+
+def test_p04_the_trust_warning_is_dropped_only_for_a_verified_single_built_in_publish_grant(
+    human, tmp_path, monkeypatch
+):
+    """Fail closed, through build_content: only [settings, ONE grant of the built-in Publish package] on a verified
+    review drops the warning; every other shape keeps it."""
+    from orch.host import sequence, signcontent
+
+    rig = Rig(human, tmp_path, enable(human))
+    first = rig.first()
+    human.check(first)
+    real = sequence.expand
+
+    def notes(edit=None, verified=True):
+        def patched(prepared):
+            out = real(prepared)
+            if edit:
+                out = {**out, "events": edit(list(out["events"]))}
+            return out
+
+        monkeypatch.setattr(sequence, "expand", patched)
+        try:
+            return sequence.build_content(first, verified=verified)["notes"]
+        finally:
+            monkeypatch.setattr(sequence, "expand", real)
+
+    def grant(events):
+        return next(e for e in events if e["type"] == "addon.granted")
+
+    assert signcontent.ADDON_TRUST not in notes()  # the real built-in digest
+    assert signcontent.ADDON_TRUST in notes(verified=False)
+    assert signcontent.ADDON_TRUST in notes(
+        lambda ev: [{**e, "name": "terminals"} if e is grant(ev) else e for e in ev]
+    )
+    assert signcontent.ADDON_TRUST in notes(lambda ev: [*ev, copy.deepcopy(grant(ev))])  # two grants
+
+    def settings(events):
+        return next(e for e in events if e["type"] == "settings.changed")
+
+    two_settings = notes(lambda ev: [*ev, copy.deepcopy(settings(ev))])  # two settings events
+    assert signcontent.ADDON_TRUST in two_settings
+    extra = {"type": "addon.disabled", "name": "usage"}  # an extra event
+    assert signcontent.ADDON_TRUST in notes(lambda ev: [*ev, extra])
+    assert signcontent.ADDON_TRUST in notes(
+        lambda ev: [{**e, "package_sha256": "sha256:" + "ab" * 32} if e is grant(ev) else e for e in ev]
+    )

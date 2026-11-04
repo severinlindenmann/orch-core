@@ -4,6 +4,8 @@ The socket is authenticated against a local registry pin before hello. No automa
 write retries: callers must keep their original idem for outcome recovery.
 """
 
+import contextvars
+import copy
 import ctypes
 import json
 import os
@@ -40,6 +42,7 @@ CAPS = [
     "workdir/1",
     "publish/1",
     "focus/1",
+    "remote/1",  # R3 (#1591): the stream adapter's `remote.attach` and the owner's `remote.session_end`
 ]
 MARKET_READS = ("market.list", "market.installed")
 MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh", "market.add")
@@ -50,6 +53,7 @@ OPS = {
         "host.list",
         "whoami",
         "workspace.show",
+        "workspace.cosmetic.set",
         "host.status",
         "member.list",
         "workspace.settings",
@@ -59,6 +63,8 @@ OPS = {
         "needs",
         "activity.list",
         "quick.list",
+        "follow_up.list",
+        "schedule.list",  # run 13: "My schedules" (a read; schedule.add/cancel are signed hand-offs)
         "records.status",
         "ticket.query",
         "ticket.get",
@@ -73,6 +79,8 @@ OPS = {
         "sub.open",
         "sub.close",
         "outcome.get",
+        # what the host hashes for a gate (a read): the approve_both intent is built from both gates' inputs
+        "gate.input",
         # M7a terminals (contract v1.6, section 12.3): reads, and the writes the routes call with write=True and an idem
         "run.sub",
         "run.list",
@@ -114,6 +122,7 @@ OPS = {
         # with an idem. `publish.send` answers the share link ONCE (shares.py); `publish.share` is never sent as a
         # plain op: it is the inner op of a signed hand-off (handoff.py).
         "publish.list",
+        "publish.stage_upload",
         "publish.prepare",
         "publish.send",
         "publish.revoke",
@@ -123,9 +132,41 @@ OPS = {
         # command the person runs in their Terminal (hub.py); this process never sends hub.join/mode/leave/connect.
         "hub.status",
         "hub.handoff",
+        "hub.network",  # R6 #1594: the proxy for hub links (a read; the password is never in the answer)
+        "hub.network_set",  # R6: the owner's write (idem); the route is loopback-only and refused on remote
         "hub.link",  # run-9 feedback 6: reads the connect link (a read; without it call() demanded an idem)
+        "hub.switch",  # H1: one-time switch tickets and the rail list over the hub link (no log line, no idem)
         "share.rules",
         "share.preview",
+        "hub.shared",  # P02: tickets other workspaces of the hub shared with this owner (a read, unsigned)
+        "space.list",  # run-15c P03: the shared spaces this workspace is in and their item names (a read, unsigned)
+        "share.audience",  # P02: the hub people and teams the owner may name as readers (a read of the hub, unsigned)
+        # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)
+        "share.revoke",
+        "share.rule_remove",
+        # R2 (#1590) remote access, the loopback page: reads, and the three owner clicks that only take power away or
+        # hand out a one-time code (remote.off, remote.code, remote.device_remove). Turning ON and confirming a device
+        # are signed by click (signing.RemoteSet), never sent here.
+        "remote.status",
+        "remote.pending",
+        "remote.sessions",
+        "remote.off",
+        "remote.code",
+        "remote.device_remove",
+        # R3 T4 (#1591): the in-process stream adapter (cap `remote/1`). `remote.attach` is a long poll on a host
+        # connection of its own (`Gateway.new_link`), `remote.session_end` the owner's End button. Never
+        # `remote.stream` or `remote.presence_used`: those are the signer's, on its own host connection.
+        "remote.attach",
+        "remote.session_end",
+        # M3 H-5 company skills and tools: the owner's tab. org.offers and org.show are reads; the rest are owner
+        # clicks (org_routes.py).
+        "org.offers",
+        "org.show",
+        "org.secrets",
+        "org.accept",
+        "org.decline",
+        "org.sync",
+        "org.tool",
         # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the
         # host refuses an agent): stage, unstage, uninstall, refresh. Every install is a terminal hand-off.
         *MARKET_OPS,
@@ -135,11 +176,23 @@ RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "g
 #: ops this process never sends, whatever a caller asks: `grant.deposit` carries the runner grant's secret
 #: (`auth.grant`), which never reaches the dashboard's HTTP process (D-P2-27, section 0.8.6 item 6).
 FORBIDDEN = frozenset({"grant.deposit"})
+#: Read ops asked on nearly every request (addon.list alone was 56% of the host time of a page load). The shared link
+#: answers one call at a time, so these pile up behind the lock; callers that queued together share ONE
+#: answer. Nothing is ever served from the past: a caller accepts only an answer whose request went to the host AFTER
+#: the caller arrived (a counter, not a clock), so a
+#: member removed, an add-on turned off or a setting changed before the call is always seen (gates read fresh).
+#: One HTTP request's own memo of `addon.list` (set by the RequestMemo middleware, gone when the request ends: nothing
+#: outlives a request). A write through any link in that request clears it.
+REQUEST_MEMO: contextvars.ContextVar = contextvars.ContextVar("orch_request_memo", default=None)
+COALESCED_READS = frozenset(
+    {"addon.list", "whoami", "workspace.show", "workspace.settings", "member.list", "hub.status"}
+)
 WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove", "worktree.diff"}
 WORKDIR_OPS = {"workdir.get", "workdir.delete"}
 FOCUS_OPS = {"run.transcript", "run.sources", "delegation.list", "run.link", "run.detach"}
 PUBLISH_OPS = {
     "publish.list",
+    "publish.stage_upload",
     "publish.prepare",
     "publish.send",
     "publish.revoke",
@@ -147,6 +200,7 @@ PUBLISH_OPS = {
     "publish.register",
 }
 TERM_OPS = {"term.preview", "term.open", "term.attach", "attach.cancel"}
+REMOTE_SESSION_OPS = {"remote.attach", "remote.session_end"}
 
 QUERY_OPS = {"ticket.query", "ticket.get", "grant.list", "needs", "workspace.show", "member.list"}
 
@@ -249,6 +303,8 @@ class HostLink:
         self.sock, self.lock, self.send_lock = sock, threading.Lock(), threading.Lock()
         self.events = deque(maxlen=256)
         self.serial = 0
+        self.read_cache: dict = {}  # key -> (number of the request that fetched it, data); see COALESCED_READS
+        self.sent_seq = 0
         try:
             check_uid(sock, host_uid)
             sock.settimeout(2)
@@ -370,6 +426,8 @@ class HostLink:
             if op in WORKDIR_OPS
             else "publish/1"
             if op in PUBLISH_OPS
+            else "remote/1"
+            if op in REMOTE_SESSION_OPS
             else "reader/1"
             if op == "reader.list"
             else "query/1"
@@ -378,7 +436,24 @@ class HostLink:
         )
         if not self.supports(op, cap):
             raise fail("op.unsupported", exit=1)
+        memo = REQUEST_MEMO.get()
+        if write and memo is not None:
+            memo.clear()
+        arrived_seq = self.sent_seq  # a request sent after this point has a higher number: no clock, so no ties
+        cache_key = None
+        if op in COALESCED_READS and not write and dry_run is None and not files:
+            try:
+                # everything that shapes the request or its permission: op, capability, this link's acting person
+                who = (self.welcome.get("peer") or {}).get("person")
+                cache_key = json.dumps([op, cap, who, args or {}], sort_keys=True)  # strict: no coalescing if it fails
+            except (TypeError, ValueError):
+                cache_key = None
         with self.lock:
+            hit = self.read_cache.get(cache_key) if cache_key is not None else None
+            if hit and hit[0] > arrived_seq:  # sent after this caller arrived: as fresh as its own request would be
+                return copy.deepcopy(hit[1])
+            self.sent_seq += 1
+            sent_seq = self.sent_seq
             self.serial += 1
             rid = f"d{self.serial}"
             req = {"t": "req", "id": rid, "op": op, "args": args or {}}
@@ -407,7 +482,12 @@ class HostLink:
                         raise fail("frame.invalid", exit=6)
                     if frame.get("ok") is not True:
                         raise HostError(frame.get("error"), frame.get("exit"))  # both checked by HostError
-                    return frame["result"]["data"]
+                    data = frame["result"]["data"]
+                    if cache_key is not None:
+                        if len(self.read_cache) >= 32:  # bounded: the few ops above, a handful of argument shapes
+                            self.read_cache.clear()
+                        self.read_cache[cache_key] = (sent_seq, data)
+                    return copy.deepcopy(data)
             except (OSError, EOFError):
                 self.close()
                 raise fail("outcome.unknown" if write else "host.unavailable") from None

@@ -85,6 +85,7 @@ def test_person_completion_ends_live_lease_without_evidence():
     w, uid = setup()
     w.edit(uid, "sev", {"ticket.tasks": [{"id": "T1", "text": "do it", "verify": None, "proves": ["AC1"]}]})
     actor = w.claim(uid)
+    w.approve_plan(uid)
     w.tev(uid, "task.started", actor, task="T1")
     assert w.view(uid).tasks[0].leased_by == actor["session"]
     w.tev(uid, "task.done", "sev", task="T1")

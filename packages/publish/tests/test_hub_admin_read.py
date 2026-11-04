@@ -1,10 +1,11 @@
-"""GET /v2/hub/releases (orch-core #900, protocol.md 10.6): release metadata for the calling hub's full-mode
-workspaces. The contract vectors are run in test_hub_path_vectors.py; this file covers the data layer and the route."""
+"""GET /v2/hub/releases (orch-core #900, #1452, protocol.md 10.6 and 11.5): the company list rows (links) for the
+calling hub's full-mode workspaces. The contract vectors are run in test_hub_path_vectors.py; this file covers the data layer and the route."""
 
 import pytest
 
 from pubsrv import hub_admin_read as R
 from pubsrv import hub_path as H
+from pubsrv import published as P
 from tests.hub_helpers import Hub, sign, unbound
 from tests.test_hub_path_http import bound, conn_of, wsk_a
 from tests.test_publish_api_auth import NOW, WS_A, WS_B, Env
@@ -21,11 +22,18 @@ def env(tmp_path):
     return e
 
 
-def share(e, sid, ws=WS_A, kind="secret", state="live", exp=NOW + 10**6, created=1, nbytes=7):
+ULID = "01HZX3N0ABCDEFGHJKMNPQRSTV"
+
+
+def share(
+    e, sid, ws=WS_A, kind="secret", state="live", exp=NOW + 10**6, created=1, nbytes=7, **cols
+):
+    c = {"label": "Q3 report", "by_kind": "person", "by_name": "Ana", **cols}
     e.sql(
-        "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, state, bytes, created_ms)"
-        " VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, state, bytes, created_ms,"
+        " label, by_kind, by_name, views) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         sid, ws, SECRETS[0], kind, SECRETS[1], exp, state, nbytes, created,
+        c["label"], c["by_kind"], c["by_name"], c.get("views", 3),
     )  # fmt: skip
 
 
@@ -51,17 +59,68 @@ def test_lists_metadata_only(env):
     r = read(env, hub)
     assert r.status_code == 200
     assert r.headers["cache-control"] == "no-store"
-    rows = r.json()["releases"]
-    assert [x["release_id"] for x in rows] == ["b" * 32, "a" * 32]
-    assert all(set(x) == set(R.FIELDS) and x["public_url"] is None for x in rows)
-    assert rows[0]["revoked"] is True and rows[0]["bytes"] == 7 and rows[1]["kind"] == "once"
-    assert not any(s in r.text for s in SECRETS)
+    rows = r.json()["rows"]
+    assert [x["id"] for x in rows] == ["b" * 32, "a" * 32]
+    assert all(set(x) == set(P.ROW_SHAPES["link"]) and x["type"] == "link" for x in rows)
+    assert rows[0]["state"] == "revoked" and rows[0]["bytes"] == 7 and rows[1]["kind"] == "once"
+    assert (rows[0]["label"], rows[0]["by_kind"], rows[0]["by_name"], rows[0]["views"]) == (
+        "Q3 report",
+        "person",
+        "Ana",
+        3,
+    )
+    assert rows[0]["has_password"] is False
+    assert not any(
+        s in r.text for s in SECRETS
+    )  # no token hash, and the (non-ULID) ticket is not shown
+    P.check_published_rows(rows, [WS_A])
+
+
+def test_ticket_shown_only_when_it_is_a_ulid(env):
+    hub = full(env)
+    share(env, "a" * 32)
+    env.sql("UPDATE shares SET ticket=? WHERE id=?", ULID, "a" * 32)
+    share(env, "b" * 32, created=2)
+    rows = read(env, hub).json()["rows"]
+    assert [x["ticket"] for x in rows] == [ULID, None]
+
+
+def test_row_never_carries_a_token_hash_password_path_or_url(env):
+    hub = full(env)
+    share(env, "a" * 32)
+    row = read(env, hub).json()["rows"][0]
+    assert not {"token_hash", "token", "pw", "path", "files", "url", "public_url", "content"} & set(
+        row
+    )
+    for extra in ("token_hash", "pw", "path", "content", "url"):
+        with pytest.raises(H.Refused):
+            P.check_published_row({**row, extra: "x"})
+
+
+def test_old_label_less_row_reads_as_shared_files(env):
+    hub = full(env)
+    share(env, "a" * 32, label="")
+    assert read(env, hub).json()["rows"][0]["label"] == "Shared files"
+
+
+def test_selective_workspace_rows_are_refused_at_publish(env):
+    hub = bound(env)  # selective
+    share(env, "a" * 32)
+    c = conn_of(env)
+    try:
+        rows = R.list_published(c, [WS_A], NOW)["rows"]  # the data layer, had the scope been wrong
+        with pytest.raises(H.Refused) as e:
+            P.check_published_rows(rows, [])
+        assert e.value.code == "not_bound"
+    finally:
+        c.close()
+    assert read(env, hub).json() == {"rows": []}
 
 
 def test_workspace_filter_and_out_of_scope(env):
     hub = full(env)
     share(env, "a" * 32)
-    assert len(read(env, hub, f"/v2/hub/releases?workspace={WS_A}").json()["releases"]) == 1
+    assert len(read(env, hub, f"/v2/hub/releases?workspace={WS_A}").json()["rows"]) == 1
     r = read(env, hub, f"/v2/hub/releases?workspace={WS_B}")
     assert (r.status_code, r.json()) == (403, {"error": "not_bound"})
 
@@ -75,13 +134,13 @@ def test_head_has_no_body(env):
 def test_live_share_past_expiry_reads_expired(env):
     hub = full(env)
     share(env, "a" * 32, exp=NOW - 1)
-    assert read(env, hub).json()["releases"][0]["state"] == "expired"
+    assert read(env, hub).json()["rows"][0]["state"] == "expired"
 
 
 def test_selective_binding_is_out_of_scope(env):
     hub = bound(env)  # default mode: selective
     share(env, "a" * 32)
-    assert read(env, hub).json() == {"releases": []}
+    assert read(env, hub).json() == {"rows": []}
     assert read(env, hub, f"/v2/hub/releases?workspace={WS_A}").status_code == 403
 
 
@@ -94,7 +153,7 @@ def test_other_hub_sees_nothing(env):
         H.accept_hub_card(c, other.card, NOW, True)
     finally:
         c.close()
-    assert read(env, other).json() == {"releases": []}
+    assert read(env, other).json() == {"rows": []}
     assert read(env, other, f"/v2/hub/releases?workspace={WS_A}").status_code == 403
 
 
@@ -106,14 +165,14 @@ def test_unbound_workspace_drops_out(env):
         H.accept_unbound(c, WS_A, unbound(wsk_a(), hub, seq=2), NOW, True)
     finally:
         c.close()
-    assert read(env, hub).json() == {"releases": []}
+    assert read(env, hub).json() == {"rows": []}
 
 
 def test_binding_under_rotated_wsk_does_not_count(env):
     hub = full(env)
     share(env, "a" * 32)
     env.sql("UPDATE workspaces SET wsk_pub=? WHERE workspace_id=?", "A" * 87, WS_A)
-    assert read(env, hub).json() == {"releases": []}
+    assert read(env, hub).json() == {"rows": []}
 
 
 def test_auth_failures(env):
@@ -162,11 +221,11 @@ def test_rows_outside_scope_are_never_emitted(env):
     c = conn_of(env)
     try:
         with pytest.raises(H.Refused) as e:
-            R.list_releases(c, [WS_A, WS_B][:1], NOW, WS_B)
+            R.list_published(c, [WS_A, WS_B][:1], NOW, WS_B)
         assert e.value.code == "not_bound"
     finally:
         c.close()
-    assert [x["workspace_id"] for x in read(env, hub).json()["releases"]] == [WS_A]
+    assert [x["workspace_id"] for x in read(env, hub).json()["rows"]] == [WS_A]
 
 
 # --- the contract vectors through the REAL route ------------------------------------------------------------------
@@ -241,5 +300,5 @@ def test_vector_through_the_route(case, tmp_path):
     if a["request"]["method"] == "GET":
         want = case["expect"]["ok"]["workspaces"]
         named = a["request"]["target"].partition("workspace=")[2]
-        got = sorted(x["workspace_id"] for x in r.json()["releases"])
+        got = sorted(x["workspace_id"] for x in r.json()["rows"])
         assert got == (want if not named else [w for w in want if w == named])

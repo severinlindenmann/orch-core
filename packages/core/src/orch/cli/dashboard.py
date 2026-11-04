@@ -8,7 +8,7 @@ entries only). Not installed: a clear
 error that names how to install it.
 
 Under an agent's environment (``ORCH_GRANT`` or ``ORCH_SESSION`` set and non-empty) it refuses with ``human_only``
-(exit 3), the shape of ``orch sign``'s refusal, before anything is looked up or started: a dashboard session acts as the
+(exit 3), the CLI signer's refusal shape, before anything is looked up or started: a dashboard session acts as the
 person (#542). Only ``stop`` passes (it mints nothing and only ends the person's server). The addon refuses again in its
 own entry point, so going around ``orch dashboard`` does not help. A speed bump in tier A, not a boundary: same UID.
 """
@@ -22,6 +22,8 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
+
+from orch import childenv
 
 __all__ = ["AGENT_ENV", "INSTALL_HINT", "agent_refusal", "find_entry_point", "main"]
 
@@ -56,7 +58,7 @@ def _module_installed(env: Mapping[str, str] | None = None) -> bool:
     try:
         res = subprocess.run(
             [sys.executable, "-P", "-c", _PROBE, MODULE],
-            env=dict(env) if env is not None else None,
+            env=childenv.sanitize(env if env is not None else os.environ, absolute_pythonpath=True),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=10,
@@ -76,7 +78,10 @@ def _absolute_path(value: str | None) -> str:
 def find_entry_point(env: Mapping[str, str], err: TextIO | None = None) -> list[str] | None:
     """The command that starts the dashboard addon, or ``None`` when it is not installed. Order: the console script
     beside this interpreter, the module of this interpreter (``python -P -m``: the current directory is not put on
-    ``sys.path``), then ``PATH`` (absolute entries only; the resolved path is written to ``err``)."""
+    ``sys.path``), then ``PATH`` (absolute entries only; the resolved path is written to ``err``). The lookup always
+    uses :func:`_launch_env`'s environment, so no caller can skip that sanitizing; a caller that RUNS the command
+    passes :func:`launch_env` too."""
+    env = _launch_env(env)
     beside = Path(sys.executable).parent / SCRIPT
     if beside.is_file() and os.access(beside, os.X_OK):
         return [str(beside)]
@@ -91,20 +96,18 @@ def find_entry_point(env: Mapping[str, str], err: TextIO | None = None) -> list[
 
 
 def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it
-    os.execve(argv[0], argv, dict(env))
+    os.execve(argv[0], argv, childenv.sanitize(env, absolute_pythonpath=True))
+
+
+def launch_env(env: Mapping[str, str]) -> dict[str, str]:
+    """The environment to run the dashboard command with (``PYTHONPATH`` reduced to absolute entries)."""
+    return _launch_env(env)
 
 
 def _launch_env(env: Mapping[str, str]) -> dict[str, str]:
     """``env`` with ``PYTHONPATH`` reduced to its absolute entries: Python turns an empty entry into the current
     directory at startup, which ``-P`` does not prevent (the probe and the exec use this same environment)."""
-    out = dict(env)
-    if "PYTHONPATH" in out:
-        kept = _absolute_path(out["PYTHONPATH"])
-        if kept:
-            out["PYTHONPATH"] = kept
-        else:
-            del out["PYTHONPATH"]
-    return out
+    return childenv.sanitize(env, absolute_pythonpath=True)
 
 
 def main(args: Sequence[str], *, env: Mapping[str, str], err: TextIO) -> int:

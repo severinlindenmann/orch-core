@@ -1,8 +1,8 @@
 """D11 end to end: a host-signed request forwarded by the hub is accepted by a REAL orch-publish while the workspace
 is bound to the hub, and refused after unbound or when a header is tampered with.
 
-Needs an orch-publish checkout with its dependencies: set ORCH_PUBLISH_SRC to it (its .venv/bin/python is used).
-Without it the test is skipped; the contract-level equivalence is covered in test_publish_forwarder.py.
+Starts packages/publish in its own environment (`uv run --locked --project`); the first run syncs that venv.
+The contract-level equivalence is also covered in test_publish_forwarder.py.
 """
 
 from __future__ import annotations
@@ -19,21 +19,23 @@ from orch_hub.contract.canon import cj
 from orch_hub.contract.hub import Refused
 from orch_hub.publish import HttpPublishSync, HubPublish, PublishConfig
 
-SRC = os.environ.get("ORCH_PUBLISH_SRC")  # packages/publish with its .venv; opt-in (the server helper below is stale)
-pytestmark = [
-    pytest.mark.skipif(
-        not SRC or not (Path(SRC or "x") / ".venv/bin/python").exists(),
-        reason="ORCH_PUBLISH_SRC not set",
-    ),
-    pytest.mark.slow,
-]
+PUBLISH = Path(__file__).resolve().parents[2] / "publish"
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture
 def pub():
     p = subprocess.Popen(
-        [str(Path(SRC) / ".venv/bin/python"), str(Path(__file__).parent / "publish_e2e_server.py")],
-        cwd=SRC,
+        [
+            "uv",
+            "run",
+            "--locked",
+            "--project",
+            str(PUBLISH),
+            "python",
+            str(Path(__file__).parent / "publish_e2e_server.py"),
+        ],
+        cwd=PUBLISH,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
@@ -139,3 +141,135 @@ def test_revoked_op_cert_is_refused_by_orch_publish(env):
     out = fw.forward(e.ws, host_request(e.wsk, hub_id, e.ws, host=e.host))
     assert out["status"] in (401, 403)
     assert json.loads(bytes.fromhex(out["body_hex"]))["error"] in ("revoked", "unknown_hub", "bad_hub_signature")
+
+
+def test_1452_who_and_what_of_a_share_reach_the_admin_list_end_to_end(env, tmp_path):
+    """A share PUT carrying label and by_kind/by_name goes through the hub forwarder into a real orch-publish; the hub's
+    admin read returns it, and GET /admin/published shows label, by name, agent marker, workspace, until and views."""
+    import hashlib
+
+    from webapi_helpers import Web
+
+    from orch_hub.publish import AdminReadClient
+
+    e = env
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, mode="full"))
+    sid = os.urandom(16).hex()
+    exp = NOW + 3 * 86_400_000
+    meta = {
+        "ticket": "TST-0001", "kind": "secret", "expires_ms": exp, "view_limit": 0,
+        "token_hash": hashlib.sha256(b"t").hexdigest(),
+        "files": [{"path": "a.txt", "size": 3, "sha256": hashlib.sha256(b"abc").hexdigest()}],
+        "label": "Q3 report", "by_kind": "agent", "by_name": "Ana",
+    }  # fmt: skip
+    put = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method="PUT",
+                       target=f"/v1/ws/{e.ws}/shares/{sid}", body=json.dumps(meta).encode())  # fmt: skip
+    out = e.fw.forward(e.ws, put)
+    assert out["status"] == 200, out
+    # a staged (uncommitted) share is not a release: commit it so it is listed
+    c = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method="PUT",
+                     target=f"/v1/ws/{e.ws}/shares/{sid}/files/a.txt", body=b"abc")  # fmt: skip
+    assert e.fw.forward(e.ws, c)["status"] == 200
+    k = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method="POST", target=f"/v1/ws/{e.ws}/shares/{sid}/commit")
+    assert e.fw.forward(e.ws, k)["status"] == 200
+    rows = AdminReadClient(f"http://{e.host}", e.hub.op_signer, e.hub.hub_id, now_ms=lambda: NOW).published()
+    assert [(r["id"], r["label"], r["by_kind"], r["by_name"]) for r in rows] == [(sid, "Q3 report", "agent", "Ana")]
+
+    (tmp_path / "web").mkdir()
+    w = Web(tmp_path / "web")
+    try:
+        w.reg.add(e.ws, "full", name="Product")
+
+        class Reader:
+            def published(self, workspace=None):
+                return rows
+
+        w.api.d.published = Reader()
+        s, o, _ = w.call("GET", "/admin/published", token=w.login(w.admin))
+        assert s == 200
+        (link,) = o["links"]
+        assert (link["label"], link["by_kind"], link["by_name"], link["workspace"]) == (
+            "Q3 report",
+            "agent",
+            "Ana",
+            "Product",
+        )
+        assert link["expires_ms"] == exp and link["views"] == 0 and link["state"] == "live"
+    finally:
+        w.close()
+
+
+def test_b03_a_mode_switch_whose_sync_failed_is_pushed_before_the_admin_read(env, monkeypatch):
+    """B03 (full-mode case): the workspace switches selective -> full while orch-publish is not reachable. The binding
+    call swallows the failed sync, so orch-publish keeps the selective binding until the next forward. The hub's
+    registry already says full, so the Published page neither lists the link nor shows the hidden line for it."""
+    import hashlib
+
+    from orch_hub.publish import AdminReadClient, PublishSyncError
+
+    e = env
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=1, mode="selective"))
+    sid = os.urandom(16).hex()
+    meta = {
+        "ticket": "TST-0001", "kind": "secret", "expires_ms": NOW + 86_400_000, "view_limit": 0,
+        "token_hash": hashlib.sha256(b"t").hexdigest(),
+        "files": [{"path": "a.txt", "size": 3, "sha256": hashlib.sha256(b"abc").hexdigest()}],
+    }  # fmt: skip
+    for method, target, body in (
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}", json.dumps(meta).encode()),
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}/files/a.txt", b"abc"),
+        ("POST", f"/v1/ws/{e.ws}/shares/{sid}/commit", b""),
+    ):
+        req = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method=method, target=target, body=body)
+        assert e.fw.forward(e.ws, req)["status"] == 200
+
+    real = e.fw._sync.put_binding
+
+    def down(ws, obj):
+        raise PublishSyncError("unavailable")
+
+    monkeypatch.setattr(e.fw._sync, "put_binding", down)
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=2, mode="full"))  # swallowed: publish is down
+    monkeypatch.setattr(e.fw._sync, "put_binding", real)  # publish is back; no forward happens before the read
+
+    reader = AdminReadClient(f"http://{e.host}", e.hub.op_signer, e.hub.hub_id, now_ms=lambda: NOW)
+    assert reader.published() == []  # the bug: publish still holds the selective binding
+    e.fw.resync([e.ws])  # what the Published page now does before it reads
+    assert [r["id"] for r in reader.published()] == [sid]
+
+
+def test_b03_a_switch_to_selective_whose_sync_failed_is_hidden_after_the_push(env, monkeypatch):
+    """The privacy direction: full -> selective while orch-publish is down; the push before the read hides the link."""
+    import hashlib
+
+    from orch_hub.publish import AdminReadClient, PublishSyncError
+
+    e = env
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=1, mode="full"))
+    sid = os.urandom(16).hex()
+    meta = {
+        "ticket": "TST-0001", "kind": "secret", "expires_ms": NOW + 86_400_000, "view_limit": 0,
+        "token_hash": hashlib.sha256(b"t").hexdigest(),
+        "files": [{"path": "a.txt", "size": 3, "sha256": hashlib.sha256(b"abc").hexdigest()}],
+    }  # fmt: skip
+    for method, target, body in (
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}", json.dumps(meta).encode()),
+        ("PUT", f"/v1/ws/{e.ws}/shares/{sid}/files/a.txt", b"abc"),
+        ("POST", f"/v1/ws/{e.ws}/shares/{sid}/commit", b""),
+    ):
+        req = host_request(e.wsk, e.hub.hub_id, e.ws, host=e.host, method=method, target=target, body=body)
+        assert e.fw.forward(e.ws, req)["status"] == 200
+    reader = AdminReadClient(f"http://{e.host}", e.hub.op_signer, e.hub.hub_id, now_ms=lambda: NOW)
+    assert [r["id"] for r in reader.published()] == [sid]
+
+    real = e.fw._sync.put_binding
+
+    def down(ws, obj):
+        raise PublishSyncError("unavailable")
+
+    monkeypatch.setattr(e.fw._sync, "put_binding", down)
+    e.fw.binding(e.ws, binding(e.wsk, e.hub, e.ws, seq=2, mode="selective"))
+    monkeypatch.setattr(e.fw._sync, "put_binding", real)
+    assert [r["id"] for r in reader.published()] == [sid]  # stale: publish still holds full
+    e.fw.resync([e.ws])
+    assert reader.published() == []

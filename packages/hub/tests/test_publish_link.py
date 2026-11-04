@@ -76,3 +76,62 @@ def test_a_join_succeeds_even_when_publish_does_not_admit_the_workspace_yet(make
     h = make_hub(publish=fw, downstream=fw)
     c = h.open(first=True)
     assert c.request("join", h.join_body()) == {}  # the invite is consumed; publish.register tells the owner later
+
+
+# --- P02 (#1290): the hub vouches for its own workspace at orch-publish (hub.allow) ---------------------------------
+
+
+def _fw(sync, admission):
+    signer = OpSigner(G.K.priv["hk_op"])
+    return HubPublish(
+        lambda: (signer, G.card(), G.HUB_ID),
+        sync,
+        PublishConfig("http://127.0.0.1:1", HOST, timeout_s=1),
+        admission=admission,
+    )
+
+
+def test_join_sends_a_signed_allow_before_the_card_when_the_hub_admits(make_hub):
+    sync = RecordingSync()
+    seen = []
+
+    def admission(ws):
+        seen.append(ws)
+        return G.fake16("owner"), 1
+
+    fw = _fw(sync, admission)
+    h = make_hub(publish=fw, downstream=fw)
+    assert h.open(first=True).request("join", h.join_body()) == {}
+    kinds = [x[0] for x in sync.calls]
+    assert kinds.index("allow") < kinds.index("ws_card")  # admission first: publish refuses an unknown workspace
+    allow = next(x for x in sync.calls if x[0] == "allow")[2]
+    o = allow["o"]
+    assert (o["kind"], o["hub_id"], o["workspace_id"], o["owner_person_id"], o["binding_seq"]) == (
+        "hub.allow", G.HUB_ID, G.WS_A, G.fake16("owner"), 1,
+    )  # fmt: skip
+    assert S.verify(
+        G.K.pub["hk_op"], unb64u(allow["sig"], 64), H.L["sig_hub_allow"] + H.cj(o)
+    )  # signed by HK_op under its own label
+
+
+def test_no_allow_when_the_hub_does_not_admit_or_has_no_admission(make_hub):
+    for admission in (None, lambda ws: None):
+        sync = RecordingSync()
+        fw = _fw(sync, admission)
+        h = make_hub(publish=fw, downstream=fw)
+        assert h.open(first=True).request("join", h.join_body()) == {}
+        assert "allow" not in [x[0] for x in sync.calls]
+
+
+def test_a_refused_allow_never_blocks_the_card(make_hub):
+    class Refusing(RecordingSync):
+        def put_allow(self, workspace_id, obj):
+            from orch_hub.publish.sync import PublishSyncError
+
+            raise PublishSyncError("unknown_hub")
+
+    sync = Refusing()
+    fw = _fw(sync, lambda ws: (G.fake16("owner"), 1))
+    h = make_hub(publish=fw, downstream=fw)
+    assert h.open(first=True).request("join", h.join_body()) == {}
+    assert [x[0] for x in sync.calls] == ["card", "ws_card", "binding"]  # the old rules still decide at publish

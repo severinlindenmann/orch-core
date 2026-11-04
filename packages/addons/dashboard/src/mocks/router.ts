@@ -17,6 +17,7 @@ import { listArtifacts } from './artifacts'
 import { relayEpoch, relayRequest, relaySim, relayState } from './relay'
 import { changesOf } from './changes'
 import { registerHubRoutes } from './hub'
+import { registerOrgRoutes } from './orgRoutes'
 import { createLatency, readLatencySettings, type LatencySettings } from './latency'
 
 export interface RouteContext {
@@ -628,6 +629,7 @@ export function buildRouter(): MockRouter {
     s.setViewer(person)
     return ok({ ok: true })
   })
+  registerOrgRoutes(r) // M3 H-5: the Company tab (skills and tools offered by the hub)
   registerHubRoutes(r) // V3 A7: the hub pages' reads and Terminal commands
   return r
 }

@@ -132,3 +132,38 @@ def test_fail_closed_when_store_closed(env):
     with pytest.raises(Refused) as e:
         snaps.snapshot(WS, "direct")
     assert e.value.code == "unavailable"
+
+
+class Fixed:
+    def __init__(self, t):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def test_snapshot_carries_ends_and_role_at_the_boundary(tmp_path):
+    keys = HubKeys.init(tmp_path / "hub")
+    clk = Fixed(keys._now() + 1000)
+    acc = Access(str(tmp_path / "a.db"), now_ms=clk)
+    for u in (U1, U2):
+        acc.add_user(u, "u" + u[:2])
+    acc.add_group("g")
+    acc.grant(WS, "g", "edit")
+    end = clk.t + 5000
+    acc.add_member("g", U1, ends_ms=end)
+    acc.add_member("g", U2)
+    snaps = AccessSnapshots(acc, keys, clk)
+    o = verify(keys, snaps.snapshot(WS, "direct"))
+    assert o["roles"] == {U1: "edit", U2: "edit"} and o["ends_ms"] == {U1: end}
+    clk.t = end - 1
+    assert H.role_at(o, U1, clk.t) == "edit"
+    clk.t = end
+    assert H.role_at(o, U1, clk.t) is None and H.role_at(o, U2, clk.t) == "edit"
+    # the hub itself re-issues at the boundary: a new version without U1, no ends
+    o2 = verify(keys, snaps.snapshot(WS, "direct"), pinned=o)
+    assert o2["version"] == o["version"] + 1 and o2["roles"] == {U2: "edit"} and o2["ends_ms"] == {}
+    # R6: issued far ahead of the verifier's clock: a user with an end date has no role
+    clk.t = o["issued_ms"] - 400_000
+    assert H.role_at(o, U1, clk.t) is None and H.role_at(o, U2, clk.t) == "edit"
+    acc.close()

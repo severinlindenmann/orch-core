@@ -6,7 +6,7 @@
     orch records status         [--workspace ID] [--remote NAME] [--json]
     orch records sync-index     [--workspace ID] [--json]
     orch records remote-private [--workspace ID] [--remote NAME] [--off] [--yes] [--json]
-    orch records auto on        [--workspace ID] [--push] [--every MIN] [--dev] [--json]   (terminal only)
+    orch records auto on        [--workspace ID] [--push] [--every MIN] [--dev] [--yes] [--json]   (terminal only)
     orch records auto off       [--workspace ID] [--json]
     orch records auto           [--state DIR] [--json]                                     (the timer's run)
 
@@ -126,17 +126,14 @@ def _parser() -> argparse.ArgumentParser:
             s.add_argument("--every", type=int, default=15, help="minutes between commits, 5 to 1440 (auto on)")
             s.add_argument("--dev", action="store_true", help="allow a source checkout as the timer's program")
             s.add_argument("--replace", action="store_true", help="replace a timer installed for another setup")
+            s.add_argument("--yes", action="store_true", help="do not ask (the click replaces the answer)")
     return p
 
 
 def _tty_confirm(text: str) -> bool:
-    try:
-        with open("/dev/tty", "r+") as tty:
-            tty.write(text + "\nType yes to continue: ")
-            tty.flush()
-            return tty.readline().strip() == "yes"
-    except OSError:
-        return False
+    from orch.ops.human import review_prompt
+
+    return review_prompt(text, verb="continue")  # git commits and timers: nothing is signed
 
 
 def _flat(res: dict[str, Any]) -> dict[str, Any]:
@@ -175,13 +172,13 @@ class _Run:
         self.args, self.env, self.seams = args, env, seams
         self.deadline = _monotonic() + RUN_BUDGET
         self.protocols = seams.get("protocols")
-        self._confirm: Confirm = seams.get("confirm") or _tty_confirm
+        self._approve: Confirm = seams.get("confirm") or _tty_confirm
         self.repos: list[Any] = []
 
     def confirm(self, text: str) -> bool:
         """Ask the person; the time spent answering never counts against the run (Sonnet #433 B): the budget
         restarts after the answer, for the host link and for every repo of this run."""
-        answer = self._confirm(text)
+        answer = self._approve(text)
         self.deadline = _monotonic() + RUN_BUDGET
         for repo in self.repos:
             repo.deadline = self.deadline
@@ -347,7 +344,7 @@ def _do_auto_switch(run: _Run, r: Any) -> dict[str, Any]:
             + (" and pushes" if a.push else "")
             + " for this workspace (a timer of your service manager runs orch records auto)."
         )
-        if not run.confirm(text):
+        if not (getattr(a, "yes", False) or run.confirm(text)):
             raise RecordsError("records.unconfirmed", "not confirmed; auto mode is terminal only")
         previous = r.tips.auto(r.workspace_id)  # restored on rollback (an existing entry is never lost)
         entry: dict[str, Any] = {"on": True, "every_min": a.every, "push": bool(a.push)}

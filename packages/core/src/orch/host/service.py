@@ -157,7 +157,11 @@ class Host:
         runner_identity: Callable[[Any], bool] | None = None,
         dev_runner: bool = False,
         dev: Any = None,
+        hook_listen: str | None = None,
+        hook_url: str | None = None,
     ) -> None:
+        #: #717: where webhook doorbells are received (HOST:PORT) and the public base URL printed to agents
+        self.hook_listen, self.hook_url, self.hooks = hook_listen, hook_url, None
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
         self.run_dir = Path(run_dir) if run_dir is not None else default_run_directory(self.host_uid)
@@ -169,6 +173,10 @@ class Host:
         #: §11A.17: the passed start-up proof of ``--dev-sim-convenience`` (:class:`orch.host.devmode.DevHost`), fixed
         #: for the life of the process; ``None`` on every normal host
         self.dev = dev
+        #: ``orch update`` health check (orch.update.quarantine): control socket only, nothing signed
+        from orch.update.quarantine import active as quarantine_active
+
+        self.quarantine = quarantine_active(self.state_dir)
         #: V3-D38: the workspace id a pending dev host (:attr:`dev` pending) admitted as its one genesis in this process
         self.pending_claim: str | None = None
         self.pending_lock = threading.Lock()
@@ -216,6 +224,7 @@ class Host:
         from .runners import runner_identity as default_identity
 
         self.runners = RunnerHub(self)
+        self._bg: set[asyncio.Task[Any]] = set()
         self.runner_identity = runner_identity or default_identity
         #: a caller-supplied identity check (tests, dev tools) is never replaced by the tier B system check in
         #: :meth:`_find_share`; production passes none
@@ -330,16 +339,22 @@ class Host:
         ensure_private_dir(self.state_dir / "hosts", self.host_uid)
         self._take_host_lock()
         try:
+            from orch.update.guard import hold_state_root
+
+            self._root = hold_state_root(
+                self.state_dir, quarantine_ok=True
+            )  # the shared format lock for the life of this process
             self.cursors = Cursors(cursor_key(host_dir(self.state_dir)))
             self.registry.load()
             self._check_dev_registry()
             self.intents.open()
             self.jobs.open()
             self.runners.load()
-            self.recovered = self.control.recover()
-            self.control.sweep_keys()
-            self.intents.sweep()
-            self.jobs.sweep()
+            if not self.quarantine:
+                self.recovered = self.control.recover()
+                self.control.sweep_keys()
+                self.intents.sweep()
+                self.jobs.sweep()
         except BaseException:
             self._release_host_lock()
             raise
@@ -357,6 +372,9 @@ class Host:
         return any(a["workspace_id"] == workspace_id for a in self.dev_alarms)
 
     def _release_host_lock(self) -> None:
+        root, self._root = getattr(self, "_root", None), None
+        if root is not None:
+            root.close()
         if self._lock_fd is not None:
             os.close(self._lock_fd)
             self._lock_fd = None
@@ -394,7 +412,28 @@ class Host:
         }
         server = Server(listener, self.registry, self.limits, ControlGate(self), welcome)
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
+        if self.quarantine:
+            LOG.warning("QUARANTINE (orch update health check): control socket only, no runner, no workspaces, no link")
+            return
         await self._serve_runner()
+        if not self.hook_listen:  # the persisted setting of `orch host webhooks on` (the unit carries no flags)
+            from .hooks import read_settings
+
+            saved = read_settings(self.state_dir, os.getuid())
+            if saved:
+                self.hook_listen, self.hook_url = saved["listen"], saved.get("url") or None
+        if self.hook_listen:
+            from .hooks import HookReceiver
+
+            self.hooks = HookReceiver(self, self.hook_listen)
+            await self.hooks.start()
+            if not self.hook_url:  # B4: advertise what was really bound, never a wildcard address
+                if self.hooks.addr in ("0.0.0.0", "::"):
+                    await self.hooks.close()
+                    raise HostError(
+                        "invalid.input", "--hook-listen on every address needs --hook-url (the address agents use)"
+                    )
+                self.hook_url = self.hooks.url()
         self.bus.start()
         for entry in self.registry.entries():
             if self.skipped(entry.workspace_id):
@@ -479,8 +518,25 @@ class Host:
             self._serving.discard(wid)
             raise
 
+    def _settle_grants(self, wid: str) -> None:
+        """Settle the runner's reported grants for a workspace just bound; a failure never leaves it half-served."""
+        try:
+            settle = self.runners.grants.workspace_served(wid)
+            if settle is not None:
+                task = asyncio.get_running_loop().create_task(settle)
+                self._bg.add(task)
+                task.add_done_callback(self._bg_done)
+        except Exception as exc:  # noqa: BLE001 - the next runner hello settles it
+            LOG.warning("runner grant settle failed: %s", type(exc).__name__)
+
+    def _bg_done(self, task: asyncio.Task[Any]) -> None:
+        self._bg.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            LOG.warning("runner grant settle failed: %s", type(task.exception()).__name__)
+
     async def _serve(self, entry: Entry) -> None:
         service = WorkspaceService(entry, self.state_dir, self.host_uid, clock=self.clock)
+        service.hook_base = self.hook_url if self.hooks is not None else None
         service.bus, service.publish = self.bus, self.bus.publisher(entry.workspace_id)
         service.cursors = self.cursors
         service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
@@ -489,11 +545,13 @@ class Host:
         service.dev = self.dev  # §11A.17: the dev gate reads it; None on a normal host
         backend = self.backend_factory()
         await service.call(service.open)
+        await self._start_followups(service)
         if self.dev is not None:
             from .devmode import dev_gate
 
             service.dev_ok = await service.call(lambda: dev_gate(service) is not None)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
+        self._settle_grants(entry.workspace_id)  # synchronous: before any await
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
             if self.share_error is not None:
@@ -538,6 +596,10 @@ class Host:
             await asyncio.gather(pair[1], return_exceptions=True)
         service = self.services.pop(workspace_id, None)
         if service is not None:
+            if getattr(service, "followups", None):
+                await service.followups.close()
+            if getattr(service, "schedules", None):
+                await service.schedules.close()
             await asyncio.to_thread(service.close)
             await asyncio.to_thread(served_marker, service.entry.root, False, self.state_dir)
 
@@ -630,8 +692,38 @@ class Host:
             if service.state != "unavailable" and not service.closing:
                 try:
                     await service.call(lambda s=service: s.sync(check=True, retry=True))
+                    await self._start_followups(service)
                 except Exception:  # noqa: BLE001 - the check must never stop the host
                     LOG.exception("journal check failed")
+
+    async def _start_followups(self, service) -> None:
+        from orch.model.engine import DEV_PREFIX
+        from orch.model.followups_wire import enabled
+
+        from .followups import FollowupRunner
+
+        if getattr(service, "followups", None) is not None:
+            return
+        service.followups = False  # claimed before the await: a second check must not start a second runner
+        try:
+            on = await service.call(lambda: service.store is not None and enabled(service.store.state._core.ws))
+            # DEV-ONLY: a dev sandbox workspace (signed genesis prefix SBX) ticks every 2 s instead of 30 s
+            dev = on and await service.call(lambda: service.store.state._core.ws.prefix == DEV_PREFIX)
+        except BaseException:
+            service.followups = None
+            raise
+        if not on:
+            service.followups = None
+            return
+        if self.services.get(service.workspace_id) is not service or service.closing:
+            service.followups = None  # closed while we waited: no runner for a dead service
+            return
+        service.followups = FollowupRunner(service, clock=self.clock, mono=time.monotonic, tick_s=2 if dev else 30)
+        service.followups.start()
+        from .schedules import ScheduleRunner
+
+        service.schedules = ScheduleRunner(service, clock=self.clock, mono=time.monotonic, tick_s=2 if dev else 30)
+        service.schedules.start()
 
     async def _check_loop(self) -> None:
         while True:
@@ -689,12 +781,19 @@ class Host:
                 await asyncio.gather(task, return_exceptions=True)
         self._sweeper = self._checker = self._dev_logger = None
         await self.bus.stop()
+        if self.hooks is not None:
+            await self.hooks.close()
+            self.hooks = None
         for name in list(self.servers):
             pair = self.servers.pop(name)
             pair[1].cancel()
             await asyncio.gather(pair[1], return_exceptions=True)
         for workspace_id in list(self.services):
             service = self.services.pop(workspace_id)
+            if getattr(service, "followups", None):
+                await service.followups.close()
+            if getattr(service, "schedules", None):
+                await service.schedules.close()
             await asyncio.to_thread(service.close)
         self._release_host_lock()
 

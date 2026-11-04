@@ -1,40 +1,38 @@
 import { useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { newIdem, runsApi, type TermArgs, type TermPreview } from '@/api/runs'
+import { newIdem, runsApi, type Run, type TermArgs, type TermPreview } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { openDockOn } from '@/app/terminal/dock/request'
 
-export function useOpenTerminal(ws: string) {
+export interface OpenAttempt { args: TermArgs; data: TermPreview | null; error: string; idem: string }
+
+/** New terminal in one press: the host's preview, then open with its spec. A failed open keeps its idem and spec, so
+ * Try again returns the same run, never a second one. A blocked preview is shown and cannot be retried as is. */
+export function useOpenTerminal(ws: string, onOpened: (run: Run) => void = (run) => openDockOn(run.run)) {
   const qc = useQueryClient()
-  const [preview, setPreview] = useState<{ args: TermArgs; data: TermPreview | null; error: string; idem: string } | null>(null)
+  const [preview, setPreview] = useState<OpenAttempt | null>(null)
   const [busy, setBusy] = useState(false)
   const opening = useRef(false)
-  const ask = async (args: TermArgs) => {
-    if (opening.current) return
-    const idem = newIdem()
-    setPreview({ args, data: null, error: '', idem })
-    try {
-      const data = await runsApi.preview(ws, args)
-      setPreview((p) => p?.idem === idem ? { ...p, data } : p)
-    } catch (e) {
-      setPreview((p) => p?.idem === idem ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p)
-    }
-  }
-  const confirm = async () => {
-    if (!preview?.data || preview.data.blocked || opening.current) return
+  const go = async (args: TermArgs, idem: string, known: TermPreview | null) => {
+    if (!ws || opening.current) return
     opening.current = true
     setBusy(true)
+    let data = known
     try {
-      const { run } = await runsApi.open(ws, preview.args, preview.data.spec, preview.idem)
+      data ??= await runsApi.preview(ws, args)
+      if (data.blocked) { setPreview({ args, data, error: data.blocked.message ?? 'The host refused.', idem }); return }
+      const { run } = await runsApi.open(ws, args, data.spec, idem)
       setPreview(null)
       void qc.invalidateQueries({ queryKey: ['runs', ws] })
-      openDockOn(run.run)
+      onOpened(run)
     } catch (e) {
-      setPreview((p) => p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p)
+      setPreview({ args, data, error: e instanceof ApiError ? e.message : 'The host did not answer.', idem })
     } finally {
       opening.current = false
       setBusy(false)
     }
   }
-  return { ask, preview, busy, onConfirm: () => void confirm(), onClose: () => setPreview(null) }
+  const ask = (args: TermArgs) => go(args, newIdem(), null)
+  const retry = preview && !preview.data?.blocked ? () => void go(preview.args, preview.idem, preview.data) : undefined
+  return { ask, preview, busy, onRetry: retry, onClose: () => setPreview(null) }
 }

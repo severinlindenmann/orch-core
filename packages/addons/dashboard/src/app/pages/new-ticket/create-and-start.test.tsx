@@ -2,10 +2,11 @@
 // limit, the start compared with the review, the risk notices, partial failures, one idem, and a reload that never starts.
 import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { agentsApi, LOGIN_NOTICE, type AgentPreview } from '@/api/agents'
+import { agentsApi, type AgentPreview } from '@/api/agents'
 import { api, mockStore } from '@/api/client'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
+import { clearMark, markOf } from '@/app/pages/ticket/progress'
 import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
 import { nowMs } from '@/lib/time'
@@ -13,15 +14,22 @@ import { nowMs } from '@/lib/time'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 // The signing dialog is its own feature; here it shows the action, the "not signed" block, and reports how it ended.
 vi.mock('@/components/sign/SignPopover', () => ({
-  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
+  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; lead?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown, how?: { via: string; unsignedShown: boolean }) => void; onClose: () => void }) => {
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
+    const done = (how?: { via: string; unsignedShown: boolean }) => p.onSettled?.('done', state(req, { state: 'submitted', key: 'DEMO-0044' }), req, how)
     return (
       <div role="dialog" aria-label={p.title}>
         <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
         <span data-testid="starts-agent">{String(!!p.startsAgent)}</span>
+        {p.lead}
         {p.controls}
         {p.unsigned}
-        <button onClick={() => p.onSettled?.('done', state(req, { state: 'submitted', key: 'DEMO-0044' }), req)}>signed</button>
+        {/* "signed": one click from this popover, with the unsigned slot on screen (what the real popover reports then) */}
+        <button onClick={() => done({ via: 'click', unsignedShown: true })}>signed</button>
+        <button onClick={() => done({ via: 'click', unsignedShown: false })}>signed-click-slot-not-shown</button>
+        <button onClick={() => done({ via: 'terminal', unsignedShown: false })}>signed-in-terminal</button>
+        <button onClick={() => done({ via: 'hub', unsignedShown: false })}>signed-on-hub</button>
+        <button onClick={() => done()}>signed-unknown-path</button>
         <button onClick={() => p.onSettled?.('done', state({ ...req, id: 'hr_' + '0'.repeat(25) + '8' }, { state: 'submitted', key: 'DEMO-0099' }), req)}>signed-other-request</button>
         <button onClick={() => p.onSettled?.('failed', state(req, { state: 'submitted', key: 'DEMO-0044', progress: { done: 4, of: 5, last: 'grant' } }), req)}>access-missing</button>
         <button onClick={() => p.onSettled?.('failed', state(req, { state: 'submitted', key: 'DEMO-0044', progress: { done: 2, of: 5 } }), req)}>stopped-early</button>
@@ -30,18 +38,13 @@ vi.mock('@/components/sign/SignPopover', () => ({
     )
   },
 }))
-vi.mock('@/app/terminal/real/StartAgentDialog', () => ({
-  StartAgentDialog: (p: { ticket?: string; initial?: unknown; onClose: () => void }) => (
-    <div role="dialog" aria-label="Start agent dialog">
-      <span data-testid="dialog-ticket">{p.ticket}</span>
-      <pre data-testid="dialog-initial">{JSON.stringify(p.initial)}</pre>
-      <button onClick={p.onClose}>close-start-dialog</button>
-    </div>
-  ),
-}))
 
 const T = { timeout: 5000 }
 const WS = () => mockStore.workspaces[0].id
+const failedOf = async (key = 'DEMO-0044') => {
+  await waitFor(() => expect(markOf(WS(), key)?.failed).toBeDefined(), T)
+  return markOf(WS(), key)!.failed!
+}
 const inHours = (h: number) => new Date(nowMs() + h * 3_600_000).toISOString().replace(/\.\d+Z$/, 'Z')
 const CHOICES: RoutingChoices = {
   harnesses: [
@@ -64,9 +67,9 @@ function setup(opts: { grant?: typeof GRANT | null; runner?: { connected: boolea
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168 } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(routingApi, 'choices').mockResolvedValue(CHOICES)
   s = {
-    runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner ? { ...runner, terminals: false, grant } : null }),
+    runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner ? { ...runner, terminals: false, now: new Date(nowMs()).toISOString(), grant: grant ? { ...grant, startable: true } : null } : null }),
     preview: vi.spyOn(agentsApi, 'preview').mockResolvedValue(preview()),
-    start: vi.spyOn(agentsApi, 'start').mockResolvedValue({ run }),
+    start: vi.spyOn(agentsApi, 'startAfter').mockResolvedValue({ run }),
     notices: vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: opts.acked ?? { start_agent: true } }),
   }
 }
@@ -82,17 +85,80 @@ async function open(storage: Record<string, string> = {}) {
   return { r, sheet }
 }
 const sent = async () => JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
-const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { name: 'Review and start agent' }, T)
+const createOnly = async (r: { user: { click: (e: Element) => Promise<void> } }, sheet: HTMLElement) => {
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
+}
+const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { name: 'Create and start' }, T)
 
-beforeEach(() => { GRANT = { ...GRANT, until: inHours(48) }; setup() })
+beforeEach(() => { clearMark(WS(), 'DEMO-0044'); GRANT = { ...GRANT, until: inHours(48) }; setup() })
 
 describe('the form', () => {
-  it('offers Create and start agent first and Only create second, with one agent line', async () => {
-    const { sheet } = await open()
+  it('offers Create and start as the main button, a visible Create ticket beside it, and a quiet agent summary', async () => {
+    const { r, sheet } = await open()
     await startBtn(sheet)
-    expect(within(sheet).getByRole('button', { name: 'Only create' })).toBeInTheDocument()
-    const line = await within(sheet).findByTestId('agent-line', {}, T)
-    expect(line).toHaveTextContent('Claude Code will draft a plan for you to approve. Change')
+    expect(within(sheet).queryByTestId('agent-line')).toBeNull()
+    expect(sheet).not.toHaveTextContent('will draft a plan')
+    expect(within(sheet).getByTestId('nt-agent-summary')).toHaveTextContent('Claude Code · Write requirements and plan')
+    expect(within(sheet).queryByRole('button', { name: 'Change' })).toBeNull()
+    // P06: both ways are visible buttons; the menu keeps only the agent choice
+    expect(within(sheet).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
+    await r.user.click(within(sheet).getByRole('button', { name: 'More ways to create' }))
+    expect(await screen.findByRole('menuitem', { name: 'Choose agent…' }, T)).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Create without starting' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Create and start' })).toBeNull()
+  })
+
+  it('P06: Enter in Title moves to the requirements and submits nothing', async () => {
+    const { r, sheet } = await open()
+    const title = within(sheet).getByLabelText('Title')
+    await r.user.click(title)
+    await r.user.keyboard('{Enter}')
+    expect(within(sheet).getByLabelText(/^What should be true/)).toHaveFocus()
+    expect(screen.queryByTestId('nt-summary')).toBeNull()
+  })
+
+  it('a risk-notices answer without `acknowledged` counts as not read and does not crash the form', async () => {
+    s.notices.mockResolvedValue({} as never)
+    const { sheet } = await open()
+    expect(await startBtn(sheet)).toBeInTheDocument()
+  })
+
+  it('Choose agent… opens the shared picker; the footer summary follows the choice, which is remembered for this workspace', async () => {
+    const { r, sheet } = await open()
+    await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
+    await r.user.click(await screen.findByRole('menuitem', { name: 'Choose agent…' }, T))
+    const dlg = await screen.findByTestId('agent-change')
+    await r.user.click(within(dlg).getByRole('radio', { name: 'Codex' }))
+    await r.user.selectOptions(within(dlg).getByLabelText('What it does'), 'work')
+    await r.user.click(within(dlg).getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(screen.queryByTestId('agent-change')).toBeNull(), T)
+    expect(within(sheet).getByTestId('nt-agent-summary')).toHaveTextContent('Codex · Do the work')
+    const stored = JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}')
+    expect(stored).toMatchObject({ harness: 'codex', mode: 'work', start: true })
+  })
+
+  it('Create without starting from the menu is used once: the main button and the stored choice stay as they were', async () => {
+    const { r, sheet } = await open()
+    await createOnly(r, sheet)
+    expect((await sent()).agent).toBeUndefined()
+    expect(await screen.findByTestId('nt-lead')).toHaveTextContent('No agent starts. You can start one later.')
+    expect(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`)).toBeNull() // nothing was written
+    await waitFor(() => expect(within(sheet).getByTestId('nt-buttons').textContent).toContain('Create and start'), T) // kept in layout while the sign box is open
+  })
+
+  it('the main button keeps its choice: with start=false stored, Create ticket is main and the menu start is used once', async () => {
+    const key = `orch.dashboard.new-ticket.agent.p_sev.${WS()}`
+    const stored = JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' })
+    const { r, sheet } = await open({ [key]: stored })
+    expect(await within(sheet).findByRole('button', { name: 'Create ticket' }, T)).toBeInTheDocument()
+    await r.user.click(within(sheet).getByRole('button', { name: 'Create and start' }))
+    expect(await screen.findByTestId('not-signed-start')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(key) ?? '{}').start).toBe(false) // the menu did not change the default
+    cleanup()
+    const again = await open({ [key]: stored })
+    await again.r.user.click(await within(again.sheet).findByRole('button', { name: 'Create ticket' }, T))
+    expect((await sent()).agent).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(key) ?? '{}').start).toBe(false) // the main button persists its choice
   })
 
   it('shows only Create, and says why, when the runner is not connected', async () => {
@@ -100,19 +166,7 @@ describe('the form', () => {
     const { sheet } = await open()
     expect(await within(sheet).findByTestId('agent-line-off', {}, T)).toHaveTextContent('No agent runner is connected.')
     expect(within(sheet).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
-    expect(within(sheet).queryByRole('button', { name: 'Review and start agent' })).toBeNull()
-  })
-
-  it('Change opens the shared picker; the choice is remembered for this workspace', async () => {
-    const { r, sheet } = await open()
-    await r.user.click(await within(sheet).findByRole('button', { name: 'Change' }, T))
-    const dlg = await screen.findByTestId('agent-change')
-    await r.user.click(within(dlg).getByRole('radio', { name: 'Codex' }))
-    await r.user.selectOptions(within(dlg).getByLabelText('What it does'), 'refine')
-    await r.user.click(within(dlg).getByRole('button', { name: 'Done' }))
-    expect(within(sheet).getByTestId('agent-line')).toHaveTextContent('Codex will draft a plan for you to approve.')
-    const stored = JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}')
-    expect(stored).toMatchObject({ harness: 'codex', mode: 'refine', start: true })
+    expect(within(sheet).queryByRole('button', { name: 'Create and start' })).toBeNull()
   })
 
   it('a new ticket defaults to writing the requirements and plan; a kind of work the person picked is remembered, an old default is not', async () => {
@@ -127,27 +181,19 @@ describe('the form', () => {
     expect(readPref(key).mode).toBe('fix')
     localStorage.removeItem(key)
   })
-
-  it('remembers Only create as the default button for this workspace', async () => {
-    const { r, sheet } = await open()
-    await r.user.click(await within(sheet).findByRole('button', { name: 'Only create' }, T))
-    expect((await sent()).agent).toBeUndefined()
-    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(false)
-    cleanup()
-    const again = await open({ [`orch.dashboard.new-ticket.agent.p_sev.${WS()}`]: JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' }) })
-    expect(await within(again.sheet).findByRole('button', { name: 'Only create' }, T)).toBeInTheDocument()
-    expect(within(again.sheet).getByRole('button', { name: 'Review and start agent' })).toBeInTheDocument()
-  })
 })
 
 describe('what is signed', () => {
-  it('with a usable grant the intent has no agent access, and the start is said to be not signed', async () => {
+  it('asks the host to conditionally grant access and binds the launch settings', async () => {
+    setup({ grant: null }) // no usable access: the grant is proposed (with valid access the request carries none, see create-and-start-click)
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
     const action = await sent()
-    expect(action.agent).toBeUndefined()
-    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Not part of what you sign')
-    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(230) // one line, not a paragraph
+    expect(action.agent).toEqual({ hours: 168 })
+    expect(action.launch).toEqual({ harness: 'claude-code', mode: 'refine' })
+    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Claude Code starts on it.')
+    expect(screen.getByTestId('not-signed-start').textContent).not.toMatch(/model|mode/i) // that detail stays in the form footer
+    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(60) // one short line
     expect(screen.getByTestId('starts-agent')).toHaveTextContent('true') // the dialog's steps then say the agent starts with the access already there
   })
 
@@ -157,7 +203,7 @@ describe('what is signed', () => {
     expect(within(sheet).queryByLabelText('Give agents access for')).toBeNull() // asked in the review, not in the form
     await r.user.click(await startBtn(sheet))
     const hours = await screen.findByLabelText('Give agents access for', {}, T)
-    expect([...hours.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['1 day', '3 days', '7 days'])
+    expect([...hours.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days', '7 days'])
     await r.user.selectOptions(hours, '72')
     await waitFor(async () => expect((await sent()).agent).toEqual({ hours: 72 }), T)
   })
@@ -165,10 +211,11 @@ describe('what is signed', () => {
   it('Only create never asks for agent access', async () => {
     setup({ grant: null })
     const { r, sheet } = await open()
-    await r.user.click(await within(sheet).findByRole('button', { name: 'Only create' }, T))
+    await createOnly(r, sheet)
     expect((await sent()).agent).toBeUndefined()
     await r.user.click(screen.getByRole('button', { name: 'signed' }))
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
+    await screen.findByText(/Created DEMO-0044/, {}, T) // P19: said in a toast with Open; the person stays where they were
+    expect(r.router.state.location.pathname).not.toBe('/ticket/DEMO-0044')
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
   })
@@ -179,155 +226,66 @@ describe('what is signed', () => {
       sections: { summary: 'a', context: 'b', requirements: 'c', out_of_scope: 'd', plan: 'e', decisions: 'f' }, acceptance: ['1', '2', '3'].concat(['4', '5', '6', '7']) } // 1 + 1 + 6 + 7 = 15 (+1 access = 16)
     const key = `orch.dashboard.new-ticket.draft.p_sev.${WS()}`
     const fits = await open({ [key]: JSON.stringify(draft) })
-    await within(fits.sheet).findByRole('button', { name: 'Review and start agent' }, T)
+    await within(fits.sheet).findByRole('button', { name: 'Create and start' }, T)
     expect(within(fits.sheet).queryByTestId('agent-too-many')).toBeNull()
     cleanup()
     const over = await open({ [key]: JSON.stringify({ ...draft, acceptance: [...draft.acceptance, '8'] }) }) // 16 + 1 access = 17
     expect(await within(over.sheet).findByTestId('agent-too-many', {}, T)).toHaveTextContent('too many parts')
-    expect(within(over.sheet).queryByRole('button', { name: 'Review and start agent' })).toBeNull()
-    await over.r.user.click(within(over.sheet).getByRole('button', { name: 'Only create' }))
+    expect(within(over.sheet).queryByRole('button', { name: 'Create and start' })).toBeNull()
+    await over.r.user.click(within(over.sheet).getByRole('button', { name: 'Create ticket' }))
     expect((await sent()).agent).toBeUndefined()
   })
 })
 describe('after the ticket exists', () => {
-  async function signed(opts: { button?: string } = {}) {
+  async function signed() {
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
-    await r.user.click(await screen.findByRole('button', { name: opts.button ?? 'signed' }))
-    return { r, sheet }
+    await r.user.click(await screen.findByRole('button', { name: 'signed' }))
+    return r
   }
-
-  it('#1127: once the ticket exists the emptied form shows no red validation errors while the agent starts', async () => {
-    s.preview.mockReturnValue(new Promise(() => {})) // the start stays "running"
-    const { sheet } = await signed()
-    await within(sheet).findByRole('button', { name: /Starting agent/ }, T)
-    expect(within(sheet).queryByText(/needs 3 to 120 characters/)).toBeNull()
-    expect(within(sheet).queryByText(/need your attention|needs your attention/)).toBeNull()
-  })
-
-  it('previews for the ticket\'s own key, then starts once with the preview\'s spec and the review\'s idem', async () => {
-    const { r } = await signed()
+  it('starts with only the reviewed request id, without a browser preview', async () => {
+    const r = await signed()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
-    expect(s.preview).toHaveBeenCalledWith(WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'refine', worktree: true })
-    const [ws, args, spec, idem] = s.start.mock.calls[0]
-    expect([ws, args, spec]).toEqual([WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'refine', worktree: true }, 'f'.repeat(64)])
-    expect(String(idem)).toMatch(/^[0-9A-Za-z_-]{8,}$/)
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
-    expect(screen.queryByRole('dialog', { name: 'Start agent dialog' })).toBeNull()
-  })
-
-  it('never starts for a key that is not the one of its own request (the state is another request\'s)', async () => {
-    await signed({ button: 'signed-other-request' })
-    await new Promise((res) => setTimeout(res, 150))
+    expect(s.start).toHaveBeenCalledWith(WS(), 'hr_' + '0'.repeat(25) + '7')
     expect(s.preview).not.toHaveBeenCalled()
-    expect(s.start).not.toHaveBeenCalled()
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
+    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
   })
-
-  it.each([
-    ['a different model', { model: 'sonnet', model_source: 'chosen' as const }],
-    ['a different model source', { model_source: 'addon' as const }],
-    ['a new worktree', { will_create_worktree: true }],
-    ['a different grant', { grant: { ...GRANT, id: 'gr_01M4Y46B485AXD4CBEJZ15Z1TW' } }],
-    ['no grant', { grant: null }],
-    ['a block', { blocked: { code: 'launch.claimed', message: 'DEMO-0044 is claimed', detail: {} } }],
-    ['another warning', { warnings: ['ORCH_WORKTREES leaves out x'] }],
-    ['a hidden command', { display: null }],
-  ])('%s in the preview: no start, the Start agent dialog opens prefilled', async (_n, over) => {
-    s.preview.mockResolvedValue(preview(over as Partial<AgentPreview>))
-    await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(within(dlg).getByTestId('dialog-ticket')).toHaveTextContent('DEMO-0044')
-    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toMatchObject({ harness: 'claude-code', mode: 'refine' })
-    expect(s.start).not.toHaveBeenCalled()
-    await userClose()
-  })
-
-  it('an unacknowledged "runs as you" notice: the dialog, not an automatic start', async () => {
-    setup({ acked: {} })
-    await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(dlg).toBeInTheDocument()
-    expect(s.start).not.toHaveBeenCalled()
-  })
-
-  it('the login-shell notice starts only once acknowledged', async () => {
-    s.preview.mockResolvedValue(preview({ warnings: [LOGIN_NOTICE] }))
-    setup({ acked: { start_agent: true } })
-    s.preview.mockResolvedValue(preview({ warnings: [LOGIN_NOTICE] }))
-    await signed()
-    await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(s.start).not.toHaveBeenCalled()
-  })
-
-  it('a changed start (launch.changed, runner.stale text as it is) is not retried: the dialog shows the host words', async () => {
-    s.start.mockRejectedValue(new ApiError(409, { code: 'launch.changed', message: 'What would run changed: the runner restarted (runner.stale).', retryable: false }))
-    await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    const initial = JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')
-    expect(initial.note).toContain('What would run changed: the runner restarted (runner.stale).')
-    expect(initial.idem).toBeUndefined() // a refused start is not a lost answer: the dialog gets its own idem
-    expect(s.preview).toHaveBeenCalledTimes(1)
-    expect(s.start).toHaveBeenCalledTimes(1)
-  })
-
-  it('a lost answer (network error): the dialog reuses the review\'s idem, so Start returns the same run', async () => {
+  it('a lost response retains the request id for the host-idempotent retry', async () => {
     s.start.mockRejectedValue(new TypeError('network'))
     await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    const initial = JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')
-    expect(initial.idem).toBe(s.start.mock.calls[0][3])
+    expect((await failedOf()).initial).toMatchObject({ afterRequest: 'hr_' + '0'.repeat(25) + '7' })
   })
-
-  it('a preview that cannot be read goes to the dialog and nothing starts', async () => {
-    s.preview.mockRejectedValue(new ApiError(503, { code: 'host.unavailable', message: 'Host not available', retryable: true }))
+  it('reports a host refusal and never falls back to an unbound start', async () => {
+    s.start.mockRejectedValue(new ApiError(409, { code: 'sequence.incomplete', message: 'Every step must land.', retryable: false }))
+    const unbound = vi.spyOn(agentsApi, 'start')
     await signed()
-    await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(s.start).not.toHaveBeenCalled()
-  })
-
-  it('a reload never starts: a fresh page with nothing in memory previews and starts nothing', async () => {
-    s.preview.mockResolvedValue(preview({ blocked: { code: 'launch.claimed', message: 'x', detail: {} } }))
-    await signed()
-    await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    s.preview.mockClear()
-    cleanup()
-    const again = renderApp('/ticket/DEMO-0044')
-    await waitFor(() => expect(again.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
-    await new Promise((res) => setTimeout(res, 150))
-    expect(s.start).not.toHaveBeenCalled()
-    expect(s.preview).not.toHaveBeenCalled()
+    expect((await failedOf()).reason).toContain('Every step must land.')
+    expect(unbound).not.toHaveBeenCalled()
   })
 })
-async function userClose() {
-  const b = screen.queryByRole('button', { name: 'close-start-dialog' })
-  if (b) b.click()
-}
-
 describe('partial failures', () => {
-  it('the ticket landed, the access did not: said, with Start agent, and nothing started', async () => {
+  it('the ticket landed, the access did not: said in the failure mark, and nothing started', async () => {
     setup({ grant: null })
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
-    expect((await sent()).agent).toEqual({ hours: 24 })
+    expect((await sent()).agent).toEqual({ hours: 168 })
     await r.user.click(await screen.findByRole('button', { name: 'access-missing' }))
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
-    const info = await screen.findByTestId('agent-no-access', {}, T)
-    expect(info).toHaveTextContent('DEMO-0044 exists. Agent access is not confirmed yet')
-    // M-1: the emptied form is not left open behind the notice and the dialog that follows.
-    expect(document.querySelector('[data-ticket-created]')).not.toBeNull()
-    await r.user.click(within(info).getByRole('button', { name: 'Start agent' }))
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(within(dlg).getByTestId('dialog-ticket')).toHaveTextContent('DEMO-0044')
+    const failed = await failedOf()
+    expect(failed.reason).toBe('Agent access is not confirmed yet. Start an agent to give access.')
+    // M-1: the emptied form is not left open; the ticket page is.
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
   })
 
-  it('stopped earlier: the draft ticket is today\'s message only; no dialog, no start', async () => {
+  it('stopped earlier: the draft ticket is today\'s message only; no failure mark, no start', async () => {
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
     await r.user.click(await screen.findByRole('button', { name: 'stopped-early' }))
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
-    expect(screen.queryByTestId('agent-no-access')).toBeNull()
+    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
   })
@@ -341,10 +299,8 @@ describe('partial failures', () => {
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
     // the person changes the agent in the form behind the dialog
     localStorage.setItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`, JSON.stringify({ start: true, harness: 'codex', mode: 'refine', model: '' }))
-    const info = await screen.findByTestId('agent-no-access', {}, T)
-    await r.user.click(within(info).getByRole('button', { name: 'Start agent' }))
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toEqual({ harness: 'claude-code', mode: 'refine' })
+    const failed = await failedOf()
+    expect(failed.initial).toEqual({ harness: 'claude-code', mode: 'refine' })
   })
 })
 
@@ -359,7 +315,7 @@ describe('a grant that runs out while the form is open', () => {
     const realNow = nowMs()
     const spy = vi.spyOn(await import('@/lib/time'), 'nowMs').mockReturnValue(realNow + 5 * 60_000) // five minutes later: 11 left
     await r.user.click(await startBtn(sheet))
-    expect((await sent()).agent).toEqual({ hours: 24 })
+    expect((await sent()).agent).toEqual({ hours: 168 })
     spy.mockRestore()
   })
 })

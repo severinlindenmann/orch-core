@@ -153,13 +153,6 @@ def test_l2p6_admin_read_scope_excludes_selective_workspaces():
     assert G.WS_A not in r["workspaces"], "D71: hub-admin has no role in a selective workspace"
 
 
-def test_l2p6_admin_read_row_public_url_is_null_in_hv0():
-    """No public kind exists (orch-publish PUBLIC_ROUTES is empty); a non-null public_url in hv 0 is a contract
-    violation until a public kind is specified with its own rule (live only, never a capability URL)."""
-    with pytest.raises(H.Refused):
-        H.check_admin_read_row({**G.ADMIN_ROW, "public_url": "https://pub.example/s/secret-token"})
-
-
 # --- L2P-10: a re-delivered old record is reported as a fork -----------------------------------------------------------
 
 

@@ -19,7 +19,7 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   { id: 'artifacts.previous', keys: 'k', label: 'Artifacts: move to the previous artifact (the preview follows when it is beside the list)' },
   { id: 'help', keys: '?', label: 'Open the help for this page' },
   { id: 'sidebar', keys: '[', label: 'Collapse or expand the sidebar' },
-  { id: 'terminal.dock', keys: 'Ctrl+`', label: 'Open or collapse the terminal dock (when the Terminals addon is on)' },
+  { id: 'terminal.dock', keys: 'Ctrl+`', label: 'Open or collapse the terminal dock (when the Command window addon is on)' },
 ]
 
 /** Shown in the guide as one row; the app binds ⌘1–⌘9 (Ctrl+1–9 elsewhere) one by one. */

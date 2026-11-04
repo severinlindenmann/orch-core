@@ -6,12 +6,17 @@ it keeps no listener constants of its own. Today only the loopback listener is w
 unchanged and pinned by a golden test). `remote_policy` is the stricter definition for the HTTPS front; R1-4 wires it
 to a listener."""
 
+import ipaddress
 import re
 from dataclasses import dataclass
 
 #: The two listeners, by name: a session, a terminal ticket and a request's `scope["orch_listener"]` all use these.
 LOOPBACK = "loopback"
 REMOTE = "remote"
+#: R3 (D89): a stream of a remote device, answered in-process (no socket). Set by the stream adapter, never a header.
+REMOTE_DEVICE = "remote-device"
+#: the one Host a stream answers to: the adapter REPLACES the device's, there is no real name behind it
+STREAM_HOST = "orch-remote"
 
 # §0.8.6 item 7: the required directives (default-src, script-src, object-src, base-uri, frame-ancestors, form-action)
 # plus the narrow extras this app needs (its own styles, connections and inline-free images).
@@ -36,6 +41,21 @@ TERM_PATH = "/term"
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _ASSET = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _NAME = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def accepted_on_loopback(scope, missing: bool = False) -> bool:
+    """Was this connection accepted on a loopback socket? Decided from the accepting socket's own address
+    (``scope["server"]``, set by the server that accepted it), never from the Host header: a network client
+    can send any Host. ``missing`` is the answer when the scope names no address or a non-IP one. It exists only for
+    TestClient's "testserver" and in-process scopes: real listeners are TCP on literal IPs, and the unix front socket
+    is the REMOTE listener (never this policy)."""
+    server = scope.get("server")
+    if not (isinstance(server, tuple | list) and server):
+        return missing
+    try:
+        return ipaddress.ip_address(str(server[0]).split("%", 1)[0]).is_loopback
+    except ValueError:  # not an IP address (a real server always names one; a test client names a host): unknown
+        return missing
 
 
 def clean_path(path: str) -> list[str] | None:
@@ -70,6 +90,9 @@ class ListenerPolicy:
     asset_hosts: tuple = ()
     # Further Hosts that always answer (the dev network address ``serve --listen``; plain http, prototype).
     alt_hosts: tuple = ()
+    # R3: a stream of a remote device. No header carries its session (the token and identity come from the scope the
+    # adapter built), no route answers before login, and there is NO Origin (the device's own client enforced it).
+    stream: bool = False
 
     # -- Host and Origin --
     def hosts_for(self, setup_host: bool) -> tuple[str, ...]:
@@ -82,16 +105,30 @@ class ListenerPolicy:
     def csp(self) -> str:
         return self.csp_template.format(port=self.port, name=self.host)
 
+    def setup_csp(self) -> str:
+        """The CSP of the first-run page (``/setup``) only. On a plain-http loopback listener it may also ask a loopback
+        port whether the new workspace's dashboard answers (run-15 P01: the page must not send a browser on another
+        computer to a dead address). Still loopback only, plain ports, no ``localhost``, no other host; scripts stay
+        ``'self'``. A remote (https) listener keeps its CSP unchanged."""
+        csp = self.csp()
+        if self.scheme == "http" and "connect-src 'self' " in csp:
+            return csp.replace("connect-src 'self' ", "connect-src 'self' http://127.0.0.1:* ", 1)
+        return csp
+
     # -- WebSocket --
     def websocket_ok(self, path: str, hosts: list[str], origins: list[str]) -> bool:
-        """Only `/term`; Host and Origin exactly this listener's (a missing or `null` Origin refused)."""
-        return self.terminals and path == TERM_PATH and hosts == [self.host] and origins == [self.origin_for(self.host)]
+        """Only `/term`; Host and Origin exactly this listener's (a missing or `null` Origin refused). A stream has no
+        Origin at all (its Host is the adapter's)."""
+        wanted = [] if self.stream else [self.origin_for(self.host)]
+        return self.terminals and path == TERM_PATH and hosts == [self.host] and origins == wanted
 
     # -- Pre-login routes --
     def pre_login(self, path: str, raw_path: bytes | None = None, method: str = "GET") -> bool:
         """May this path answer without a session? Loopback: every route checks its own credential, so True. Remote:
         only the app shell, its assets, `/auth/passkey/*` and `/auth/enroll/*`, matched exactly and case-sensitively
         on the decoded path AND on the raw bytes (which must be the same string: no escape of any kind)."""
+        if self.stream:
+            return False  # D89: every pre-login route is refused inside a stream
         if not self.pre_login_only:
             return True
         if raw_path is not None:
@@ -115,6 +152,8 @@ class ListenerPolicy:
             return len(rest) == 1 and bool(_ASSET.fullmatch(rest[0])) and ".." not in rest[0]
         if len(segments) == 1 and segments[0] in ROOT_FILES:
             return True
+        if method == "POST" and head == "auth" and rest == ["switch"]:
+            return True  # H1: the hub switch ticket (one use, 30 s, checked by the hub over the host's link)
         if head == "auth" and len(rest) >= 2 and rest[0] in ("passkey", "enroll"):
             tail = rest[1:]
             return len(tail) <= 2 and all(_SEGMENT.fullmatch(s) for s in tail)
@@ -162,6 +201,26 @@ def remote_policy(name: str) -> ListenerPolicy:
         pre_login_only=True,
         launch_codes=False,
         route_gate=True,
-        session_kinds=frozenset({"remote"}),  # the session kind, not the listener
+        session_kinds=frozenset({"remote", "switch"}),  # the session kind, not the listener
         extra_headers=(HSTS,),
+    )
+
+
+def remote_device_policy() -> ListenerPolicy:
+    """A stream of a remote device (R3): Host `orch-remote` only, no Origin, no launch codes, no frames, no setup
+    page; the session kind is `remote-device` and nothing else; terminals are on here but the route column decides per
+    access level (`routegate.REMOTE_DEVICE`: the Terminals level, each open with a presence signature)."""
+    return ListenerPolicy(
+        name=REMOTE_DEVICE,
+        scheme="https",
+        host=STREAM_HOST,
+        csp_template=_CSP_REMOTE,
+        port=443,  # nothing binds it
+        terminals=True,
+        widget_frames=False,
+        pre_login_only=True,
+        launch_codes=False,
+        route_gate=True,
+        session_kinds=frozenset({"remote-device"}),
+        stream=True,
     )

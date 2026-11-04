@@ -148,16 +148,18 @@ def test_preview_blocks_in_order_and_has_no_side_effects(w, tmp_path, monkeypatc
         # a Claude Code agent in the ticket's work folder is isolated from the folder's own settings and MCP files
         cl = preview(c, **{**args, "harness": "claude-code"})
         assert cl["cwd"]["kind"] == "workdir"
-        assert cl["argv"][4:11] == [
+        assert cl["argv"][4:13] == [
             "claude",
             "--session-id",
             "@orch-session-id",
             "--setting-sources",
             "user",
             "--strict-mcp-config",
+            "--mcp-config",
+            "@orch-mcp",
             "--append-system-prompt-file",
         ]
-        assert cl["argv"][11] == "@orch-rules"
+        assert cl["argv"][13] == "@orch-rules"
     finally:
         r.close()
 
@@ -509,3 +511,83 @@ def test_stopping_the_parent_stops_its_live_human_children(ready):
     ok(c.call("run.stop", {"run": parent["run"]}))
     wait_for(lambda: record(w, child["run"])["state"] == "exited")
     assert record(w, parent["run"])["state"] == "exited"
+
+
+def test_a_runner_that_lost_the_grant_behind_the_hosts_back_gives_the_access_step(ready):
+    """Run 13: the host believes the grant is current, the runner holds none. The start says so in plain words and
+    the host forgets the grant, so the next view is the normal "give agent access" step, never a dead end."""
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    assert pre["blocked"] is None
+    assert w.runner.grants.drop(gid_of(w.value))  # as a runner that restarted without the host seeing a hello
+    got = start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])
+    assert err(got) == "launch.no_grant"
+    assert "runner holds" not in str(got) and "Agent access" in str(got)
+    assert preview(c, ticket=key, harness="codex", mode="work")["blocked"]["detail"] == {"reason": "none"}
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+
+
+def test_company_skills_reach_only_the_rules_file_of_a_claude_code_ticket_agent(ready, monkeypatch):
+    """M3 H-3 end to end: accepted company skills are in the rules file the runner writes (below the rules), a Codex
+    run of the same ticket gets nothing, and the harness receives no skill text in its argv or environment."""
+    from orch.host import orgstate
+    from orch.hubclient.orgbundles import skill_digest
+
+    text = "Write invoice numbers as INV-2026-0001.\n## Steps\n1. Ask for the number."  # a normal skill with a heading
+    monkeypatch.setattr(
+        orgstate, "served",
+        lambda service: {
+            "skills": [{"name": "invoices", "text": text, "digest": skill_digest("invoices", text)}],
+            "mcp": [],
+        },
+    )  # fmt: skip
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="claude-code", mode="work")
+    assert pre["blocked"] is None
+    ok(start(c, ticket=key, harness="claude-code", mode="work", spec=pre["spec"]))
+    argv, env = read_out(w, "claude")
+    path = argv[argv.index("--append-system-prompt-file") + 1]
+    body = Path(path).read_text()
+    assert "### Company skill: invoices" in body and text in body
+    opening = body[body.index("~~~~orch-skill-") :].splitlines()[0]
+    bare = opening.split("orch-skill-")[0]  # the fence closes with the bare tilde run
+    assert body.count(opening) == 1 and body.count("(end of " + opening.split("~")[-1] + ")") == 1  # its sentinel
+    assert body.index(opening) < body.index("## Steps") < body.rindex("\n" + bare + "\n")  # inside its fence
+    assert body.index("rules of the orch workspace") < body.index("## Company skills from your company hub")
+    assert not any(text in a for a in argv) and not any(text in v for v in env.values())  # not in argv or environment
+    pre2 = preview(c, ticket=key, harness="codex", mode="work")
+    ok(start(c, ticket=key, harness="codex", mode="work", spec=pre2["spec"]))
+    cargv, cenv = read_out(w, "codex")
+    assert not any("invoices" in a for a in cargv) and not any(text in v for v in cenv.values())
+
+
+def test_w00_run_list_says_whether_the_agents_session_ever_reached_the_host(ready):
+    """W00: an agent whose orch never reaches the host is told apart on the dashboard ("contacted": false) instead of
+    "Taking longer than usual"; its first host call with its grant and session turns it true. Shells carry nothing."""
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    run = ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))["data"]["run"]
+    _, env = read_out(w, "codex")
+    listed = {r["run"]: r for r in ok(c.call("run.list", {}))["data"]["runs"]}
+    assert listed[run["run"]]["contacted"] is False
+    ok(c.call("whoami", {}, grant=env["ORCH_GRANT"], session=env["ORCH_SESSION"]))
+    listed = {r["run"]: r for r in ok(c.call("run.list", {}))["data"]["runs"]}
+    assert listed[run["run"]]["contacted"] is True
+
+
+def test_w00_a_delegated_child_session_counts_as_contact(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    run = ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))["data"]["run"]
+    _, env = read_out(w, "codex")
+    ok(c.call("whoami", {}, grant=env["ORCH_GRANT"], session=env["ORCH_SESSION"] + ".1"))
+    listed = {r["run"]: r for r in ok(c.call("run.list", {}))["data"]["runs"]}
+    assert listed[run["run"]]["contacted"] is True

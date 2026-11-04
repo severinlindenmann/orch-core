@@ -42,6 +42,7 @@ class LinkClient:
         self._c, self.hub_id, self.workspace_id, self._wsk = conn, hub_id, workspace_id, wsk
         self._hk_op, self._now, self._t, self.mode = hk_op_pub, now_ms, timeout, mode
         self.seq = 0
+        self.last_in = 0  # R1: the h2w seq of the previous frame on this link (the first must be 1)
         self.inbox: list[dict[str, Any]] = []  # h2w ``route_in`` requests that arrived while waiting for a reply
 
     @staticmethod
@@ -58,9 +59,10 @@ class LinkClient:
         timeout: float = 10.0,
         now_ms=lambda: int(time.time() * 1000),
         mode: str = "selective",
+        alpn: tuple[bytes, ...] = (),
     ) -> LinkClient:
         """``send_wsk_pub`` is for the first link of a join (the workspace is not pinned at the hub yet)."""
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout)
+        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout, alpn=alpn)
         try:
             ch = framing.read_frame(conn, first_timeout=timeout, rest_timeout=timeout)
             if set(ch) != {"t", "hub_id", "challenge"} or ch["t"] != "challenge" or ch["hub_id"] != hub_id:
@@ -106,7 +108,7 @@ class LinkClient:
             "body": body,
             **override,
         }
-        return self._wsk.sign_object(o)
+        return self._wsk.sign_link(o, self._c.exporter())
 
     def send_raw(self, obj: dict[str, Any]) -> None:
         framing.write_frame(self._c, obj, timeout=self._t)
@@ -125,9 +127,13 @@ class LinkClient:
                 mode=self.mode,
                 pub=self._hk_op,
                 now_ms=self._now(),
+                exporter=self._c.exporter(),
             )
         except H.Refused as e:
             raise LinkError(e.code) from None
+        if o["seq"] != self.last_in + 1:
+            raise LinkError("malformed")
+        self.last_in = o["seq"]
         return o
 
     def request(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -176,7 +182,7 @@ class LinkClient:
             "re": o["seq"],
             "body": {} if error is None else {"error": error},
         }
-        self.send_raw(self._wsk.sign_object(reply))
+        self.send_raw(self._wsk.sign_link(reply, self._c.exporter()))
 
     def close(self) -> None:
         self._c.close()

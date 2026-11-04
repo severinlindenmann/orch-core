@@ -10,5 +10,7 @@ args:
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
+  wait.build (exit 5): orch task next
+  wait.incomplete (exit 5): fill what is missing, then orch wait | fix: orch show
   wait.timeout (exit 7 retry): orch wait
 out: ok {key} {kind} cursor={cursor} / next: {next}

@@ -281,19 +281,19 @@ def test_auto_wanted_is_the_confirmed_selection_only_and_shrinks_with_it():
     first = S.select(st.rules, [T("a", labels=["public"])])
     st.confirm(first, S.plan_of(first))  # what the host does at the owner's confirm
     S.sync(st, first, link=link, build=fake_build, save=lambda s: None)
-    assert st.confirmed == ["ticket:a"]
+    assert sorted(st.confirmed) == ["ticket:a"]
     both = [T("a", labels=["public"], title="Edited"), T("b", labels=["public"])]
     wanted = st.auto_wanted(S.select(st.rules, both))
     assert [i.logical for i in wanted] == ["ticket:a"]  # "b" starts matching later: it waits for a confirm
     assert S.sync(st, wanted, link=link, build=fake_build, save=lambda s: None)["put"] == 1
     assert [i.logical for i in st.auto_wanted(S.select(st.rules, [T("b", labels=["public"])]))] == []
-    assert st.confirmed == []  # "a" left; it needs a new confirm to come back
+    assert st.confirmed == {}  # "a" left; it needs a new confirm to come back
     shown = S.select(st.rules, both)
     with pytest.raises(HubRefused):  # a selection the owner was not shown is not confirmed
         st.confirm(shown, S.plan_of(first))
-    assert st.confirmed == []
+    assert st.confirmed == {}
     st.confirm(shown, S.plan_of(shown))
-    assert st.confirmed == ["ticket:a", "ticket:b"]
+    assert sorted(st.confirmed) == ["ticket:a", "ticket:b"]
     assert S.ShareState.from_json(st.to_json()).confirmed == st.confirmed
 
 

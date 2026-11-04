@@ -17,7 +17,7 @@ itself: it only asks the service manager to.
 * **Windows and anything else:** no service; the workspace stays in direct mode (owner re-plan, 12 Oct 2026).
 
 The unit runs ``<release>/current/bin/orch-host run --state <state> --run <run>`` with ``python -I``. In tier A the run
-directory is ``<state>/run``, the one the CLI, ``orch sign`` and the dashboard look in; the root-owned
+directory is ``<state>/run``, the one the CLI, the CLI signer and the dashboard look in; the root-owned
 ``/Users/Shared/orch/run`` and ``/run/orch`` of tier B come with the setup helper (H3c, phase 3).
 
 **One service per UID.** The label is fixed, so a unit that is installed for another state dir, run dir or interpreter
@@ -42,6 +42,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from orch import childenv
 
 from . import units
 
@@ -136,7 +138,9 @@ def plan(
 def _default_run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
     if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
         raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
-    return subprocess.run(list(argv), capture_output=True, text=True, timeout=30, check=False)
+    return subprocess.run(
+        list(argv), capture_output=True, text=True, timeout=30, check=False, env=childenv.sanitize(os.environ)
+    )
 
 
 def _failed(argv: Sequence[str], res: subprocess.CompletedProcess[str]) -> str:
@@ -442,6 +446,7 @@ class Manager:
         if self._system:
             raise self._root_only("starting")
         ran: list[list[str]] = []
+        self._undo_stop(ran)
 
         def do(argv: list[str], *, check: bool = True) -> None:
             ran.append(argv)
@@ -466,6 +471,17 @@ class Manager:
         do(["systemctl", "--user", "enable", self.plan.systemd_name])
         do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
         return ran
+
+    def _undo_stop(self, ran: list[list[str]]) -> None:
+        """A service ``orch stop`` disabled starts again when the person asks for it (enable, register, setup)."""
+        from orch.lifecycle.units import clear_stopped, stopped_by_orch
+
+        if self.plan.label not in stopped_by_orch(self.plan.state):
+            return
+        if self.plan.kind == "launchd":
+            ran.append(["launchctl", "enable", self._target()])
+            self.run(ran[-1])
+        clear_stopped(self.plan.state, self.plan.label)
 
     def restart_command(self) -> list[str]:
         """The command that restarts the loaded service at once, for this platform only."""

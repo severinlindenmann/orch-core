@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "followup.too_soon",
+    "message": "follow-up is less than one hour ahead",
+    "hint": "wait inside the session",
+    "fix": {
+      "argv": [
+        "orch",
+        "wait"
+      ]
+    },
+    "retryable": false
+  }
+}

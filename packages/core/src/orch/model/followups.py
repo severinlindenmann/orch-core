@@ -12,6 +12,7 @@ from typing import Literal
 
 from orch.canon.text import is_clean_text
 
+FU_UNDO_S = 120  # Person cancellation undo window.
 FU_MAX_DAYS = 14  # FU5 scheduling horizon.
 FU_CHAIN_MAX = 5  # FU7 follow-ups without progress.
 FU_CHAIN_CEILING_DAYS = 30  # owner decision 2026-10-21 (Q1/Q5)
@@ -97,6 +98,7 @@ class GrantTerms:
     parent: str | None
     revoked: bool = False
     secret_hash: str | None = None  # FU1: set by derive_grant from followup.fired; None on person-issued grants
+    root_kind: str = "grant"  # schedule roots enforce their signed interval, unlike expiring parent grants
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,10 +107,19 @@ class Caps:
     chain_max: int
     pending_max: int
     runs_per_day: int
+    min_lead_s: int = FU_MIN_LEAD_S
+    early_s: int = FU_TIME_EARLY_S
 
 
-def effective_caps(settings: Mapping[str, object]) -> Caps:
-    """FU6: signed settings may lower, but never raise, the code ceilings."""
+#: DEV-ONLY (workspace prefix SBX, the signed genesis of a throwaway dev-pair sandbox; see ``followups_wire.caps_of``):
+#: the minimum lead is 30 s and a host fires exactly at the due time, so an end-to-end run needs seconds, not an hour.
+DEV_MIN_LEAD_S = 30
+DEV_EARLY_S = 0
+
+
+def effective_caps(settings: Mapping[str, object], *, dev: bool = False) -> Caps:
+    """FU6: signed settings may lower, but never raise, the code ceilings. ``dev`` (a dev sandbox workspace only)
+    shortens the minimum lead and the early-fire tolerance."""
     values = []
     for key, ceiling in zip(
         ("max_days", "chain_max", "pending_max", "runs_per_day"),
@@ -119,7 +130,7 @@ def effective_caps(settings: Mapping[str, object]) -> Caps:
         if type(value) is not int or value < 1:
             raise ValueError(f"{key} must be an integer >= 1")
         values.append(min(value, ceiling))
-    return Caps(*values)
+    return Caps(*values, DEV_MIN_LEAD_S, DEV_EARLY_S) if dev else Caps(*values)
 
 
 def _norm_verbs(verbs: object) -> str | tuple[str, ...]:
@@ -206,9 +217,12 @@ def ancestors(grants: Mapping[str, GrantTerms], grant_id: str) -> tuple[GrantTer
     return tuple(result)
 
 
-def chain_valid(chain: Sequence[GrantTerms] | None, *, root_person_active: bool) -> bool:
-    """FU4: expiry of every grant is intentionally ignored."""
+def chain_valid(chain: Sequence[GrantTerms] | None, *, root_person_active: bool, at: int | None = None) -> bool:
+    """FU4: parent-grant expiry is ignored; a schedule authority root ends at its signed end."""
     if not chain or root_person_active is not True or chain[-1].parent is not None:
+        return False
+    root = chain[-1]
+    if root.root_kind == "schedule" and (type(at) is not int or not root.issued_at <= at < root.expires_at):
         return False
     # Fail closed on a broken list: each grant must name the next one as its parent.
     linked = all(g.parent == nxt.id for g, nxt in zip(chain, chain[1:], strict=False))
@@ -232,7 +246,7 @@ def fgrant_usable(
         and grant.issued_at <= at < grant.expires_at
         and bool(chain)
         and chain[0] == grant
-        and chain_valid(chain, root_person_active=root_person_active)
+        and chain_valid(chain, root_person_active=root_person_active, at=at)
     )
 
 
@@ -283,7 +297,7 @@ def check_set(ctx: SetContext, req: SetRequest, caps: Caps) -> Denial | None:
     deadline = effective_deadline(req)
     if type(req.at) is not int or type(deadline) is not int or (req.due is not None and type(req.due) is not int):
         return Denial("bad_time", "times must be integer epoch seconds")
-    if req.due is not None and req.due < req.at + FU_MIN_LEAD_S:
+    if req.due is not None and req.due < req.at + caps.min_lead_s:
         return Denial("too_soon", "due must be at least one hour ahead")
     if req.due is not None and deadline < req.due:
         return Denial("deadline_before_due", "deadline must be at or after due")
@@ -303,6 +317,39 @@ def check_set(ctx: SetContext, req: SetRequest, caps: Caps) -> Denial | None:
         or ctx.pending_in_workspace - (1 if ctx.replaces_pending is True else 0) >= caps.pending_max
     ):
         return Denial("pending_cap", "workspace pending capacity is unavailable")
+    return None
+
+
+def check_reschedule(state: str, req: SetRequest, caps: Caps, *, old_deadline: int | None = None) -> Denial | None:
+    """Check a person scheduling change, including an implicitly retained deadline."""
+    if state not in ("pending", "needs_person"):
+        return Denial("bad_state", "only pending or needs_person follow-ups can be rescheduled")
+    if req.trigger not in SET_TRIGGERS:
+        return Denial("bad_trigger", "unknown set trigger")
+    if req.trigger == "time" and req.due is None:
+        return Denial("missing_due", "time triggers need a due time")
+    if req.trigger != "time":
+        if req.due is not None:
+            return Denial("bad_time", "event triggers cannot have a due time")
+        if req.deadline is None:
+            return Denial("missing_deadline", "event triggers need a deadline")
+    if type(req.at) is not int or any(
+        value is not None and type(value) is not int for value in (req.due, req.deadline, old_deadline)
+    ):
+        return Denial("bad_time", "times must be integer epoch seconds")
+    deadline = req.deadline
+    if req.trigger == "time" and deadline is None:
+        deadline = max(old_deadline, req.due) if old_deadline is not None else req.due
+    if req.due is not None and req.due < req.at + caps.min_lead_s:
+        return Denial("too_soon", "due is before the minimum scheduling lead")
+    if req.due is not None and deadline < req.due:
+        return Denial("deadline_before_due", "deadline must be at or after due")
+    if req.trigger != "time" and deadline < req.at + caps.min_lead_s:
+        return Denial("too_soon", "deadline is before the minimum scheduling lead")
+    if deadline > req.at + caps.max_days * 86400:
+        return Denial("too_far", "deadline exceeds the scheduling horizon")
+    if deadline <= req.at:
+        return Denial("deadline_past", "deadline must be in the future")
     return None
 
 
@@ -428,7 +475,7 @@ def check_fired(
         return Denial("bad_trigger", "firing trigger does not match")
     if not _is_hash(fired.secret_hash):
         return Denial("bad_secret_hash", "a 64-character lowercase hex secret hash is required")
-    if not chain_valid(chain, root_person_active=root_person_active):
+    if not chain_valid(chain, root_person_active=root_person_active, at=fired.at):
         return Denial("chain_invalid", "grant chain is not active")
     deadline = fu.due if fu.trigger == "time" and fu.deadline is None else fu.deadline
     if fired.trigger == "deadline":
@@ -477,6 +524,7 @@ def derived_cancel_reason(
     member_removed: bool,
     addon_enabled: bool,
     chain_needs_person: bool,
+    at: int | None = None,
 ) -> str | None:
     """FU4/FU14: first matching cancellation wins, independent of parent expiry."""
     if state not in ("pending", "needs_person"):
@@ -484,7 +532,7 @@ def derived_cancel_reason(
     for applies, reason in (
         (replaced is not False, "replaced"),
         (member_removed is not False, "member_removed"),
-        (not chain_valid(chain, root_person_active=root_person_active), "grant_revoked"),
+        (not chain_valid(chain, root_person_active=root_person_active, at=at), "grant_revoked"),
         (addon_enabled is not True, "addon_disabled"),
         (ticket_status != "in_progress", "ticket_left_in_progress"),
         (claimed_by_other is not False, "claimed_by_other"),

@@ -118,7 +118,8 @@ RELAY_OPS = frozenset(
     {
         # registry read ops
         "addon.list", "artifact.list", "check", "describe", "help", "inbox", "list", "next", "quick.list", "search",
-        "show", "status", "task.list", "task.next",
+        "show", "status", "task.list", "task.next", "follow_up.show", "follow_up.list",
+        "schedule.show", "schedule.list",
         # host reads, filtered for the viewer exactly as P (F6)
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings",
@@ -165,6 +166,8 @@ def refusal(column: Column, kind: OpKind, op: str | None = None) -> str | None:
     if column.name == "R":
         if op not in RELAY_OPS or (kind == "device_signed") != (op in DEVICE_SIGNED_OPS):
             return "op.not_allowed"
+    if kind == "human" and column.name == "G" and op == "close":
+        return column.write_error  # model restricts this to the schedule child and its run grant
     if kind == "human" and column.name in {"P", "G", "N"}:
         return "human_only"  # a human registry op as a plain req, in every workspace column
     if kind == "human_api" and column.human_error is not None:

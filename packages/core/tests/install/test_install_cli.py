@@ -7,9 +7,34 @@ import json
 
 import pytest
 
+from orch import crypto
 from orch.install import cli
 from orch.install.parts import detect_addresses
 from orch.install.state import load
+
+
+def _root_pub() -> bytes:
+    from orch.crypto import suite
+
+    return suite.public_bytes(suite.generate_private_key())
+
+
+def real_card(hub_id=None, *, root_pub=None, **o_over):
+    """A card in the real shape ({"o", "op_cert", "sig"}); its id is derived from a real root key (wire.hub_id)."""
+    from orch.hubclient import wire
+
+    root_pub = root_pub or _root_pub()
+    o = {
+        "v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hub_id or wire.hub_id(root_pub),
+        "hk_root_pub": crypto.b64u(root_pub), "hxk_pub": crypto.b64u(_root_pub()), "relay_url": None,
+        "tls_spki_sha256": None, "card_seq": 1, "reader": 1, "issued_ms": 1, "dev": False,
+    }  # fmt: skip
+    o.update(o_over)
+    return {"o": o, "op_cert": {"o": {"kind": "hub.op_cert"}, "sig": "x"}, "sig": "x"}
+
+
+_ROOT = _root_pub()
+HUB_ID = real_card(root_pub=_ROOT)["o"]["hub_id"]
 
 
 class FakeRunner:
@@ -38,6 +63,8 @@ def home(tmp_path):
 def make(home, **kw):
     out, err = io.StringIO(), io.StringIO()
     calls = []
+    ids = [_ROOT]  # the root key of the hub the fake reports (append another to change its id)
+    card_out = []  # a test may put the exact stdout of `keys card` here
 
     def run(argv, env=None):
         calls.append(list(argv))
@@ -45,20 +72,28 @@ def make(home, **kw):
             return 0, "orch-hub v0.1.0\norch-relay v0.2.0\norch-publish v0.3.0\n"
         return 0, ""
 
+    def run_stdout(argv, env=None):
+        calls.append(list(argv))
+        assert argv[1] == "keys" and argv[-1] == "card"  # the only stdout-only call
+        return 0, card_out[-1] if card_out else json.dumps(real_card(root_pub=ids[-1]))
+
     ctx = cli.Ctx(
         env={"HOME": str(home)},
         out=out,
         err=err,
         runner=FakeRunner(),
         run=run,
+        run_stdout=run_stdout,
         resolve_ref=lambda url, ref: "a" * 40,
+        core_commit=lambda: None,
         health=lambda h, p: True,
-        detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "NetBird")],
+        detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "private network")],
         port_free=lambda p, h: True,
         token=lambda: "TOKEN",
         dashboard_entry=lambda: ["/bin/orch-dashboard"],
         **kw,
     )
+    ctx.ids, ctx.card_out = ids, card_out
     return ctx, out, err, calls
 
 
@@ -158,7 +193,11 @@ def test_detected_addresses_offer_the_netbird_ip():
         "en0: flags=8863\n\tinet 192.168.1.10 netmask 0xffffff00\n"
     )
     got = detect_addresses(lambda argv: ifc if argv == ["ifconfig"] else "")
-    assert ("100.64.9.9", "NetBird") in got and ("192.168.1.10", "local network") in got and got[0][0] == "127.0.0.1"
+    assert (
+        ("100.64.9.9", "private network") in got
+        and ("192.168.1.10", "local network") in got
+        and got[0][0] == "127.0.0.1"
+    )
 
 
 def test_an_agent_is_refused(home):
@@ -229,6 +268,22 @@ def test_default_ref_is_develop_override_works_and_status_shows_sha(home):
     assert "b" * 12 in out.getvalue()
 
 
+def test_parts_default_to_the_commit_of_the_installed_core_not_develop(home):
+    ctx, out, err, calls = make(home)
+    seen = []
+    ctx.resolve_ref = lambda url, ref: seen.append(ref) or "b" * 40
+    ctx.core_commit = lambda: "c" * 40
+    cli.main(["relay"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert seen == []  # no lookup of develop
+    assert any("c" * 40 in " ".join(c) for c in calls if "install" in c)
+    cli.main(["hub", "--ref", "v1"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert seen == ["v1"]  # --ref still overrides
+    ctx.core_commit = lambda: None
+    out.truncate(0), out.seek(0)
+    cli.main(["publish"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert seen[-1] == "develop" and "no known commit" in out.getvalue()
+
+
 def _phone_ctx(home, address="100.64.1.2", users=None, qr=None):
     users = [{"user_id": "ab" * 16, "name": "Alice", "groups": ["hub-admin"]}] if users is None else users
     ctx, out, err, calls = make(home, qr=lambda link: qr)
@@ -276,3 +331,274 @@ def test_phone_refuses_loopback_none_installed_and_many_admins(home):
     ctx3, out3, err3, _ = _phone_ctx(home / "two", users=two)
     assert cli.main(["phone"], env=ctx3.env, out=out3, err=err3, ctx=ctx3) == 1
     assert "--user" in err3.getvalue()
+
+
+def test_status_shows_version_and_commit_of_the_workspace_dashboard(home, monkeypatch):
+    # run-11 owner item 9: the workspace row said "-" for version and commit
+    ctx, out, err, _ = make(home)
+    monkeypatch.setattr(cli, "installed_version", lambda ctx, dist: ("1.2.3", "c" * 40))
+    cli.full_server(ctx, ["hub"], address="127.0.0.1")
+    cli.add_workspace(ctx, "/w/one")
+    out.truncate(0), out.seek(0)
+    cli.main(["status", "--json"], env=ctx.env, out=out, err=err, ctx=ctx)
+    ws = [r for r in json.loads(out.getvalue())["parts"] if r["part"] == "workspace"][0]
+    assert (ws["version"], ws["ref"]) == ("1.2.3", "c" * 40)
+    out.truncate(0), out.seek(0)
+    cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
+    line = next(ln for ln in out.getvalue().splitlines() if ln.startswith("workspace"))
+    assert "1.2.3" in line and "c" * 12 in line
+
+
+def test_mac_is_told_it_cannot_open_its_own_netbird_address(home, monkeypatch):
+    ctx, out, err, _ = make(home)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    cli.choose_address(ctx, None, {})
+    assert out.getvalue().count("open it at 127.0.0.1") == 1
+    out.truncate(0), out.seek(0)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    cli.choose_address(ctx, None, {})
+    assert "open it at 127.0.0.1" not in out.getvalue()
+    out.truncate(0), out.seek(0)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    ctx.detect = lambda: [("127.0.0.1", "this computer only")]
+    cli.choose_address(ctx, None, {})
+    assert "127.0.0.1 (a Mac" not in out.getvalue()
+
+
+def test_hub_install_seeds_hub_settings_with_the_chosen_address_and_keeps_edits_on_a_rerun(home):
+    ctx, out, err, _ = make(home)
+    f = ctx.layout.data("hub") / "hub-settings.json"
+    assert cli.main(["hub", "--address", "100.64.1.2"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert (f.stat().st_mode & 0o777) == 0o600
+    assert json.loads(f.read_text()) == {
+        "v": 1,
+        "name": "Hub",
+        "company": "",
+        "addresses": [
+            {"kind": "private", "web": "http://100.64.1.2:8100", "link": "100.64.1.2:8105"},
+            {"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"},
+        ],
+    }
+    # an admin's name and company survive a re-run; only the addresses follow the new choice
+    body = json.loads(f.read_text())
+    f.write_text(json.dumps({**body, "name": "Acme", "company": "Acme AG"}))
+    assert cli.main(["hub", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    again = json.loads(f.read_text())
+    assert (again["name"], again["company"]) == ("Acme", "Acme AG")
+    assert again["addresses"] == [{"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"}]
+    assert cli.hub_address_kind("192.168.1.5") == "office" and cli.hub_address_kind("8.8.8.8") == "public"
+
+
+def test_hub_settings_ignores_a_linked_old_file_and_brackets_ipv6(home, tmp_path):
+    ctx, out, err, _ = make(home)
+    f = ctx.layout.data("hub") / "hub-settings.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"name": "Evil", "company": "X"}))
+    f.symlink_to(other)
+    cli.write_hub_settings(f.parent, address="fd00::5", domain=None, port=8100)
+    body = json.loads(f.read_text())
+    assert (body["name"], body["company"]) == ("Hub", "")
+    assert body["addresses"][0]["web"] == "http://[fd00::5]:8100" and body["addresses"][0]["link"] == "[fd00::5]:8105"
+    assert json.loads(other.read_text())["name"] == "Evil"  # the link target is untouched
+
+
+def _trusts(calls):
+    return [c for c in calls if c[-3:-1] == ["hub", "trust"]]
+
+
+def _install(ctx, out, err, *args):
+    assert cli.main(list(args), env=ctx.env, out=out, err=err, ctx=ctx) == 0, err.getvalue()
+
+
+def test_hub_then_publish_pins_the_hub_at_its_own_publish(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    assert _trusts(calls) == []  # no publish in this install yet
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    (t,) = _trusts(calls)
+    assert t == [
+        str(ctx.layout.bin / "orch-publish"),
+        "admin",
+        "--data",
+        str(ctx.layout.data("publish")),
+        "hub",
+        "trust",
+        HUB_ID,
+    ]
+
+
+def test_publish_then_hub_pins_the_hub_at_its_own_publish(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    (t,) = _trusts(calls)
+    assert t[-1] == HUB_ID and t[3] == str(ctx.layout.data("publish"))
+
+
+def test_a_reinstall_pins_again(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    assert len(_trusts(calls)) == 3
+
+
+def test_publish_alone_or_hub_with_a_remote_publish_pins_nothing(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    ctx2, out2, err2, calls2 = make(home / "two")
+    _install(ctx2, out2, err2, "hub", "--address", "127.0.0.1", "--publish-url", "https://share.example.com")
+    _install(ctx2, out2, err2, "publish", "--address", "127.0.0.1")  # a publish beside a hub that dials another one
+    assert _trusts(calls2) == []
+
+
+def test_a_failed_pin_is_one_plain_line_and_the_install_goes_on(home):
+    ctx, out, err, calls = make(home)
+    inner = ctx.run
+
+    def run(argv, env=None):
+        if "trust" in argv:
+            return 1, "boom"
+        return inner(argv, env)
+
+    ctx.run = run
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    lines = [ln for ln in out.getvalue().splitlines() if "could not be allowed to share" in ln]
+    assert len(lines) == 1 and "publish" in load(ctx.layout)["parts"]
+
+
+def test_a_missing_publish_binary_is_a_note_not_a_failed_install(home):
+    ctx, out, err, calls = make(home)
+    inner = ctx.run
+
+    def run(argv, env=None):
+        if "trust" in argv:
+            raise FileNotFoundError(argv[0])
+        return inner(argv, env)
+
+    ctx.run = run
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert "could not be allowed to share" in out.getvalue() and "publish" in load(ctx.layout)["parts"]
+
+
+def test_the_pin_is_recorded_and_said_once(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert out.getvalue().count(f"pinned hub {HUB_ID} at publish") == 1
+    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] == HUB_ID
+
+
+def test_a_changed_hub_id_untrusts_the_old_one(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    root2 = _root_pub()
+    new = real_card(root_pub=root2)["o"]["hub_id"]
+    ctx.ids.append(root2)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    untrusts = [c for c in calls if c[-3:-1] == ["hub", "untrust"]]
+    assert [c[-1] for c in untrusts] == [HUB_ID]
+    assert calls.index(untrusts[0]) < max(i for i, c in enumerate(calls) if c[-2:] == ["trust", new])
+    assert load(ctx.layout)["parts"]["publish"]["pinned_hub_id"] == new
+
+
+def test_removing_the_hub_untrusts_the_pinned_id(home):
+    ctx, out, err, calls = make(home)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert cli.main(["remove", "hub"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert [c[-1] for c in calls if c[-3:-1] == ["hub", "untrust"]] == [HUB_ID]
+    assert "pinned_hub_id" not in load(ctx.layout)["parts"]["publish"]
+
+
+def _card(**o):
+    return real_card(root_pub=_ROOT, **o)
+
+
+def _without(key):
+    c = _card()
+    del c[key]
+    return c
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        json.dumps({"hub_id": HUB_ID}),  # no envelope
+        json.dumps({"o": _card()["o"], "sig": "x"}),  # the old two-key shape: op_cert missing
+        json.dumps(_without("op_cert")),
+        json.dumps(_without("sig")),
+        json.dumps(_card(kind="hub.link")),  # wrong kind
+        json.dumps(_card(hub_id="cd" * 16)),  # a well-formed id that is not the one of hk_root_pub
+        json.dumps(_card(hk_root_pub="AAAA")),  # not a key
+        json.dumps(_card()) + "\n" + json.dumps(_card()),  # a second object
+        json.dumps(_card()) + "\ntrailing text",
+        "note: " + json.dumps(_card()),  # leading text
+        json.dumps({**_card(), "extra": 1}),  # an extra key
+        json.dumps(_card(hub_id="AB" * 16)),  # not lower-case hex
+        json.dumps(_card(hub_id="ab" * 15)),  # too short
+        json.dumps([_card()]),
+        "",
+    ],
+    ids=[
+        "no-envelope",
+        "two-keys",
+        "no-op-cert",
+        "no-sig",
+        "wrong-kind",
+        "id-not-of-root",
+        "bad-root",
+        "two-objects",
+        "trailing-text",
+        "leading-text",
+        "extra-key",
+        "upper-hex",
+        "short-id",
+        "list",
+        "empty",
+    ],  # fixed ids: the cards hold random signatures, and xdist workers must collect the same names
+)
+def test_a_card_that_is_not_exactly_the_real_card_is_not_pinned(home, stdout):
+    ctx, out, err, calls = make(home)
+    ctx.card_out.append(stdout)
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert _trusts(calls) == []
+    assert len([ln for ln in out.getvalue().splitlines() if "could not be allowed to share" in ln]) == 1
+    assert "publish" in load(ctx.layout)["parts"]
+
+
+def test_stderr_noise_next_to_a_valid_card_still_pins(home):
+    """The card is read from stdout only; the real runner drops stderr."""
+    ctx, out, err, calls = make(home)
+    ctx.card_out.append(json.dumps(_card()) + "\n")
+    _install(ctx, out, err, "hub", "--address", "127.0.0.1")
+    _install(ctx, out, err, "publish", "--address", "127.0.0.1")
+    assert [c[-1] for c in _trusts(calls)] == [HUB_ID]
+
+
+def test_the_real_orch_hub_card_is_accepted(tmp_path, capsys):
+    """Integration: the real `orch-hub keys init` and `keys card`, run in this process through the hub's own CLI
+    entry (skipped when orch-hub is not importable here). In process, not `python -m orch_hub`: in CI the hub is
+    importable here only through this interpreter's test path, which a child process does not inherit."""
+    hub_cli = pytest.importorskip("orch_hub.cli")
+    state = str(tmp_path / "hub")
+    assert hub_cli.main(["keys", "--state", state, "init"]) == 0
+    # as `orch install hub` does right after a successful key init: the folder becomes a marked data root (P1-B)
+    cli._mark_root(tmp_path / "hub", "hub", born=True)
+    capsys.readouterr()  # init's own output is not the card
+    assert hub_cli.main(["keys", "--state", state, "card"]) == 0
+    got = cli._card_hub_id(capsys.readouterr().out)
+    assert got is not None and len(got) == 32
+
+
+def test_run_stdout_drops_stderr():
+    rc, out = cli._run_stdout(["sh", "-c", "echo noise >&2; echo '{}'"])
+    assert (rc, out) == (0, "{}\n")

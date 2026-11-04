@@ -1,10 +1,12 @@
+import onePressOps from '../../../../../contracts/core/click_one_press_ops.json'
 // A fake dashboard server for the production app (M4): the fetch the app makes is answered here from plain data, so a
 // test reads exactly what the page asked for and what it posted. The hand-off requests it returns have hashes that
 // recompute, like the real server's (`api/handoff.ts`), so the app accepts them.
 import { QueryClientProvider } from '@tanstack/react-query'
-import { render } from '@testing-library/react'
-import { afterEach, beforeEach, vi } from 'vitest'
+import { fireEvent, render, within } from '@testing-library/react'
+import { afterEach, beforeEach, onTestFinished, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
+import * as gesture from '@/components/sign/trustedPress'
 import { fingerprintOf, reviewDigestOf, type HandoffEvent, type HandoffRequest } from '@/api/handoff'
 import type { HostGrant, HostSettings, RosterMember } from '@/api/settings'
 import type { Role } from '@/api/types'
@@ -196,14 +198,17 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
-    case 'icon_set':
-      return workspaceRequest('settings.set', { type: 'settings.changed', set: { icon: body.icon } })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
+    case 'addon_enable':
+      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'publish_share':
       return workspaceRequest('publish.share', { type: 'log.added', text: `Publish approval: share files outside this computer\nStaged copy: ${String(body.staged_id)}` })
+    case 'market_update':
+      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name, staged: body.staged, package_sha256: body.digest, capabilities: body.caps })
     case 'market_grant':
-      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name, staged: body.staged })
+      if (body.settings && Object.keys(body.settings).length) return workspaceRequest('settings.set', { type: 'settings.changed', set: { addons: { [String(body.name)]: body.settings } } })
+      return workspaceRequest('addon.grant', { ...(body.grant as Record<string, unknown>), type: 'addon.granted', name: body.name, staged: body.staged })
     case 'addon_grant':
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'addon_disable':
@@ -219,13 +224,51 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
   }
 }
 
+/** C3: core's `ONE_PRESS_OPS`, the closed allowlist of daily ops whose View has no risk lines (one press signs). */
+export const ONE_PRESS_OPS: ReadonlySet<string> = new Set(onePressOps)
+
+/**
+ * C3: the fake signer's risk lines (contract 4), after core: none for an op of `ONE_PRESS_OPS` (it signs at the end of
+ * the 1 s arm); every other op has at least one (its specific words, else the fail-closed line), so it needs the
+ * second press.
+ */
+export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>, body: Record<string, unknown> = {}): string[] {
+  if (body.agent) return ['FROM-THE-SIGNER risk: agents can act for you on tickets'] // a task started with agent access
+  if (ONE_PRESS_OPS.has(request.op)) return []
+  const payload = (request.material as unknown as { review?: { payload?: Record<string, unknown> }[] } | undefined)?.review?.[0]?.payload ?? {}
+  const set = (payload.set ?? {}) as Record<string, unknown>
+  switch (request.op) {
+    case 'addon.grant':
+      return [`FROM-THE-SIGNER risk: the add-on ${String(payload.name)} gets its capabilities`]
+    case 'member.role':
+      return payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : ['FROM-THE-SIGNER risk: who can do what changes']
+    case 'member.add':
+      return ['FROM-THE-SIGNER risk: a person is added to this workspace', ...(payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : [])]
+    case 'settings.set':
+      return 'publish' in set ? ['FROM-THE-SIGNER risk: files can be published outside this computer'] : ['FROM-THE-SIGNER risk: not a daily action']
+    case 'publish.share':
+      return ['FROM-THE-SIGNER risk: files are shared outside this computer']
+    case 'addon.purge':
+      return ['FROM-THE-SIGNER risk: the add-on data is deleted']
+    case 'grant':
+    case 'hub.join':
+    case 'hub.mode':
+    case 'hub.leave':
+    case 'device.remove':
+    case 'schedule.add':
+      return [`FROM-THE-SIGNER risk: ${request.op}`]
+    default:
+      return ['FROM-THE-SIGNER risk: not a daily action'] // fail closed, like core, for any op outside ONE_PRESS_OPS
+  }
+}
+
 export class FakeHost {
   calls: Call[] = []
   workspaces: FakeWs[]
   requests = new Map<string, HandoffRequest>()
   cancelled: string[] = []
   /** Click-to-sign: what the fake signer was asked, and the Views it shows (by request id). */
-  clickRequests = new Map<string, { op: string; confirm: 'click' }>()
+  clickRequests = new Map<string, { op: string; confirm: 'click'; risk: string[] }>()
   clickCancelled: string[] = []
   clickSigned: Record<string, unknown>[] = []
   clickCount = 0
@@ -296,6 +339,12 @@ export class FakeHost {
     if (rest === 'versions') return ws.versions === undefined ? missing() : json(ws.versions)
     if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
+    // D6: the name and icon, one unsigned PUT; it answers the new values.
+    if (rest === 'workspace/cosmetic' && method === 'PUT') {
+      if (typeof body?.name === 'string') ws.name = body.name
+      const icon = body?.icon !== undefined ? body.icon : ((body?.if_current as { icon?: unknown } | undefined)?.icon ?? null)
+      return json({ name: ws.name, icon })
+    }
     if (rest === 'repos/check' && method === 'POST') {
       return String(body?.path).startsWith('/refused')
         ? json({ ok: false, error: { code: 'invalid.input', message: 'This folder is not a git repository.', retryable: false } }, 400)
@@ -307,10 +356,15 @@ export class FakeHost {
       return json(request)
     }
     if (rest === 'click/prepare' && method === 'POST') {
+      if (['quick_start', 'new_sequence'].includes(String(body?.action)) && body?.agent)
+        return json({ ok: false, exit: 3, error: { code: 'human.click_refused', reason: 'terminal_only', message: 'Agent access needs its own grant confirmation. Create without starting first.', retryable: false } }, 409)
+      // Core: a One click workspace admits a new reader only with its declaration (H12d, `sign.convenience_readers`).
+      if (body?.action === 'member_add' && ws.click?.enabled && typeof body.reader_decl !== 'string')
+        return json({ ok: false, exit: 3, error: { code: 'sign.convenience_readers', message: 'd_x would read a workspace with convenience signatures and has not declared that it understands them', retryable: false, hint: 'orch keys reader declare --enrol', fix: 'orch member add --reader-decl PATH', detail: { reason: 'no_declaration', devices: [] } } }, 409)
       const request = prepare(body!)
       const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
       const confirm = 'click'
-      this.clickRequests.set(id, { op: request.op, confirm })
+      this.clickRequests.set(id, { op: request.op, confirm, risk: riskLinesFor(request) })
       return json({ request_id: id, expires_at: request.expires_at, op: request.op, confirm })
     }
     if (rest === 'click/view' && method === 'POST') {
@@ -319,6 +373,8 @@ export class FakeHost {
       return json({
         view_digest: 'sha256:' + '9'.repeat(64),
         view: {
+          headline: `FROM-THE-SIGNER headline ${got.op}`,
+          risk_lines: got.risk,
           risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.',
           op: got.op,
           workspace: { id: ws.id, name: ws.name, prefix: ws.prefix },
@@ -355,6 +411,8 @@ export class FakeHost {
   }
 
   posts = () => this.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/handoff'))
+  /** What the page asked the signer to prepare (the One click path). */
+  clickPrepares = () => this.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/click/prepare'))
   deletes = () => this.calls.filter((c) => c.method === 'DELETE')
 }
 
@@ -372,6 +430,31 @@ export function useFakeHost(make: () => FakeWs[]) {
     vi.unstubAllGlobals()
   })
   return state
+}
+
+/** One click on for this workspace, and fireEvent standing in for a real press of the outcome button (call before `show`). */
+export function clickOn(ws: FakeWs) {
+  const spy = vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  onTestFinished(() => spy.mockRestore())
+  ws.click = { custody: 'convenience', enabled: true, available: true }
+  if (!ws.features.includes('click')) ws.features = [...ws.features, 'click']
+}
+
+/**
+ * From here on, every press stands in for a trusted one (jsdom and userEvent events are untrusted), judged by the
+ * real rule: a key auto-repeat still blocks it. The armed Sign signs only on a trusted press.
+ */
+const realTrusted = gesture.trustedPress // captured before any test spies on it
+export function trustedPresses() {
+  const spy = vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => realTrusted({ isTrusted: true, repeat: e.repeat }))
+  onTestFinished(() => spy.mockRestore())
+  return spy
+}
+
+/** Presses the review's outcome button: the signer prepares and its View shows (no terminal hand-off). */
+export async function prepareByClick(scope: HTMLElement, name: string | RegExp) {
+  fireEvent.click(await within(scope).findByRole('button', { name }, { timeout: 5000 }))
+  return within(scope).findByTestId('click-panel', {}, { timeout: 5000 })
 }
 
 export function show(path: string) {

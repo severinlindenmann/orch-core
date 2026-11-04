@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Link } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { Pill } from '../../ticket/shared'
+import { useHub } from '../hub/shared'
 
 export const NEEDS_UPDATE = 'Needs an update of the orch app'
 
@@ -41,6 +42,8 @@ export function ReaderLevels({ ws }: { ws: string }) {
   const roster = useQuery({ ...queries.roster(ws), enabled: served })
   const click = useQuery({ queryKey: ['click-status', ws], queryFn: () => api.clickStatus(ws), enabled: served })
   const mine = click.data?.device
+  const hub = useHub(ws)
+  const joined = hub.data?.joined === true || (hub.isPending && hub.fetchStatus !== 'idle') // not asked yet: no stale line
   return (
     <section className="space-y-3" aria-labelledby="readers-heading" data-testid="reader-levels">
       <h2 id="readers-heading" className="text-base font-semibold">
@@ -57,15 +60,15 @@ export function ReaderLevels({ ws }: { ws: string }) {
       ) : !readers.data ? (
         <p className="text-[13px] text-text-muted">Loading…</p>
       ) : (
-        <ReaderPanel readers={readers.data.readers} required={readers.data.required_reader} roster={roster.data} mine={mine} />
+        <ReaderPanel readers={readers.data.readers} required={readers.data.required_reader} roster={roster.data} mine={mine} joined={joined} />
       )}
     </section>
   )
 }
 
 /** This computer is the signer: it is shown as ready and never counted (the host's gate skips it too). With no other
- * device the table and its warning do not appear at all: "Only this computer approves for now" + Connect a hub. */
-function ReaderPanel({ readers, required, roster, mine }: { readers: HostReader[]; required: number | null; roster: RosterMember[] | undefined; mine: string | undefined }) {
+ * device the table and its warning do not appear at all: "Only this computer approves for now" (+ Connect a hub until a hub is joined). */
+function ReaderPanel({ readers, required, roster, mine, joined }: { readers: HostReader[]; required: number | null; roster: RosterMember[] | undefined; mine: string | undefined; joined: boolean }) {
   const others = readers.filter((r) => r.device !== mine)
   return (
     <div className="space-y-3">
@@ -79,10 +82,14 @@ function ReaderPanel({ readers, required, roster, mine }: { readers: HostReader[
       {others.length === 0 ? (
         <div data-testid="only-this-computer" className="space-y-2 rounded-md border border-border px-3 py-3 text-[13px]">
           <b>Only this computer approves for now</b>
-          <p className="text-text-muted">To add a phone or another computer, connect a hub first.</p>
-          <Link data-testid="readers-connect-hub" to="/settings/$tab" params={{ tab: 'hub' }} className="inline-block rounded-md border border-border px-3 py-1 text-chart-4 underline">
-            Connect a hub
-          </Link>
+          {!joined && (
+            <>
+              <p className="text-text-muted">To add a phone or another computer, connect a hub first.</p>
+              <Link data-testid="readers-connect-hub" to="/settings/$tab" params={{ tab: 'hub' }} className="inline-block rounded-md border border-border px-3 py-1 text-chart-4 underline">
+                Connect a hub
+              </Link>
+            </>
+          )}
         </div>
       ) : (
         <ReaderTable readers={others} required={required} roster={roster} />

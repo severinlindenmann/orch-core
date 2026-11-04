@@ -114,6 +114,16 @@
         ]
       },
       {
+        "code": "sign.cancelled",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run it again to review",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
         "code": "transition.refused",
         "exit": 3,
         "retryable": false,
@@ -121,6 +131,16 @@
         "fix": [
           "orch",
           "show"
+        ]
+      },
+      {
+        "code": "tty.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run it in your terminal",
+        "fix": [
+          "orch",
+          "help"
         ]
       },
       {

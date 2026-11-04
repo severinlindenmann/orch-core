@@ -89,6 +89,69 @@
         "summary": "Release your claim without a handoff."
       },
       {
+        "name": "follow_up",
+        "cli": "follow-up",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Schedule a fresh session, release your claim, then end this session."
+      },
+      {
+        "name": "follow_up.cancel",
+        "cli": "follow-up cancel",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Cancel a pending follow-up."
+      },
+      {
+        "name": "follow_up.show",
+        "cli": "follow-up show",
+        "group": "Read",
+        "who": "read",
+        "summary": "Show a follow-up and its brief."
+      },
+      {
+        "name": "follow_up.list",
+        "cli": "follow-up list",
+        "group": "Read",
+        "who": "read",
+        "summary": "List pending follow-ups across visible tickets."
+      },
+      {
+        "name": "schedule.add",
+        "cli": "schedule add",
+        "group": "Lifecycle",
+        "who": "human",
+        "summary": "Schedule automatic agent sessions on an existing ticket or a new ticket each run, for up to 30 days."
+      },
+      {
+        "name": "schedule.cancel",
+        "cli": "schedule cancel",
+        "group": "Lifecycle",
+        "who": "human",
+        "summary": "Cancel future runs; existing-ticket run grants also end."
+      },
+      {
+        "name": "schedule.list",
+        "cli": "schedule list",
+        "group": "Read",
+        "who": "read",
+        "summary": "List manual schedules across visible tickets."
+      },
+      {
+        "name": "schedule.show",
+        "cli": "schedule show",
+        "group": "Read",
+        "who": "read",
+        "summary": "Show a schedule and its signed brief."
+      },
+      {
+        "name": "webhook.new",
+        "cli": "webhook new",
+        "group": "Lifecycle",
+        "who": "read",
+        "summary": "Make a doorbell address that wakes one follow-up when an outside job calls it."
+      },
+      {
         "name": "handoff",
         "cli": "handoff",
         "group": "Lifecycle",
@@ -276,6 +339,20 @@
         "group": "Human only",
         "who": "human",
         "summary": "Close a ticket without finishing it."
+      },
+      {
+        "name": "follow_up.reschedule",
+        "cli": "follow-up reschedule",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Move a follow-up's due time or event deadline."
+      },
+      {
+        "name": "follow_up.undo",
+        "cli": "follow-up undo",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Undo your follow-up cancellation within 120 seconds."
       },
       {
         "name": "reopen",

@@ -18,7 +18,19 @@ from typing import Any
 
 from .client import PublishClient, PublishError, share_target
 
-__all__ = ["commit", "list_shares", "meta_bytes", "put_file", "put_meta", "revoke", "token_hash"]
+__all__ = [
+    "commit",
+    "extend",
+    "list_shares",
+    "meta_bytes",
+    "put_app_file",
+    "put_app_meta",
+    "put_file",
+    "put_meta",
+    "revoke",
+    "set_password",
+    "token_hash",
+]
 
 
 def token_hash(token: str) -> str:
@@ -27,7 +39,16 @@ def token_hash(token: str) -> str:
 
 
 def meta_bytes(
-    *, ticket: str, kind: str, expires_ms: int, view_limit: int, token_hash_hex: str, files: Iterable[Mapping[str, Any]]
+    *,
+    ticket: str,
+    kind: str,
+    expires_ms: int,
+    view_limit: int,
+    token_hash_hex: str,
+    files: Iterable[Mapping[str, Any]],
+    label: str | None = None,
+    by_kind: str | None = None,
+    by_name: str | None = None,
 ) -> bytes:
     """The manifest body, byte-stable: the same arguments always give the same bytes (a re-PUT is ``unchanged``)."""
     doc = {
@@ -38,6 +59,12 @@ def meta_bytes(
         "token_hash": token_hash_hex,
         "files": [{"path": f["name"], "size": f["size"], "sha256": f["sha256"]} for f in files],
     }
+    if label is not None:  # display members (the company list): asserted text only, omitted when not given
+        doc["label"] = label
+    if by_kind is not None:
+        doc["by_kind"] = by_kind
+    if by_name is not None:
+        doc["by_name"] = by_name
     return json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
 
 
@@ -51,6 +78,21 @@ def put_file(client: PublishClient, workspace_id: str, share_id: str, name: str,
     return got if isinstance(got, dict) else {}
 
 
+def put_app_meta(client: PublishClient, workspace_id: str, app_id: str, version: str, meta: bytes) -> dict[str, Any]:
+    """``PUT apps/<id>/versions/<n>`` (#1455): the stored meta of one app version. Stores nothing live: only a commit
+    carrying the owner's approval serves it."""
+    got = client.request("PUT", share_target(workspace_id, "apps", app_id, "versions", version), meta).json()
+    return got if isinstance(got, dict) else {}
+
+
+def put_app_file(
+    client: PublishClient, workspace_id: str, app_id: str, version: str, path: str, data: bytes
+) -> dict[str, Any]:
+    parts = ("apps", app_id, "versions", version, "files", *path.split("/"))
+    got = client.request("PUT", share_target(workspace_id, *parts), data).json()
+    return got if isinstance(got, dict) else {}
+
+
 def commit(client: PublishClient, workspace_id: str, share_id: str) -> dict[str, Any]:
     got = client.request("POST", share_target(workspace_id, "shares", share_id, "commit"), b"", idempotent=True).json()
     return got if isinstance(got, dict) else {}
@@ -58,6 +100,24 @@ def commit(client: PublishClient, workspace_id: str, share_id: str) -> dict[str,
 
 def revoke(client: PublishClient, workspace_id: str, share_id: str) -> dict[str, Any]:
     got = client.request("DELETE", share_target(workspace_id, "shares", share_id)).json()
+    return got if isinstance(got, dict) else {}
+
+
+def extend(client: PublishClient, workspace_id: str, share_id: str, days: int) -> dict[str, Any]:
+    """``POST shares/<id>/extend {days}``: the link ends ``days`` (1..30) from the server's now. Not resent after a lost
+    answer (the second try would be refused as not longer): the caller lists the shares to see what happened."""
+    body = json.dumps({"days": days}, separators=(",", ":")).encode()
+    got = client.request("POST", share_target(workspace_id, "shares", share_id, "extend"), body).json()
+    return got if isinstance(got, dict) else {}
+
+
+def set_password(client: PublishClient, workspace_id: str, share_id: str, record: Mapping[str, Any]) -> dict[str, Any]:
+    """``POST shares/<id>/password {pw: record}``: ``record`` is the host-made C5 record, never a plain password.
+    Setting the same record again is safe, so a lost answer is retried."""
+    body = json.dumps({"pw": dict(record)}, sort_keys=True, separators=(",", ":")).encode()
+    got = client.request(
+        "POST", share_target(workspace_id, "shares", share_id, "password"), body, idempotent=True
+    ).json()
     return got if isinstance(got, dict) else {}
 
 

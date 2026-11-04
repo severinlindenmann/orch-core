@@ -1,5 +1,5 @@
 // Create and remove a worktree as the person. Both are dashboard-direct host writes (no signature): the host applies
-// its own rules (who may, the Worktrees add-on, the helper that runs git, a rate limit) and says no in a code that this
+// its own rules (who may, the Work copies add-on, the helper that runs git, a rate limit) and says no in a code that this
 // file turns into words. One idem per dialog opening, kept for every retry, so a retry never makes a second worktree.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'

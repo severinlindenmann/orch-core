@@ -8,18 +8,16 @@ from __future__ import annotations
 
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
-from channels_helpers import PW
+from channels_helpers import PW, wall_codes
 from custodial_helpers import LOG, WK
 from test_browser_s5 import NODE, playwright_path
 from test_serve_wired import WS, host_link, hub  # noqa: F401  (the wired hub fixture)
 from view_helpers import OWNER, Host
 
 from orch_hub.access import ADMIN_GROUP, Access
-from orch_hub.channels.service import totp_code
 from orch_hub.contract import vectorgen as G
 
 pytestmark = pytest.mark.slow
@@ -39,15 +37,14 @@ def test_a6_home_and_admin_console_in_a_browser(hub):  # noqa: F811
     acc.add_member(ADMIN_GROUP, hub["user"])  # the signed-in person is a hub-admin, so the Admin tab shows
     acc.close()
 
-    while (time.time() % 30) > 20:
-        time.sleep(0.5)
+    (code_signin,) = wall_codes(hub["secret"], (-1,), left_s=10)  # the run stays inside this step
     env = {
         **os.environ,
         "NODE_PATH": playwright_path(),
         "HUB_URL": f"http://127.0.0.1:{hub['web'].port}",
         "HUB_USER": hub["user"],
         "HUB_PW": PW,
-        "CODE_SIGNIN": totp_code(hub["secret"], int(time.time()) // 30 - 1),
+        "CODE_SIGNIN": code_signin,
     }
     script = Path(__file__).parent / "js" / "browser_a6.mjs"
     r = subprocess.run([NODE, str(script)], env=env, capture_output=True, text=True, timeout=120, check=False)

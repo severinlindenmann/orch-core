@@ -4,6 +4,7 @@ import { STATUSES, type TicketSummary } from '@/api/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { CardFields, type BoardPeople } from './TicketCard'
+import { ScheduledMark } from './scheduled'
 import { PRIORITY_RANK, PriorityMarker, TypeIcon } from './lib'
 import { fmtWhen } from '@/lib/time'
 import { statusLabel } from '@/app/pages/ticket/shared'
@@ -89,6 +90,7 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
                 <span className="inline-flex items-center gap-1.5">
                   <TypeIcon type={t.type} />
                   {t.key}
+                  <ScheduledMark ticketKey={t.key} />
                   {t.restricted && <Lock role="img" aria-label="Restricted" className="size-3 text-text-faint" />}
                 </span>
               </TableCell>

@@ -5,17 +5,20 @@ Opening (10.1): dial, handshake TLS 1.3, compare the hub certificate's SPKI hash
 with ``Sign(WSK, link_auth bytes over challenge and this connection's TLS exporter)``, wait for ``ready``. Pre-auth
 refusals arrive as one unsigned ``{"t": "error"}`` frame and the link closes.
 
-Messages (10.2): :meth:`LinkClient.send` carries one already signed w2h ``hub.link`` object and returns the h2w reply
-after verifying it under the card's ``HK_op`` (signature, direction, ``op``, ``re`` == the request's ``seq``, hub,
-workspace, clock window, reply body shape). It is the ``HubTransport`` shape C2a's ``HubLink`` uses. Only the closed
-w2h operation list is ever sent. Any failure after the hub spoke closes the link; a signed ``{"error": code}`` reply
-raises :class:`LinkError` and keeps it open.
+Messages (10.2): :meth:`LinkClient.send_next` numbers one w2h ``hub.link`` request, lets the caller sign it over this
+connection's TLS exporter and returns the h2w reply after verifying it under the card's ``HK_op`` (signature over the
+same exporter, direction, ``op``, ``re`` == the request's ``seq``, hub, workspace, clock window, ``seq`` == the last h2w
+frame + 1, reply body shape). It is the ``HubTransport`` shape C2a's ``HubLink`` uses. Only the closed w2h operation
+list is ever sent. Every signature binds the exporter (never sent) and ``seq`` counts per direction and connection from
+1: a message is valid on one connection only (R1). Any failure after the hub spoke closes the link; a signed
+``{"error": code}`` reply raises :class:`LinkError` and keeps it open.
 
 ``sign`` is a callable over the full message (label || data), the same shape as C2a's ``wire.Sign``: core's custody
 decides what it may sign. Nothing here logs keys, signatures or message bodies."""
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -26,12 +29,15 @@ from orch.canon.jcs import dumps as cj
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
 
+from ..linkaddr import LinkAddr
+from ..netconfig import NetSettings
 from . import framing, tls
 from .framing import FrameError
 from .tls import LinkClosed, LinkTimeout, PinMismatch
 
 __all__ = [
     "LINK_WINDOW_MS",
+    "STREAM_LINK_ALPN",
     "W2H_OPS",
     "LinkClient",
     "LinkError",
@@ -46,7 +52,12 @@ SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
 SIG_LINK_AUTH = b"orch/v2/sig/hub-link-auth|"
 HV = 0
-#: Most h2w requests (``route_in``, ``event_deliver``) kept per queue while the host drains only the other one.
+#: R4 (#1592): the ALPN protocol of a host's dedicated stream link (protocol 10.2c). The hub attaches such a link to its
+#: stream router only and accepts on it stream frames, ``stream_open`` replies and ``hub_where``; a plain link never
+#: carries streams.
+STREAM_LINK_ALPN = b"orch-link-streams/1"
+#: Most h2w requests (``route_in``, ``event_deliver``, ``closing_notice``) kept per queue while the host drains
+#: only the other ones.
 MAX_QUEUED = 64
 LINK_WINDOW_MS = 120_000
 MODES = ("selective", "full")
@@ -56,6 +67,11 @@ W2H_OPS: dict[str, str | None] = {
     "card_put": None,
     "binding_put": None,
     "snapshot_get": None,
+    "org_skills_get": None,
+    "closing_get": None,  # #1463 (hub protocol 9.7): {} -> {"closing": <hub.closing> | null}
+    "mcp_servers_get": None,
+    "org_secrets_get": None,
+    "secret_use": None,
     "publish_out": None,
     "route_out": None,
     "audit_ack": None,
@@ -64,13 +80,54 @@ W2H_OPS: dict[str, str | None] = {
     "space_put": None,
     "space_revoke": None,
     "space_get": None,
-    "share_put": "selective",
-    "share_revoke": "selective",
+    "switch_ticket": None,
+    "switch_redeem": None,
+    "rail_get": None,
+    "owner_get": None,
+    "hub_where": None,
+    "agent_events": "full",
+    "hook_put": None,
+    "hook_revoke": None,
+    "hook_pull": None,
+    "hook_ack": None,
+    "status_put": None,  # R14b: this list lacked the display ops, so a real link refused them as unknown_op
+    "addon_request": None,
+    "profile_put": None,
+    "directory_get": None,
+    "audience_get": None,
+    "shared_get": None,
+    "share_put": None,
+    "share_revoke": None,
     "wk_seal": "full",
     "log_sync": "full",
 }
+NAME_MAX, KIND_MAX = 64, 32
+
+
+def space_list_reply_ok(b: dict[str, Any]) -> bool:
+    """``{"spaces": [hub.space], "meta": {space_id: {"name", "kind"}}}``: ``meta`` only names listed spaces and each
+    value is exactly name and kind, short printable strings (unsigned display data; vectors_space_list.json)."""
+    if set(b) != {"spaces", "meta"} or type(b["spaces"]) is not list or type(b["meta"]) is not dict:
+        return False
+    ids = set()
+    for r in b["spaces"]:
+        o = r.get("o") if type(r) is dict else None
+        sid = o.get("space_id") if type(o) is dict else None
+        if type(sid) is not str:
+            return False
+        ids.add(sid)
+    for sid, m in b["meta"].items():
+        if sid not in ids or type(m) is not dict or set(m) != {"name", "kind"}:
+            return False
+        for k, cap in (("name", NAME_MAX), ("kind", KIND_MAX)):
+            v = m[k]
+            if type(v) is not str or len(v) > cap or not v.isprintable():
+                return False
+    return True
+
+
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
-    "space_list": lambda b: set(b) == {"spaces"} and type(b["spaces"]) is list,
+    "space_list": lambda b: space_list_reply_ok(b),
     "space_put": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_revoke": lambda b: set(b) == {"seq"} and type(b["seq"]) is int,
     "space_get": lambda b: (
@@ -81,6 +138,71 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         and type(b["next"]) is int
         and type(b.get("records", [])) is list
     ),
+    "switch_ticket": lambda b: set(b) == {"ticket", "url"} and type(b["ticket"]) is str and type(b["url"]) is str,
+    "switch_redeem": lambda b: (
+        set(b) == {"user_id", "name", "return_to", "kind"}
+        and type(b["user_id"]) is str
+        and type(b["return_to"]) is str
+        and b["kind"] in ("open", "signout")
+    ),
+    "rail_get": lambda b: (
+        set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
+    ),
+    "hub_where": lambda b: (
+        set(b) - {"publish", "publish_where"} == {"addresses", "name"}
+        and type(b["addresses"]) is list
+        and type(b["name"]) is str
+        and type(b.get("publish_where", {})) is dict  # signed; verified by the host (publish_where.py), not here
+    ),
+    # #1838 (protocol 10.9.1): the join answer is {} or {"publish_where": <signed hub.publish_where>}; no other member.
+    # The value is not judged here: the join is already committed at the hub, so a bad one is dropped by the host
+    # (service._join) and the join stands.
+    "join": lambda b: b == {} or set(b) == {"publish_where"},
+    "status_put": lambda b: (  # HUB-WS-04: `{}` or the optional update request (the version only, never text)
+        b == {}
+        or (
+            set(b) == {"update_requested"}
+            and type(b["update_requested"]) is dict
+            and set(b["update_requested"]) == {"target_version"}
+            and type(b["update_requested"]["target_version"]) is str
+            and re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", b["update_requested"]["target_version"]) is not None
+        )
+    ),
+    "owner_get": lambda b: set(b) == {"user_id"} and type(b["user_id"]) is str,
+    # #1285 (protocol 10.11): the webhook inbox; the ring rows carry a token hash and closed words, never text
+    "hook_put": lambda b: (
+        set(b) == {"url_base"}
+        and type(b["url_base"]) is str
+        and re.fullmatch(r"https?://[^\s/?#]+/h/", b["url_base"]) is not None
+    ),
+    "hook_revoke": lambda b: b == {},
+    "hook_pull": lambda b: (
+        set(b) == {"rings", "head"}
+        and type(b["rings"]) is list
+        and len(b["rings"]) <= 50
+        and type(b["head"]) is int
+        and all(
+            type(r) is dict
+            and set(r) == {"seq", "token_hash", "source", "kind", "received_at"}
+            and type(r["seq"]) is int
+            and r["seq"] >= 1
+            and type(r["token_hash"]) is str
+            and re.fullmatch(r"[0-9a-f]{64}", r["token_hash"]) is not None
+            and r["source"] in ("github", "generic", "databricks")
+            and r["kind"] == "hook.rang"
+            and type(r["received_at"]) is int
+            and r["received_at"] >= 0
+            for r in b["rings"]
+        )
+    ),
+    "hook_ack": lambda b: set(b) == {"acked"} and type(b["acked"]) is int,
+    "shared_get": lambda b: set(b) == {"items"} and type(b["items"]) is list,
+    "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,
+    "directory_get": lambda b: set(b) == {"entries"} and type(b["entries"]) is list,
+    "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
+    "closing_get": lambda b: set(b) == {"closing"} and (b["closing"] is None or type(b["closing"]) is dict),
+    "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
+    "org_secrets_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,
     "route_out": lambda b: set(b) == {"state"} and b["state"] in ("forwarded", "queued"),
     "snapshot_get": lambda b: set(b) == {"snapshot"} and type(b["snapshot"]) is dict,
@@ -88,6 +210,37 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         set(b) == {"status", "body_hex"} and type(b["status"]) is int and type(b["body_hex"]) is str
     ),
 }
+#: R2 remote streams (protocol 10.2c): h2w ``stream_open`` (a request) and the one-way ``stream_data`` /
+#: ``stream_close`` (both directions, ``re`` null). A w2h ``stream_open`` does not exist (``unknown_op``).
+STREAM_H2W = ("stream_open", "stream_data", "stream_close")
+STREAM_W2H = ("stream_data", "stream_close")
+STREAM_FRAME_MAX = 65535
+STREAM_REASONS = (
+    "closed", "idle", "expired", "revoked", "handshake", "presence", "too_large", "malformed",
+    "remote.off", "remote.device", "remote.busy", "remote.no_code", "remote.version",
+)  # fmt: skip
+_HEX32, _RD, _RC = (re.compile(p) for p in (r"[0-9a-f]{32}", r"rd_[0-9a-f]{32}", r"rc_[0-9a-f]{32}"))
+
+
+def stream_body_ok(op: str, b: Any) -> bool:
+    """The body shape of a stream op (protocol 10.2c); the contents are judged by the host's gate, not here."""
+    if type(b) is not dict or type(b.get("stream_id")) is not str or _HEX32.fullmatch(b["stream_id"]) is None:
+        return False
+    if op == "stream_open":
+        k, d = b.get("kind"), b.get("device_id")
+        if set(b) != {"stream_id", "device_id", "kind"} or k not in ("session", "enroll") or type(d) is not str:
+            return False
+        return (_RD if k == "session" else _RC).fullmatch(d) is not None
+    if op == "stream_close":
+        return set(b) == {"stream_id", "reason"} and b["reason"] in STREAM_REASONS
+    if set(b) != {"stream_id", "seq", "bytes"} or type(b["seq"]) is not int or b["seq"] < 1:
+        return False
+    try:
+        return 1 <= len(unb64u(b["bytes"])) <= STREAM_FRAME_MAX
+    except EncodingError:
+        return False
+
+
 _HEAD_FIELDS = {"v", "suite", "kind", "hv", "hub_id", "workspace_id", "dir", "seq", "ts_ms", "op", "re", "body"}
 
 
@@ -111,8 +264,35 @@ def link_auth_bytes(hub_id: str, workspace_id: str, challenge: bytes, exporter: 
         raise LinkError("malformed") from None
 
 
+def link_signed_bytes(label: bytes, exporter: bytes, o: dict[str, Any]) -> bytes:
+    """What a link message signature covers: ``label || exporter || cj(o)`` (protocol 10.2)."""
+    if type(exporter) is not bytes or len(exporter) != 32:
+        raise LinkError("malformed")
+    try:
+        return label + exporter + cj(o)
+    except JcsError:
+        raise LinkError("malformed") from None
+
+
 def _code(x: Any) -> str:
     return x if type(x) is str and 0 < len(x) <= 40 else "malformed"
+
+
+class _FairLock:
+    """A mutex whose waiters are served in turn. The link's readers (``next_route_in``, ``next_stream``, ...) wait for
+    the socket WHILE holding the lock; with a plain ``threading.Lock`` the thread that just released it takes it
+    again at once and a second reader (the remote stream pump beside the ws->ws loop) can starve for seconds. A waiter
+    holds ``_gate`` while it waits for ``_lock``, so the releasing thread has to queue behind it."""
+
+    def __init__(self) -> None:
+        self._gate, self._lock = threading.Lock(), threading.Lock()
+
+    def __enter__(self) -> None:
+        with self._gate:
+            self._lock.acquire()
+
+    def __exit__(self, *exc: object) -> None:
+        self._lock.release()
 
 
 class LinkClient:
@@ -132,7 +312,8 @@ class LinkClient:
     ) -> None:
         self._c, self.hub_id, self.workspace_id, self._hk_op = conn, hub_id, workspace_id, hk_op_pub
         self.mode, self._now, self._t, self._max = mode, now_ms, timeout, max_frame
-        self._lock = threading.Lock()
+        self._lock = _FairLock()
+        self._ov_mu = threading.Lock()  # guards ``_overflow`` alone: the pump reads it without waiting on the link
         self._open = True
         self._sign: Callable[[bytes], bytes] | None = None
         self._seq = 0  # the highest w2h seq used on this link (requests carry the caller's, acks continue from here)
@@ -140,7 +321,13 @@ class LinkClient:
         self._pending: dict[str, Any] | None = None  # the handed-out one, awaiting its ack
         self._events: list[dict[str, Any]] = []  # verified h2w ``event_deliver`` requests (custodial events, p4)
         self._pending_ev: dict[str, Any] | None = None
-        self._last_in = 0  # highest h2w request seq accepted (route_in and event_deliver share the hub's counter)
+        self._closings: list[dict[str, Any]] = []  # verified h2w ``closing_notice`` requests (#1463, protocol 9.7)
+        self._pending_cn: dict[str, Any] | None = None
+        self._streams: list[dict[str, Any]] = []  # verified h2w stream_open / stream_data / stream_close (R2)
+        self._overflow: list[str] = []  # streams that lost an h2w frame to a full queue (F3)
+        self._open_reqs: set[int] = set()  # handed-out stream_open requests (by h2w seq) awaiting their answer
+        self._cb = conn.exporter()  # this connection's TLS exporter: every signature of the link binds it (R1)
+        self._last_in = 0  # the h2w seq of the last frame accepted (replies and pushes share the hub's counter)
 
     @staticmethod
     def open(
@@ -157,10 +344,18 @@ class LinkClient:
         timeout: float = 10.0,
         max_frame: int = framing.MAX_FRAME,
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+        alpn: bytes | None = None,
+        addr: LinkAddr | None = None,
+        net: NetSettings,
     ) -> LinkClient:
-        """Open and authenticate. ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the
-        workspace yet); otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's
-        certificate is not the card's, ``LinkError`` for a refusal, ``LinkClosed`` / ``LinkTimeout`` otherwise."""
+        """Open and authenticate. ``host``/``port`` are where to connect (a checked IP for a name); ``addr`` is the
+        parsed address (``ws(s)://`` forms included) that names the transport and the server name, ``net`` the host's
+        proxy settings (:func:`~orch.hubclient.tlslink.tls.dial_link`).
+        ``alpn``: the link's declared role (``STREAM_LINK_ALPN``); the hub must select it,
+        else the link is closed (``LinkError("unsupported")``): it is never used as a plain link.
+        ``wsk_pub`` is passed only for the first link of a join (the hub has not pinned the workspace yet);
+        otherwise leave it ``None``. Raises ``PinMismatch`` before anything is sent when the hub's certificate is
+        not the card's, ``LinkError`` for a refusal, ``LinkClosed`` / ``LinkTimeout`` otherwise."""
         if mode not in MODES:
             raise LinkError("malformed")
         end = time.monotonic() + timeout  # one overall deadline for dial, handshake, challenge and auth
@@ -168,8 +363,14 @@ class LinkClient:
         def left() -> float:
             return max(end - time.monotonic(), 0.001)
 
-        conn = tls.connect_pinned(host, port, tls_spki_sha256, timeout=timeout)
+        a = addr or LinkAddr("tcp", host, port, f"{host}:{port}")
+        conn = tls.dial_link(
+            a, tls_spki_sha256, timeout=timeout, alpn=(alpn,) if alpn else (), net=net,
+            connect_host=host if host != a.host else None,
+        )  # fmt: skip
         try:
+            if alpn is not None and conn.alpn() != alpn:
+                raise LinkError("unsupported")
             ch = framing.read_frame(conn, timeout=left(), max_bytes=max_frame)
             if ch.get("t") == "error":
                 raise LinkError(_code(ch.get("error")))
@@ -208,22 +409,13 @@ class LinkClient:
 
     # --- messages -------------------------------------------------------------------------------------------------
 
-    def send(self, message: dict[str, Any]) -> dict[str, Any]:
-        """``HubTransport.send``: write one signed w2h message, return the verified signed h2w reply. Transport
-        failures raise ``OSError`` subclasses (``LinkClosed``, ``LinkTimeout``); anything the hub sent that fails
-        verification raises :class:`LinkError` and closes the link. A ``route_in`` the hub pushes meanwhile is kept
-        for :meth:`next_route_in`."""
-        o = self._check_request(message)
-        with self._lock:
-            return self._exchange(message, o)
-
     def _exchange(self, message: dict[str, Any], o: dict[str, Any]) -> dict[str, Any]:
         """Write one request and read its reply. The caller holds ``_lock``."""
         if not self._open:
             raise LinkClosed("closed")
         try:
             framing.write_frame(self._c, message, timeout=self._t, max_bytes=self._max)
-            self._seq = max(self._seq, o["seq"])
+            self._seq = o["seq"]
             while True:
                 reply = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
                 if reply.get("t") == "error":  # unsigned link-level refusal; the hub closes
@@ -239,14 +431,17 @@ class LinkClient:
             self.close()
             raise
 
-    def send_next(self, build: Callable[[int], dict[str, Any]]) -> dict[str, Any]:
-        """The one w2h seq allocator of this link: take ``seq`` = the link's highest + 1 under the link lock, let
-        ``build(seq)`` sign the request (inside the lock, so no other frame, call or ack, can take a number in
-        between or overtake it), send it and return the verified signed reply. Every request the host sends on
-        this link goes through here (``HubLink`` via ``TlsTransport``, and :meth:`call`); acks use the same counter."""
+    def send_next(self, build: Callable[[int, bytes], dict[str, Any]]) -> dict[str, Any]:
+        """The one w2h seq allocator of this link: take ``seq`` = the link's last + 1 (1 on a new connection) under the
+        link lock, let ``build(seq, exporter)`` sign the request over this connection's TLS exporter (inside the lock,
+        so no other frame, call or ack, can take a number in between or overtake it), send it and return the verified
+        signed reply. Every request the host sends on this link goes through here (``HubLink`` via ``TlsTransport``,
+        and :meth:`call`); acks use the same counter."""
         with self._lock:
-            message = build(self._seq + 1)
+            message = build(self._seq + 1, self._cb)
             o = self._check_request(message)
+            if o["seq"] != self._seq + 1:
+                raise LinkError("malformed")  # a caller bug: the counter is the link's
             return self._exchange(message, o)
 
     def call(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -256,13 +451,13 @@ class LinkClient:
         if sign is None:
             raise LinkClosed("closed")
 
-        def build(seq: int) -> dict[str, Any]:
+        def build(seq: int, cb: bytes) -> dict[str, Any]:
             o = {
                 "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
                 "workspace_id": self.workspace_id, "dir": "w2h", "seq": seq, "ts_ms": self._now(),
                 "op": op, "re": None, "body": body,
             }  # fmt: skip
-            return {"o": o, "sig": b64u(sign(SIG_LINK + cj(o)))}
+            return {"o": o, "sig": b64u(sign(link_signed_bytes(SIG_LINK, cb, o)))}
 
         reply = self.send_next(build)
         rb = reply["o"]["body"]
@@ -289,15 +484,30 @@ class LinkClient:
             if set(body) != {"log", "event"} or type(body["log"]) is not str or type(body["event"]) is not dict:
                 raise LinkError("malformed")
             queue = self._events
+        elif o["op"] == "closing_notice":
+            if set(body) != {"notice"} or type(body["notice"]) is not dict:
+                raise LinkError("malformed")
+            queue = self._closings
+        elif o["op"] in STREAM_H2W:
+            if not stream_body_ok(o["op"], body):
+                raise LinkError("malformed")
+            queue = self._streams
         else:
             raise LinkError("malformed")
-        if type(o["seq"]) is not int or o["seq"] <= self._last_in:
-            raise LinkError("malformed")
+        if queue is self._streams and len(queue) >= MAX_QUEUED:
+            # F3 (R4): a stream frame cannot be redelivered, so the link is NOT closed for it (log_sync, handoffs and
+            # approvals share this link). The frame is dropped and only THAT stream ends (``remote.busy``, by the pump).
+            if o["op"] == "stream_open" and self._sign is not None:
+                self._write_w2h("stream_open", {"error": "remote.busy"}, reply_to=o["seq"])  # the hub is waiting for it
+            else:
+                with self._ov_mu:
+                    if body["stream_id"] not in self._overflow and len(self._overflow) < MAX_QUEUED * 4:
+                        self._overflow.append(body["stream_id"])
+            return True
         if len(queue) >= MAX_QUEUED:
             # L2-C3-5: REFUSE, never drop. The hub resends what was not acknowledged after a reconnect, so closing
             # loses nothing; dropping the oldest would silently discard a request the hub still holds as undelivered.
             raise LinkError("queue_full")
-        self._last_in = o["seq"]
         queue.append(o)
         return True
 
@@ -343,19 +553,19 @@ class LinkClient:
                 raise LinkError("malformed")
             if error is not None and not (type(error) is str and 0 < len(error) <= 40):
                 raise LinkError("malformed")
-            self._seq += 1
+            n = self._seq + 1  # taken only once the frame was written: a failed ack never skips a number
             o = {
                 "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
-                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq, "ts_ms": self._now(),
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
                 "op": "route_in", "re": self._pending["seq"], "body": {} if error is None else {"error": error},
             }  # fmt: skip
             try:
-                framing.write_frame(
-                    self._c, {"o": o, "sig": b64u(self._sign(SIG_LINK + cj(o)))}, timeout=self._t, max_bytes=self._max
-                )
-            except (FrameError, LinkClosed, LinkTimeout):
+                signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
+                framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
+            except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
                 self.close()
                 raise
+            self._seq = n
             self._pending = None
 
     # --- event_deliver (h2w custodial events; protocol 8.4, 10.2) --------------------------------------------------
@@ -401,20 +611,157 @@ class LinkClient:
                 raise LinkError("malformed")
             if error is not None and not (type(error) is str and 0 < len(error) <= 40):
                 raise LinkError("malformed")
-            self._seq += 1
+            n = self._seq + 1  # taken only once the frame was written: a failed ack never skips a number
             o = {
                 "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
-                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq, "ts_ms": self._now(),
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
                 "op": "event_deliver", "re": self._pending_ev["seq"], "body": {} if error is None else {"error": error},
             }  # fmt: skip
             try:
-                framing.write_frame(
-                    self._c, {"o": o, "sig": b64u(self._sign(SIG_LINK + cj(o)))}, timeout=self._t, max_bytes=self._max
-                )
-            except (FrameError, LinkClosed, LinkTimeout):
+                signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
+                framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
+            except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
                 self.close()
                 raise
+            self._seq = n
             self._pending_ev = None
+
+    # --- closing_notice (h2w; protocol 9.7, 10.2, #1463) -----------------------------------------------------------
+
+    def next_closing_notice(self, wait: float = 0.0) -> dict[str, Any] | None:
+        """The next ``hub.closing`` notice the hub pushes (the signed object, NOT yet verified: the link checked the
+        hub's link signature and the body shape only), or ``None`` within ``wait`` seconds. At most one is outstanding:
+        call :meth:`ack_closing_notice` once the host verified or refused it."""
+        with self._lock:
+            if not self._open:
+                raise LinkClosed("closed")
+            if self._pending_cn is not None:
+                raise LinkError("malformed")  # a caller bug: the last one was never acknowledged
+            try:
+                if not self._closings:
+                    if not self._c.wait_readable(wait):
+                        return None
+                    frame = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                    if frame.get("t") == "error":
+                        raise LinkError(_code(frame.get("error")))
+                    if not self._take_push(frame):
+                        raise LinkError("malformed")
+                    if not self._closings:
+                        return None  # another kind of push: its own next_* hands it out
+                self._pending_cn = self._closings.pop(0)
+                return self._pending_cn["body"]["notice"]  # type: ignore[no-any-return]
+            except FrameError:
+                self.close()
+                raise LinkError("malformed") from None
+            except (LinkError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+
+    def ack_closing_notice(self, error: str | None = None) -> None:
+        """Answer the outstanding ``closing_notice`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or
+        ``{"error": code}``)."""
+        with self._lock:
+            if not self._open or self._sign is None:
+                raise LinkClosed("closed")
+            if self._pending_cn is None:
+                raise LinkError("malformed")
+            if error is not None and not (type(error) is str and 0 < len(error) <= 40):
+                raise LinkError("malformed")
+            n = self._seq + 1  # taken only once the frame was written: a failed ack never skips a number
+            o = {
+                "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
+                "op": "closing_notice", "re": self._pending_cn["seq"],
+                "body": {} if error is None else {"error": error},
+            }  # fmt: skip
+            try:
+                signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
+                framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
+            except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
+                self.close()
+                raise
+            self._seq = n
+            self._pending_cn = None
+
+    # --- stream_open / stream_data / stream_close (h2w remote access streams; protocol 10.2c) ----------------------
+
+    def next_stream(self, wait: float = 0.0) -> tuple[str, int, dict[str, Any]] | None:
+        """The next stream frame the hub pushes, as ``(op, seq, body)``, or ``None`` within ``wait`` seconds. The link
+        verified the signature and the body shape only. A ``stream_open`` must be answered with
+        :meth:`answer_stream_open` (by its ``seq``); ``stream_data`` / ``stream_close`` are one-way."""
+        with self._lock:
+            if not self._open:
+                raise LinkClosed("closed")
+            try:
+                if not self._streams:
+                    if not self._c.wait_readable(wait):
+                        return None
+                    frame = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                    if frame.get("t") == "error":
+                        raise LinkError(_code(frame.get("error")))
+                    if not self._take_push(frame):
+                        raise LinkError("malformed")
+                    if not self._streams:
+                        return None  # another kind of push: its own next_* hands it out
+                o = self._streams.pop(0)
+                if o["op"] == "stream_open":
+                    self._open_reqs.add(o["seq"])
+                return o["op"], o["seq"], o["body"]
+            except FrameError:
+                self.close()
+                raise LinkError("malformed") from None
+            except (LinkError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+
+    def take_stream_overflow(self) -> list[str]:
+        """The ids of streams that lost an h2w frame to a full queue since the last call (F3). The pump closes each
+        ``remote.busy``: the host cannot know what the lost frame was, so the stream cannot go on."""
+        with self._ov_mu:
+            out, self._overflow = self._overflow, []
+            return out
+
+    def answer_stream_open(self, seq: int, error: str | None = None) -> None:
+        """Answer the handed-out ``stream_open`` ``seq`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or
+        ``{"error": code}``)."""
+        with self._lock:
+            if not self._open or self._sign is None:
+                raise LinkClosed("closed")
+            if seq not in self._open_reqs:
+                raise LinkError("malformed")
+            if error is not None and not (type(error) is str and 0 < len(error) <= 40):
+                raise LinkError("malformed")
+            self._write_w2h("stream_open", {} if error is None else {"error": error}, reply_to=seq)
+            self._open_reqs.discard(seq)
+
+    def send_stream(self, op: str, body: dict[str, Any]) -> None:
+        """Send one one-way ``stream_data`` / ``stream_close`` frame (no reply). Any other op, including a w2h
+        ``stream_open``, is ``unknown_op``."""
+        if op not in STREAM_W2H:
+            raise LinkError("unknown_op")
+        if not stream_body_ok(op, body):
+            raise LinkError("malformed")
+        with self._lock:
+            if not self._open or self._sign is None:
+                raise LinkClosed("closed")
+            self._write_w2h(op, body, reply_to=None)
+
+    def _write_w2h(self, op: str, body: dict[str, Any], *, reply_to: int | None) -> None:
+        """Sign and write one w2h frame with the link's next ``seq``. The caller holds ``_lock``."""
+        assert self._sign is not None
+        n = self._seq + 1  # taken only after the frame is written (R1)
+        o = {
+            "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
+            "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
+            "op": op, "re": reply_to, "body": body,
+        }  # fmt: skip
+        try:
+            signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
+            framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
+        except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
+            self.close()
+            raise
+        self._seq = n
 
     def route_out(self, envelope: bytes) -> str:
         """Send one ws->ws envelope (the sender's exact bytes); returns ``"forwarded"`` or ``"queued"``. Raises
@@ -451,7 +798,7 @@ class LinkClient:
             raise LinkError("malformed")
         try:
             sig = unb64u(r["sig"], suite.SIG_LEN)
-            msg = SIG_ROUTE + cj(o)
+            msg = link_signed_bytes(SIG_ROUTE, self._cb, o)
         except (EncodingError, JcsError):
             raise LinkError("malformed") from None
         if not suite.verify(self._hk_op, sig, msg):
@@ -473,6 +820,10 @@ class LinkClient:
             raise LinkError("other_workspace")
         if abs(self._now() - o["ts_ms"]) > LINK_WINDOW_MS:
             raise LinkError("stale_timestamp")
+        # Step 7: one counter for every h2w frame of this connection (replies and pushes alike), first frame 1.
+        if o["seq"] != self._last_in + 1:
+            raise LinkError("malformed")
+        self._last_in = o["seq"]
         return o
 
     def _verify_reply(self, r: dict[str, Any], want: dict[str, Any]) -> None:
@@ -488,29 +839,6 @@ class LinkClient:
             return
         if is_error or not _REPLY.get(want["op"], lambda b: b == {})(body):
             raise LinkError("malformed")
-
-    def request(self, op: str, body: dict[str, Any], *, sign: Callable[[bytes], bytes], seq: int) -> dict[str, Any]:
-        """Convenience for callers without a ``HubLink``: sign and send one request, return the reply body, raise
-        :class:`LinkError` for ``{"error": code}``."""
-        o = {
-            "v": 2,
-            "suite": suite.SUITE_ID,
-            "kind": "hub.link",
-            "hv": HV,
-            "hub_id": self.hub_id,
-            "workspace_id": self.workspace_id,
-            "dir": "w2h",
-            "seq": seq,
-            "ts_ms": self._now(),
-            "op": op,
-            "re": None,
-            "body": body,
-        }
-        reply = self.send({"o": o, "sig": b64u(sign(SIG_LINK + cj(o)))})
-        rb = reply["o"]["body"]
-        if set(rb) == {"error"}:
-            raise LinkError(_code(rb["error"]))
-        return rb
 
     @property
     def is_open(self) -> bool:

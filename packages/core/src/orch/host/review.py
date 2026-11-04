@@ -48,7 +48,7 @@ __all__ = [
 ENVELOPE = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig"})
 #: #1198 C9: the hub events whose ``owner_proof`` the signer fills after the review (like a grant's ``secret_hash``).
 #: It is not in the review payload or the fingerprint; the review shows a derived line instead.
-OWNER_PROOF_TYPES = frozenset({"hub.joined", "hub.left"})
+OWNER_PROOF_TYPES = frozenset({"hub.joined", "hub.left", "remote.changed", "remote.device_added"})
 OWNER_PROOF_LINE = "signed with your backup key"
 #: the decision types whose ``gate_gen`` is an envelope key of the review: shown on its own line, labelled a host
 #: attestation (v1.5 "Bound hashes"); on any other type an unexpected ``gate_gen`` stays in the payload, so it is shown
@@ -75,6 +75,7 @@ PERSON_AGENT_OPS = frozenset(
         "ask",
         "artifact.add",
         "artifact.replace",
+        "follow_up.cancel",
     }
 )
 #: person ops of the host contract (§0.8 ``move``, ``policy.set``, ``settings.set``; H0 records them as ops). Each emits
@@ -92,6 +93,7 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
     # P5: a person's signature over the exact words of one staged share (a log.added note on its ticket)
     "publish.share": frozenset({"log.added"}),
+    "app.release": frozenset({"log.added"}),  # #1457: a person's signature over the exact words of one app release
     # V3 C2a (hub contract 9.1): the owner's record that the workspace joined a hub selectively, or left it
     "hub.join": frozenset({"hub.joined"}),
     "hub.mode": frozenset({"hub.joined"}),  # V3 C2b: selective to full, the owner's own signature
@@ -99,6 +101,9 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "device.mark_exposed": frozenset({"device.exposed"}),  # #1097: written before a key enters convenience custody
     "device.rotate": frozenset({"device.rotated"}),  # #1097: the new device replaces the old (recovery code)
     "device.remove": frozenset({"device.removed"}),  # #1198 C15: one click, with lockout guards
+    # R2 (#1590): the owner's remote policy and the confirmation of one remote device, each with the remote owner proof
+    "remote.set": frozenset({"remote.changed"}),
+    "remote.device_confirm": frozenset({"remote.device_added"}),
 }
 _NOT_PERSON = frozenset({"import.v1"})  # import v1 is direct mode
 
@@ -129,6 +134,8 @@ def events_fit(op: str, types: list[str]) -> bool:
     allowed = person_op_types(op)
     if allowed is None or not 1 <= len(types) <= 16 or any(t not in allowed for t in types):
         return False
+    if op == "schedule.add":
+        return types in (["schedule.set"], ["ticket.created", "schedule.set"])
     if op == "grant":  # B8: Extend = the new runner grant, then the revoke of the one it replaces
         return types in (["grant.issued"], ["grant.issued", "grant.revoked"])
     if op in HUMAN_ONLY or op in HOST_PERSON_OPS:

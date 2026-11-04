@@ -82,11 +82,13 @@ it('the Start agent scenarios draw core\'s dialog from fixtures and undo their s
 
 it('the New ticket start scenarios draw the real form with and without an agent access', async () => {
   renderApp('/__layout/new-sequence-start')
-  expect(await screen.findByRole('button', { name: 'Review and start agent' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: 'Create and start' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'More ways to create' })).toBeInTheDocument()
   expect(screen.queryByTestId('agent-access')).toBeNull()
   cleanup()
   resetLayoutPreview()
   renderApp('/__layout/new-sequence-start-nogrant')
-  expect(await screen.findByRole('button', { name: 'Review and start agent' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: 'Create and start' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'More ways to create' })).toBeInTheDocument()
   expect(screen.queryByTestId('agent-access')).toBeNull() // asked in the review popover, not in the form
 })

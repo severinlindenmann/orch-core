@@ -4,11 +4,12 @@ import { VerdictEvidence } from '../ticket/EvidenceView'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldAlert, ShieldCheck, SquareTerminal } from 'lucide-react'
+import { CheckCircle2, ChevronDown, FileSearch, HelpCircle, Hourglass, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { diffstat } from '@/api/gates'
 import { ApiError, type AddonDecision, type GateName, type NeedsYouItem, type TicketDocument } from '@/api/types'
+import { gapOf } from '@/app/pages/ticket/actions'
 import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
 import { ErrorAlert } from '@/addon-ui/ErrorAlert'
@@ -22,6 +23,7 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import { visible } from '@/components/sign/visible'
 import { AnswerSend } from '@/components/sign/AnswerSend'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { QuestionOptions } from '../ticket/QuestionOptions'
 import { type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
@@ -131,6 +133,32 @@ function TicketLine({ ticket, title }: { ticket: string; title?: string }) {
   )
 }
 
+/**
+ * A question card names its ticket in plain words (owner rule, run-13: no ids): the title opens the ticket; the key is
+ * only behind the small "i", and only where the row has buttons at all (a read-only row has none).
+ */
+function TicketTitle({ ticket, title, info }: { ticket: string; title?: string; info: boolean }) {
+  const words = title?.trim()
+  return (
+    <>
+      <Link
+        to="/ticket/$key"
+        params={{ key: ticket }}
+        className={cn('rounded text-text-muted outline-none hover:text-text hover:underline focus-visible:ring-2 focus-visible:ring-ring', !words && 'font-mono')}
+      >
+        {words || ticket}
+      </Link>
+      {words && info && (
+        <InfoDrawer className="ml-0.5 size-5 align-middle">
+          <p>
+            Ticket <span className="font-mono">{ticket}</span>
+          </p>
+        </InfoDrawer>
+      )}
+    </>
+  )
+}
+
 const Decides = ({ who }: { who: string }) => <span className="text-xs text-text-muted">{who} decides</span>
 
 interface CoreRowProps {
@@ -153,13 +181,40 @@ const Locked = () => <span className="text-xs text-text-muted">Answer in your te
 
 // ------------------------------------------------------------------ question
 
-export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked }: CoreRowProps) {
+export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked, viewer, onAnswered }: CoreRowProps & {
+  /** The person looking: their own answer reads "You answered". */
+  viewer?: string
+  /** The answer was sent from the row itself: Today keeps the row, answered, for a moment (it leaves the host's list). */
+  onAnswered?: () => void
+}) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
   const [viewText, setViewText] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const id = `question:${item.ticket}:${item.ref}`
   const readOnly = decider !== undefined
+  // Answered (here a moment ago, or elsewhere while the list still had it): the row collapses to the answer.
+  const answer = q?.state === 'answered' ? q.answer : undefined
+  if (answer) {
+    const chosen = q?.options?.find((o) => o.key === answer.option)
+    return (
+      <RowShell
+        testId={`card-${id}`}
+        icon={<CheckCircle2 className="size-4 text-success" aria-label="answered" />}
+        ask={item.text}
+        sub={
+          <>
+            <span role="status" data-testid="answered-line" className="text-text">
+              {viewer && answer.by === viewer ? 'You answered' : 'Answered'}: {chosen ? chosen.label : answer.text}
+            </span>
+            <span className="text-text-faint"> · </span>
+            <TicketTitle ticket={item.ticket} title={item.title} info={!readOnly} />
+          </>
+        }
+        action={null}
+      />
+    )
+  }
   return (
     <RowShell
       testId={`card-${id}`}
@@ -167,7 +222,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       ask={viewText ?? item.text}
       sub={
         <>
-          <TicketLine ticket={item.ticket} title={item.title} />
+          <TicketTitle ticket={item.ticket} title={item.title} info={!readOnly} />
           {askedBy && <span className="text-text-faint"> · Asked by {askedBy}</span>}
           <Flags item={item} />
         </>
@@ -202,6 +257,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
             fallback={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}
             onViewQuestion={setViewText}
             onBusy={setBusy}
+            onSent={onAnswered}
           />
         </div>
       ) : (
@@ -220,8 +276,12 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
 export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decider, locked }: CoreRowProps) {
   const gate = item.ref as Exclude<GateName, 'verify'>
   const readOnly = decider !== undefined
+  // R12 P03: requirements and plan are asked in one card and signed once (the same approve_both action as the ticket page).
+  const both = !!item.both
   const covers =
-    gate === 'requirements'
+    both
+      ? `Requirements · ${plural(ticket?.acceptance.length ?? 0, 'acceptance criterion', 'acceptance criteria')} · Plan · ${plural(ticket?.tasks.length ?? 0, 'task')}`
+      : gate === 'requirements'
       ? `Requirements · ${ticket?.acceptance.length ?? 0} acceptance criteria`
       : gate === 'code'
         ? `Code review · commit ${ticket?.branch.head ?? ''} · ${ticket ? diffstat(ticket.branch) : ''}`
@@ -242,7 +302,7 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
         ) : locked ? (
           <Locked />
         ) : (
-          <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'approve', gate })}>
+          <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, both ? { kind: 'approve_both' } : { kind: 'approve', gate })}>
             Review
           </Button>
         )
@@ -255,6 +315,34 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
         </Button>
       )}
     </RowShell>
+  )
+}
+
+// ------------------------------------------------------------------ the agent is writing the plan
+
+/** R12 P03: the requirements approval is held back while the agent still writes the plan. A quiet line says why nothing
+ *  is asked yet; it is not an item (never counted or announced) and goes when the plan is ready or the agent stops. */
+export function WritingRow({ item, now }: { item: NeedsYouItem; now: string }) {
+  return (
+    <RowShell
+      testId={`card-writing:${item.ticket}`}
+      icon={<Loader2 className="size-4 animate-spin" aria-label="working" />}
+      ask="The agent is writing the plan"
+      sub={
+        <>
+          <TicketLine ticket={item.ticket} title={item.title} />
+          <span> · you will approve requirements and plan together</span>
+        </>
+      }
+      age={ageOf(item, now)}
+      action={
+        <Button size="sm" variant="outline" asChild>
+          <Link to="/ticket/$key" params={{ key: item.ticket }}>
+            Open ticket
+          </Link>
+        </Button>
+      }
+    />
   )
 }
 
@@ -282,22 +370,35 @@ export function NoticeRow({ item, now }: { item: NeedsYouItem; now: string }) {
   )
 }
 
-// ------------------------------------------------------------------ agent may need you (terminal)
+// ------------------------------------------------------------------ agent is waiting for you
 
-/** The host thinks the agent waits for you in its terminal (hook or quiet terminal). Orch cannot read what it printed,
- *  so the words are a hint and the only action opens the terminal; it goes away when the agent moves on. */
-export function TerminalWaitRow({ item, now }: { item: NeedsYouItem; now: string }) {
+/** The host thinks the agent waits for the person (hook or quiet session). Orch cannot read what it printed, so the
+ *  row says it in plain words (never the host's "check its terminal", run-13 A10) and the only action opens the
+ *  agent; it goes away when the agent moves on. */
+export function TerminalWaitRow({ item, ticket, now }: { item: NeedsYouItem; ticket?: TicketDocument; now: string }) {
+  // The ticket says what it still lacks: then the row says it too and opens the ticket, where the way on is one click.
+  const gap = ticket ? gapOf(ticket) : null
+  // Inside `orch wait` with nothing missing: a decision by someone is due; the ticket shows whose (run-10 J04).
+  const decision = !gap && item.source === 'wait'
   return (
     <RowShell
       testId={`card-terminal_wait:${item.ticket}`}
-      icon={<SquareTerminal className="size-4" aria-label="terminal" />}
-      ask={item.text}
+      icon={<Hourglass className="size-4" aria-label="waiting" />}
+      ask={gap ? `${gap.title}. ${gap.text}` : decision ? 'Agent is waiting for a decision' : 'Agent is waiting for you'}
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       age={ageOf(item, now)}
       action={
-        <Button size="sm" onClick={() => item.ref && openDockOn(item.ref)}>
-          Open terminal
-        </Button>
+        gap || decision ? (
+          <Button size="sm" asChild>
+            <Link to="/ticket/$key" params={{ key: item.ticket }}>
+              Open ticket
+            </Link>
+          </Button>
+        ) : (
+          <Button size="sm" onClick={() => item.ref && openDockOn(item.ref)}>
+            Open agent
+          </Button>
+        )
       }
     />
   )
@@ -343,7 +444,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
     >
       <p className="text-xs tabular-nums text-text-muted">
         <span className={cn(proven === ac.length && ac.length > 0 ? 'text-success' : 'text-text')}>
-          AC {proven}/{ac.length} evidenced
+          Checked {proven} of {ac.length} {ac.length === 1 ? 'requirement' : 'requirements'}
         </span>
         {' · '}
         {receipts} receipts · {ticket?.artifacts.length ?? 0} artifacts

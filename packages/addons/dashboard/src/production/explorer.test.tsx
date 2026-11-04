@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
@@ -87,22 +87,31 @@ it('renders markdown without running or showing raw html', async () => {
   expect(md.innerHTML).not.toContain('onerror')
 })
 
-it('warns about characters you cannot see, shows an image from its data URL and says so for a locked file', async () => {
-  route({
-    'a.py': { kind: 'text', text: 'x = 1  # ‮\n', hidden_chars: true, size: 10, history: true },
-    'p.png': { kind: 'image', mime: 'image/png', data: 'AAAA', size: 3 },
-    '.env': { kind: 'locked', reason: 'Secrets (.env)' },
-  })
-  const user = userEvent.setup()
+// Each case mounts the whole app once: three mounts stacked in one test took over 5 s on a loaded CI shard (#1776).
+const hiddenFiles = {
+  'a.py': { kind: 'text', text: 'x = 1  # ‮\n', hidden_chars: true, size: 10, history: true },
+  'p.png': { kind: 'image', mime: 'image/png', data: 'AAAA', size: 3 },
+  '.env': { kind: 'locked', reason: 'Secrets (.env)' },
+}
+
+it('warns about characters you cannot see', async () => {
+  route(hiddenFiles)
   show('/w/DEMO/explorer?path=a.py')
   expect(await screen.findByTestId('hidden-chars', {}, T)).toHaveTextContent('characters you cannot see')
   expect(screen.getByTestId('code')).toHaveTextContent('⟦u+202E⟧')
   expect(screen.getByTestId('code')).not.toHaveTextContent('‮')
+})
+
+it('shows an image from its data URL', async () => {
+  route(hiddenFiles)
   show('/w/DEMO/explorer?path=p.png')
   expect(await screen.findByRole('img', { name: 'p.png' }, T)).toHaveAttribute('src', 'data:image/png;base64,AAAA')
+})
+
+it('says so for a locked file', async () => {
+  route(hiddenFiles)
   show('/w/DEMO/explorer?path=.env')
   expect(await screen.findByTestId('locked', {}, T)).toHaveTextContent('never shown')
-  expect(user).toBeTruthy()
 })
 
 it('History lists the changes with ticket chips, shows one change and compares two versions', async () => {
@@ -117,7 +126,7 @@ it('History lists the changes with ticket chips, shows one change and compares t
   await user.click(within(second).getByRole('button', { name: 'Second change' }))
   const diff = await screen.findByLabelText('Change in this commit', {}, T)
   expect(diff.querySelector('[data-line="add"]')).toHaveTextContent('+two')
-  expect(second).toHaveTextContent('Technical details')
+  expect(within(second).getByRole('button', { name: 'More information' })).toBeTruthy()
   await user.click(within(second).getByLabelText('Compare: Second change'))
   await user.click(within(first).getByLabelText('Compare: First version'))
   const compare = await screen.findByLabelText('Difference between the two versions', {}, T)
@@ -130,6 +139,8 @@ it('History lists the changes with ticket chips, shows one change and compares t
 it('the sidebar lists Files only while the explorer is served', async () => {
   route()
   show('/w/DEMO/board')
+  // P67: this entry sits in the side rail's "More" group
+  fireEvent.click(await screen.findByRole('button', { name: 'More' }, T))
   expect(await screen.findByRole('link', { name: 'Files' }, T)).toBeInTheDocument()
 })
 

@@ -48,8 +48,13 @@ log = logging.getLogger(__name__)
 
 CHANNELS_FILE = "channels.db"
 SESSION_TTL_MS = 15 * 60_000
+#: A ``remote`` session (R4, #1592) is a token for the hub's stream router only. It grants nothing at a workspace (the
+#: host's device list and presence signature decide), so it lives longer than a browser session; signing out ends it.
+REMOTE_SESSION_TTL_MS = 7 * 24 * 3600_000
 CHALLENGE_TTL_MS = 120_000
 PAIRING_TTL_MS = 10 * 60_000
+#: a pairing code made from the console by the person themself (M2-10, condition 19): short, never above 5 minutes
+CONSOLE_PAIRING_TTL_MS = 5 * 60_000
 MAX_CHANNELS = 5
 MAX_FAILURES = 5
 FAIL_WINDOW_MS = 15 * 60_000
@@ -69,10 +74,12 @@ PW_BACKOFF_CAP_MS = 60_000
 PW_USER_FREE = 10
 KNOWN_SOURCE_MS = 30 * 86_400_000
 MIN_PASSWORD = 10
+PENDING_TOTP_MS = 10 * 60_000  # a new authenticator secret must be confirmed within this
 CHANNEL_SESSION_MS = 12 * 3_600_000  # spec §7, protocol §6.4 (the contract's constant is the same)
 #: the gate the hub checked for each channel kind (browser: live password+TOTP session; phone: operator pairing code)
 GATE_OF = {"browser": "session", "phone": "pairing-code"}
 _HEX32 = re.compile(r"[0-9a-f]{32}")
+_APP_VERSION = re.compile(r"[0-9A-Za-z.+-]{1,32}")
 _SCRYPT = {"n": 2**14, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024, "dklen": 32}
 _DUMMY_SALT = b"\0" * 16
 
@@ -103,6 +110,12 @@ def registration_object(
         "expires_ms": expires_ms,
         "dev": dev,
     }
+
+
+def clean_app_version(v: object) -> str | None:
+    """The app version a phone reports at registration: untrusted text, DISPLAY ONLY (never a gate). At most 32 characters
+    of ``[0-9A-Za-z.+-]``; anything else is dropped (``None``), never an error."""
+    return v if type(v) is str and _APP_VERSION.fullmatch(v) else None
 
 
 def _sha(x: str) -> str:
@@ -136,6 +149,9 @@ class Channels:
         self._dev = dev_mode
         #: called with the channel id after a revocation is final (the relay cleanup, orch_hub.relay); never raises out
         self.on_revoke = on_revoke
+        #: called with the user id after every session of that user ended (``end_all_sessions``); the stream router
+        #: closes that user's remote streams at once. Never raises out.
+        self.on_sessions_ended: Callable[[str], None] | None = None
         self.audit = audit  # orch_hub.audit.AuditLog; None = no chain (tests of other things)
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self.max_channels = max_channels
@@ -218,8 +234,13 @@ class Channels:
                 (u, secret, now),
             )
             self.db.w("DELETE FROM sessions WHERE user_id=?", (u,))
+            self.db.w("DELETE FROM pending_totp WHERE user_id=?", (u,))  # an operator reset supersedes a pending change
 
         self._guard(go)
+        return self._totp_offer(u, secret)
+
+    @staticmethod
+    def _totp_offer(u: str, secret: bytes) -> dict[str, str]:
         b32 = base64.b32encode(secret).decode().rstrip("=")
         return {"secret": b32, "uri": f"otpauth://totp/orch-hub:{u}?secret={b32}&issuer=orch-hub"}
 
@@ -319,7 +340,8 @@ class Channels:
         salt, ph, secret, last = row[0] if row else (None, None, None, 0)
         ok = bool(row) and ph is not None and secret is not None
         try:
-            ok = ok and self.acc.has_user(u)
+            # a disabled person, or one enabled but not yet recovered, fails like a wrong password (the hashing ran above)
+            ok = ok and self.acc.is_active(u) and not self.acc.must_recover(u)
         except AccessError:
             ok = False
         h = _pw_hash(password, salt or _DUMMY_SALT)  # always spend the hashing time
@@ -341,12 +363,14 @@ class Channels:
         self, user_id: str, password: str, totp: str, source: str = "", *, scope: str = "full"
     ) -> dict[str, Any]:
         """Password and TOTP together (:meth:`_credentials`: any mismatch is one generic ``bad_credentials``). ``scope``:
-        ``full`` (the browser) or ``pairing`` (the phone before it binds, protocol §6.4)."""
-        if scope not in ("full", "pairing"):  # a channel session is made by :meth:`bind_session` only
+        ``full`` (the browser), ``pairing`` (the phone before it binds, protocol §6.4) or ``remote`` (a remote client's
+        token for the stream router, valid for :data:`REMOTE_SESSION_TTL_MS`)."""
+        if scope not in ("full", "pairing", "remote"):  # a channel session is made by :meth:`bind_session` only
             raise ChannelError("malformed", "scope")
         u, subject, rid, match = self._credentials(user_id, password, totp, source)
         token = secrets.token_urlsafe(32)
         now = self._now()
+        ttl = REMOTE_SESSION_TTL_MS if scope == "remote" else SESSION_TTL_MS
 
         def go() -> None:
             with self._tx() as db:  # one transaction: claim the code, then the session; a lost race is a failure
@@ -369,7 +393,108 @@ class Channels:
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
                     "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms) VALUES (?,?,?,?,?,?)",
-                    (_sha(token), u, now, now + SESSION_TTL_MS, scope, now),
+                    (_sha(token), u, now, now + ttl, scope, now),
+                )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + ttl}
+
+    def open_setup_session(self, user_id: str) -> dict[str, Any]:
+        """A ``full`` (browser) session for the first admin, opened by the hub's one-time setup (the installer's single-use
+        token file proved the person, and they have just chosen the password). Called only from ``/setup``, in the same
+        request that consumes the token. ``via`` is ``setup``: audit tells it from a password sign-in; it is not a
+        switch session, so it is not limited to ``SWITCH_HANDLERS``."""
+        u = self._known_user(user_id)
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms, via) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", now, "setup"),
+                )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+
+    def open_company_session(self, user_id: str) -> dict[str, Any]:
+        """A ``full`` (browser) session for a person the company's identity provider has just signed in (HUB-PE-04). ``via``
+        is ``oidc``. It is a SESSION only: registering a signing key still needs the hub password and a TOTP code
+        (``reauth``), which a company-login-only person does not have, so this can never mint a key (decision C)."""
+        u = self._known_user(user_id)
+        try:
+            if not self.acc.is_live(u):
+                raise ChannelError("unknown_user")
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms, via) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", now, "oidc"),
+                )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+
+    def end_company_sessions(self, user_id: str | None = None) -> int:
+        """Every company-login session of this person, or of everybody (the provider changed). Other sessions stay."""
+        if user_id is None:
+            return self._guard(lambda: self.db.w("DELETE FROM sessions WHERE via='oidc'"))
+        u = self._user(user_id)
+        return self._guard(lambda: self.db.w("DELETE FROM sessions WHERE via='oidc' AND user_id=?", (u,)))
+
+    def open_invite_session(self, user_id: str) -> dict[str, Any]:
+        """A ``full`` (browser) session for a person who has just created their account from a join invitation: the
+        one-time link proved them and they chose the password in this same request. Never for a recovery or reset (those
+        must sign in with the new password and code). ``via`` is ``invite``: audit tells it from a password sign-in. It
+        changes no approval rule: approvals still need the person's channel proof."""
+        u = self._known_user(user_id)
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms, via) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", now, "invite"),
+                )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+
+    def open_session(self, user_id: str) -> dict[str, Any]:
+        """A ``full`` (browser) session for a user the hub itself has just authenticated by other means (a one-time switch
+        ticket from the user's workspace). No password, no TOTP, no failure counters touched.
+        ``via`` is ``switch``: the hub did not see a password sign-in, so hub-admin routes refuse this session until the
+        person signs in for real (``reauth_required``)."""
+        u = self._known_user(user_id)
+        try:
+            if not self.acc.is_live(
+                u
+            ):  # disabled, or enabled but not yet recovered: no session for a switch ticket either
+                raise ChannelError("unknown_user")
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, via) VALUES (?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", "switch"),  # via: no password sign-in
                 )
 
         self._guard(go)
@@ -384,7 +509,9 @@ class Channels:
         if not rows or rows[0][1] <= self._now():
             raise ChannelError("no_session")
         try:
-            if not self.acc.has_user(rows[0][0]):  # a removed user's sessions are dead
+            if not self.acc.is_active(rows[0][0]) or self.acc.must_recover(
+                rows[0][0]
+            ):  # removed, disabled, unrecovered
                 raise ChannelError("no_session")
         except AccessError:
             raise ChannelError("no_session") from None
@@ -396,19 +523,22 @@ class Channels:
         user = self.session_user(token)
         rows = self._guard(
             lambda: self.db.q(
-                "SELECT scope, channel_id, expires_ms, login_ms, created_ms FROM sessions WHERE token_hash=?",
+                "SELECT scope, channel_id, expires_ms, login_ms, created_ms, via FROM sessions WHERE token_hash=?",
                 (_sha(token),),
             )
         )
         if not rows:
             raise ChannelError("no_session")
-        scope, cid, exp, login, created = rows[0]
+        scope, cid, exp, login, created, via = rows[0]
         return {
             "user_id": user,
             "scope": scope,
             "channel_id": cid,
             "expires_ms": exp,
-            "login_ms": login if login is not None else created,
+            "login_ms": 0
+            if via == "switch"
+            else (login if login is not None else created),  # no sign-in seen: fail closed
+            "via": via,
         }
 
     def pin_api_origin(self, op_cert_id: str, origin: str) -> bool:
@@ -450,7 +580,7 @@ class Channels:
                 raise ChannelError("no_session")
             user = row[0]
             try:
-                if not self.acc.has_user(user):
+                if not self.acc.is_live(user):
                     raise ChannelError("no_session")
             except AccessError:
                 raise ChannelError("no_session") from None
@@ -498,6 +628,96 @@ class Channels:
     def sign_out(self, token: str) -> None:
         self._guard(lambda: self.db.w("DELETE FROM sessions WHERE token_hash=?", (_sha(str(token)),)))
 
+    # --- the person's own account security (M2-6). The caller (web API) has already re-verified the current password
+    # and a current TOTP code through :meth:`reauth` for change_password / begin_totp ------------------------------------
+
+    def change_password(self, user_id: str, new_password: str, keep_token: str) -> None:
+        """New password; every OTHER session of the user ends, the one making the call (``keep_token``) lives. Channel
+        keys are not touched (the ``channels`` table is not written)."""
+        u = self._known_user(user_id)
+        if type(new_password) is not str or len(new_password) < MIN_PASSWORD or len(new_password) > 1024:
+            raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+        salt = os.urandom(16)
+        h = _pw_hash(new_password, salt)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute(
+                    "UPDATE credentials SET pw_salt=?, pw_hash=?, updated_ms=? WHERE user_id=?", (salt, h, now, u)
+                )
+                db.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (u, _sha(str(keep_token))))
+
+        self._guard(go)
+
+    def begin_totp(self, user_id: str) -> dict[str, str]:
+        """A PENDING authenticator secret (one per user: a new begin replaces it; it lives PENDING_TOTP_MS). The current
+        secret keeps working until :meth:`confirm_totp`. Returned once, never logged."""
+        u = self._known_user(user_id)
+        secret, now = os.urandom(20), self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM pending_totp WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT OR REPLACE INTO pending_totp(user_id, secret, expires_ms) VALUES (?,?,?)",
+                    (u, secret, now + PENDING_TOTP_MS),
+                )
+
+        self._guard(go)
+        return self._totp_offer(u, secret)
+
+    def confirm_totp(self, user_id: str, code: str, keep_token: str) -> None:
+        """Only a valid code FROM THE PENDING secret activates it; at that moment the old secret is gone and every other
+        session ends. Wrong codes are counted (``rate_limited`` after MAX_FAILURES) and leave the old secret active."""
+        u = self._known_user(user_id)
+        rid = self._guard(lambda: self._reserve("totp-confirm", u))
+        now = self._now()
+        outcome: list[str] = []
+
+        def go() -> None:
+            with self._tx() as db:
+                row = db.execute("SELECT secret, expires_ms FROM pending_totp WHERE user_id=?", (u,)).fetchone()
+                if row is None:
+                    outcome.append("no_pending")
+                    return
+                if row[1] <= now:
+                    db.execute("DELETE FROM pending_totp WHERE user_id=?", (u,))
+                    outcome.append("pending_expired")
+                    return
+                match = 0
+                if type(code) is str and code.isascii() and code.isdigit() and len(code) == 6:
+                    for c in (now // 30_000 - 1, now // 30_000, now // 30_000 + 1):
+                        if hmac.compare_digest(totp_code(row[0], c), code):
+                            match = c
+                if not match:
+                    outcome.append("bad_code")
+                    return
+                # the matched step is spent for the new secret too (no replay at sign-in)
+                db.execute(
+                    "UPDATE credentials SET totp_secret=?, totp_last=?, updated_ms=? WHERE user_id=?",
+                    (row[0], match, now, u),
+                )
+                db.execute("DELETE FROM pending_totp WHERE user_id=?", (u,))
+                db.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (u, _sha(str(keep_token))))
+                self._succeed(db, "totp-confirm", u, rid)
+                outcome.append("ok")
+
+        self._guard(go)
+        if outcome[0] != "ok":
+            raise ChannelError(outcome[0])  # the reserved attempt stays counted
+
+    def end_all_sessions(self, user_id: str) -> int:
+        """Every session of the user, the caller's too. Channel keys stay. Returns how many ended."""
+        u = self._known_user(user_id)
+        n = self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
+        if self.on_sessions_ended is not None:
+            try:
+                self.on_sessions_ended(u)
+            except Exception as e:  # noqa: BLE001  # the sweep still closes them; name only the type
+                log.warning("sessions_ended_hook_error type=%s", type(e).__name__)
+        return n
+
     # --- registration ----------------------------------------------------------------------------------------------
 
     def create_pairing_code(self, user_id: str) -> dict[str, Any]:
@@ -505,9 +725,44 @@ class Channels:
         u = self._known_user(user_id)
         code = "-".join(secrets.token_hex(2) for _ in range(3))
         now = self._now()
-        self._guard(lambda: self.db.w("INSERT INTO pairing VALUES (?,?,?)", (_sha(code), u, now + PAIRING_TTL_MS)))
+        self._guard(
+            lambda: self.db.w(
+                "INSERT INTO pairing(code_hash, user_id, expires_ms, source) VALUES (?,?,?,'cli')",
+                (_sha(code), u, now + PAIRING_TTL_MS),
+            )
+        )
         self._guard(lambda: self._event("pairing_code", u, None, "operator"))
         return {"code": code, "expires_ms": now + PAIRING_TTL_MS}
+
+    def create_console_pairing_code(self, user_id: str) -> dict[str, Any]:
+        """A one-time pairing code made from the console for the person themself (M2-10, condition 19). The CALLER has
+        re-verified password + TOTP (:meth:`reauth`). Bound to ``user_id``, valid for :data:`CONSOLE_PAIRING_TTL_MS`
+        (never over 5 minutes), single use (the registration deletes it), and at most one live console code per user: a
+        new one replaces the old. Operator codes (source ``cli``) are never touched. The code is returned once and is
+        stored only as a hash; the event log names the person, never the code."""
+        u = self._known_user(user_id)
+        now = self._now()
+        ttl = min(CONSOLE_PAIRING_TTL_MS, 300_000)
+        code = "-".join(secrets.token_hex(2) for _ in range(3))
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM pairing WHERE expires_ms <= ?", (now,))
+                db.execute("DELETE FROM pairing WHERE user_id=? AND source='console'", (u,))
+                db.execute(
+                    "INSERT INTO pairing(code_hash, user_id, expires_ms, source) VALUES (?,?,?,'console')",
+                    (_sha(code), u, now + ttl),
+                )
+                db.execute(
+                    "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
+                    (now, "pairing_code", u, None, f"u_{u}"),
+                )
+
+        try:
+            self._guard(go)
+        except sqlite3.IntegrityError:  # a hash collision with a live code: astronomically rare, never reuse a code
+            raise ChannelError("internal", "pairing") from None
+        return {"code": code, "expires_ms": now + ttl}
 
     def reauth(self, user_id: str, password: str, totp: str, source: str = "") -> None:
         """Password + TOTP typed again (A8-3), through the same limiter state, hashing and single-use TOTP step as
@@ -537,7 +792,14 @@ class Channels:
         return self._begin(u, "browser", key_pub, _sha(token), label, _sha(token))
 
     def begin_phone_registration(
-        self, user_id: str, pairing_code: str, key_pub: bytes, label: str = "", *, token: str = ""
+        self,
+        user_id: str,
+        pairing_code: str,
+        key_pub: bytes,
+        label: str = "",
+        *,
+        token: str = "",
+        app_version: object = None,
     ) -> dict[str, Any]:
         """A phone needs the operator's pairing code AND a live session of the same user (§6.3, L2P4-D7a): the code
         alone is no bearer credential for ``se-unlocked``."""
@@ -551,13 +813,22 @@ class Channels:
             raise ChannelError("bad_pairing_code")  # the reserved attempt stays counted
         with self._tx() as db:
             self._succeed(db, "pair", u, rid)
-        return self._begin(u, "phone", key_pub, _sha(pairing_code), label, _sha(token))
+        return self._begin(u, "phone", key_pub, _sha(pairing_code), label, _sha(token), clean_app_version(app_version))
 
     def _pairing_valid(self, u: str, code_hash: str) -> bool:
         rows = self._guard(lambda: self.db.q("SELECT user_id, expires_ms FROM pairing WHERE code_hash=?", (code_hash,)))
         return bool(rows) and rows[0][0] == u and rows[0][1] > self._now()
 
-    def _begin(self, u: str, kind: str, key_pub: bytes, binding: str, label: str, session: str) -> dict[str, Any]:
+    def _begin(
+        self,
+        u: str,
+        kind: str,
+        key_pub: bytes,
+        binding: str,
+        label: str,
+        session: str,
+        app_version: str | None = None,
+    ) -> dict[str, Any]:
         if not S.valid_public_key(key_pub):
             raise ChannelError("malformed", "key_pub is not a valid P-256 public key")
         if type(label) is not str or len(label) > 60 or any(ord(c) < 32 or ord(c) == 127 for c in label):
@@ -572,8 +843,9 @@ class Channels:
         def go() -> None:
             self.db.w("DELETE FROM challenges WHERE expires_ms <= ?", (now,))
             self.db.w(
-                "INSERT INTO challenges VALUES (?,?,?,?,?,?,?,?)",
-                (nonce, u, kind, b64u(key_pub), binding, label, now + CHALLENGE_TTL_MS, session),
+                "INSERT INTO challenges(challenge_id, user_id, kind, key_pub, binding, label, expires_ms, session, "
+                "app_version) VALUES (?,?,?,?,?,?,?,?,?)",
+                (nonce, u, kind, b64u(key_pub), binding, label, now + CHALLENGE_TTL_MS, session, app_version),
             )
 
         self._guard(go)
@@ -582,20 +854,34 @@ class Channels:
     def complete_registration(self, challenge_id: str, signed: dict[str, Any]) -> dict[str, Any]:
         """Check the signed ``hub.channel_register`` (§6.3) and issue the certificate. The challenge is single use: any
         attempt, good or bad, consumes it. Returns the signed ``hub.channel_cert``."""
+        return self.complete_registration_ex(challenge_id, signed)[0]
+
+    def complete_registration_ex(
+        self, challenge_id: str, signed: dict[str, Any], app_version: object = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """:meth:`complete_registration` plus what the web layer needs to record: ``{user_id, channel_id, kind,
+        pairing_source}`` (``pairing_source`` is ``console`` / ``cli`` for a phone, else ``None``). ``app_version`` is the
+        phone's optional report at this step; it is sanitised (:func:`clean_app_version`) and replaces the one sent at
+        begin only when it is valid. Display only: nothing here ever refuses on it."""
         if type(challenge_id) is not str or len(challenge_id) > 64:
             raise ChannelError("challenge_invalid")
         now = self._now()
         with self._tx() as db:  # consumed and committed before any check, so a refused attempt cannot be retried
             rows = db.execute(
-                "SELECT user_id, kind, key_pub, binding, label, expires_ms, session FROM challenges WHERE challenge_id=?",
+                "SELECT user_id, kind, key_pub, binding, label, expires_ms, session, app_version FROM challenges "
+                "WHERE challenge_id=?",
                 (challenge_id,),
             ).fetchall()
             db.execute("DELETE FROM challenges WHERE challenge_id=?", (challenge_id,))
         if not rows or rows[0][5] <= now:
             raise ChannelError("challenge_invalid")
-        u, kind, key_b64, binding, label, exp, session = rows[0]
+        u, kind, key_b64, binding, label, exp, session, begun_version = rows[0]
+        version = clean_app_version(app_version) or clean_app_version(begun_version)
+        pairing_source: str | None = None
         with self._tx() as db:
             self._binding_alive(db, u, kind, binding, now)
+            if kind == "phone":
+                pairing_source = db.execute("SELECT source FROM pairing WHERE code_hash=?", (binding,)).fetchone()[0]
             # the challenge is what the hub stored when it opened the registration (§6.3): this user, this key, the gate
             # it checked (session or pairing code) and whether a live session of the user opened it
             live = db.execute(
@@ -638,16 +924,49 @@ class Channels:
             except KeysError as e:
                 raise ChannelError("issue_failed", e.code) from None
             db.execute(
-                "INSERT INTO channels(channel_id, user_id, kind, label, factor, created_ms) VALUES (?,?,?,?,?,?)",
-                (cid, u, kind, label, factor, now),
+                "INSERT INTO channels(channel_id, user_id, kind, label, factor, created_ms, app_version) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (cid, u, kind, label, factor, now, version),
             )
             if kind == "phone":
                 db.execute("DELETE FROM pairing WHERE code_hash=?", (binding,))  # pair once
+                # every new phone is announced on the person's other channels until they dismiss it (condition 19)
+                db.execute(
+                    "INSERT OR REPLACE INTO announcements(channel_id, user_id, ts_ms, seen) VALUES (?,?,?,0)",
+                    (cid, u, now),
+                )
             db.execute(
                 "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
                 (now, "register", u, cid, f"u_{u}" if kind == "browser" else "pairing"),
             )
-        return cert
+        return cert, {"user_id": u, "channel_id": cid, "kind": kind, "pairing_source": pairing_source}
+
+    def new_channels(self, user_id: str) -> list[dict[str, Any]]:
+        """Phones added to this person's account that they have not dismissed yet: ``[{channel_id, label, kind,
+        created_ms, seen: False}]``. A removed channel drops out. The caller passes the SESSION user, never a parameter."""
+        u = self._user(user_id)
+        rows = self._guard(
+            lambda: self.db.q(
+                "SELECT c.channel_id, c.label, c.kind, c.created_ms FROM announcements a "
+                "JOIN channels c ON c.channel_id=a.channel_id AND c.user_id=a.user_id "
+                "WHERE a.user_id=? AND a.seen=0 AND c.revoked_ms IS NULL ORDER BY c.created_ms, c.channel_id",
+                (u,),
+            )
+        )
+        try:
+            revoked = self.acc.revoked_channels()
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        return [
+            {"channel_id": cid, "label": label, "kind": kind, "created_ms": created, "seen": False}
+            for cid, label, kind, created in rows
+            if cid not in revoked
+        ]
+
+    def dismiss_new_channels(self, user_id: str) -> None:
+        """The person has seen the "a new phone was added" notice: clear it (their own announcements only)."""
+        u = self._user(user_id)
+        self._guard(lambda: self.db.w("UPDATE announcements SET seen=1 WHERE user_id=?", (u,)))
 
     def _audit(self, channel_id: str, user_id: str, change: str, factor: str, actor: str | None) -> None:
         """One ``channel`` event on the audit chain (§10.5). Inside the registration transaction, so a chain that cannot
@@ -672,7 +991,7 @@ class Channels:
         if not r or r[0][0] <= now:
             raise ChannelError("no_session" if kind == "browser" else "bad_pairing_code")
         try:
-            if not self.acc.has_user(u):
+            if not self.acc.is_live(u):
                 raise ChannelError("unknown_user")
         except AccessError:
             raise ChannelError("unknown_user") from None
@@ -680,7 +999,10 @@ class Channels:
     # --- list / revoke ---------------------------------------------------------------------------------------------
 
     def channels(self, user_id: str | None = None) -> list[dict[str, Any]]:
-        sql = "SELECT channel_id, user_id, kind, label, factor, created_ms, revoked_ms, revoked_by FROM channels"
+        sql = (
+            "SELECT channel_id, user_id, kind, label, factor, created_ms, revoked_ms, revoked_by, app_version "
+            "FROM channels"
+        )
         rows = self._guard(
             lambda: self.db.q(
                 sql + (" WHERE user_id=?" if user_id else "") + " ORDER BY created_ms, channel_id",
@@ -688,7 +1010,7 @@ class Channels:
             )
         )
         out = []
-        for cid, u, kind, label, factor, created, revoked, by in rows:
+        for cid, u, kind, label, factor, created, revoked, by, app_version in rows:
             cert = self._cert_of(u, cid)
             expires = cert["o"]["expires_ms"] if cert else None
             status = (
@@ -707,6 +1029,7 @@ class Channels:
                     "expires_ms": expires,
                     "status": status,
                     "revoked_by": by,
+                    "app_version": clean_app_version(app_version),  # display only; re-checked on the way out
                 }
             )
         return out
@@ -798,6 +1121,23 @@ class Channels:
         except AccessError as e:
             raise ChannelError(e.code) from None
 
+    def revoke_all(self, user_id: str) -> int:
+        """Revoke EVERY live channel of one user (operator-level path, like :meth:`remove_user`: the caller has already
+        been authorised, a disabling or a redeemed recovery link). Audited and purged at the relay per channel;
+        idempotent. Returns how many were revoked now."""
+        u = self._user(user_id)
+        n = 0
+        for c in self.channels(u):
+            if c["status"] != "revoked":
+                self.revoke(c["channel_id"])
+                n += 1
+        return n
+
+    def end_sessions(self, user_id: str) -> None:
+        """Kill every session (browser, pairing and channel) of this user at once."""
+        u = self._user(user_id)
+        self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
+
     def revoke_as(self, token: str, channel_id: str) -> None:
         self.revoke(channel_id, actor=self.session_user(token))
 
@@ -812,8 +1152,8 @@ class Channels:
                 return None
             if not (_HEX32.fullmatch(user_id) and _HEX32.fullmatch(channel_id)):
                 return None
-            if not self.acc.has_user(user_id) or channel_id in self.acc.revoked_channels():
-                return None
+            if not self.acc.is_live(user_id) or channel_id in self.acc.revoked_channels():
+                return None  # a disabled person has no live channel, even one that was never revoked (stale)
             reg = self.db.q("SELECT revoked_ms FROM channels WHERE channel_id=? AND user_id=?", (channel_id, user_id))
             if not reg or reg[0][0] is not None:
                 return None

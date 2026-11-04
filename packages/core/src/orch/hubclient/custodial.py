@@ -18,6 +18,7 @@ The registration label ``orch/v2/hub-channel-reg|`` is never a custodial proof: 
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
@@ -98,6 +99,8 @@ CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
     **{(t, "workspace"): "admin" for t in ("addon.disabled", "addon.purged")},
     # phase 5 (hub protocol 8.8, owner V3-D29, C10): grants, device exclusion, policy and settings. ``grant.issued`` is
     # NOT custodial: the host makes the secret and appends it itself, naming the ``grant.requested`` it answers.
+    # FB15 (8.8b): the owner's ask to turn an add-on on; the host answers with a host-actor ``addon.granted``
+    ("addon.requested", "workspace"): "admin",
     ("grant.requested", "workspace"): "edit",
     ("grant.revoked", "workspace"): "edit",
     ("device.excluded", "workspace"): "admin",
@@ -154,6 +157,11 @@ def _payload_shape(typ: str, event: Mapping[str, Any]) -> None:
     Runs inside :func:`verify_custodial` before it returns (the shared vectors pin the order of the earlier codes);
     the VALUES against the host's log are the ticket-format checks of step 9."""
     check_custodial_payload(typ, event, frozenset(HUB_FIELDS) | {"sig", "item_hash"})
+    if typ == "log.added":  # reserved approval lines are written only by their own click op, never over the hub
+        from orch.publishclient.approval import reserved_note_op
+
+        if reserved_note_op(event.get("text")) is not None:
+            raise HubRefused("malformed")
     if typ in DECISION_TYPES and type(event.get("hash")) is not str:
         raise HubRefused("malformed")  # L2P4-2a: the reviewed hash is always present
 
@@ -270,7 +278,7 @@ def verify_custodial(
         raise HubRefused("unknown_snapshot")
     if event["channel"] in snapshot["revoked_channels"]:
         raise HubRefused("channel_revoked")
-    role = snapshot["roles"].get(user)
+    role = wire.role_at(snapshot, user, now_ms)
     if mode == "selective":
         if user not in granted_users:
             raise HubRefused("not_granted")
@@ -488,8 +496,11 @@ def _lowers(new: Mapping[str, Any], old: Mapping[str, Any]) -> bool:
     "wider")."""
     rank = {r: i for i, r in enumerate(ROLES)}
     o_roles, n_roles = old["roles"], new["roles"]
-    return bool(set(new["revoked_channels"]) - set(old["revoked_channels"])) or any(
-        u not in n_roles or rank[n_roles[u]] < rank[r] for u, r in o_roles.items()
+    o_ends, n_ends = old["ends_ms"], new["ends_ms"]
+    return (
+        bool(set(new["revoked_channels"]) - set(old["revoked_channels"]))
+        or any(u not in n_roles or rank[n_roles[u]] < rank[r] for u, r in o_roles.items())
+        or any(u not in o_ends or t < o_ends[u] for u, t in n_ends.items())  # an end date added or earlier (GA-07)
     )
 
 
@@ -560,4 +571,11 @@ def accept_event_deliver(
                 raise
             return attempt()
     except LandRefused as e:
-        raise HubRefused(reply_code(e.refusal)) from None
+        code = reply_code(e.refusal)
+        # The wire code is coarse (most model refusals read "forbidden_role"): the host log keeps the real reason
+        # (FB15 round 3: an add-on request was dropped with no way to tell why).
+        logging.getLogger("orch.hubclient.custodial").warning(
+            "event_deliver %s refused: reply %s, model %s (%s)",
+            event.get("type"), code, e.refusal.code.value, str(e.refusal.detail)[:200],
+        )  # fmt: skip
+        raise HubRefused(code) from None

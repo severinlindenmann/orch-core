@@ -174,6 +174,6 @@
  "seed_rule": "sha256(b\"orch-release TEST key <name>; never trust outside tests\")",
  "test_only": true,
  "trusted_roots": {
-  "root-1": "/f5l4aGiNAveBGbZW+bAnbg7JJ3KpBc2d2YfyvZy/2k="
+  "test-root-1": "/f5l4aGiNAveBGbZW+bAnbg7JJ3KpBc2d2YfyvZy/2k="
  }
 }

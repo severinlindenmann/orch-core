@@ -149,7 +149,7 @@ class HubModelChecks:
         """Hub contract 9.6 "Readers" (#1198 C9) over :func:`wire.check_recorded_owner_proof`: the proof, its place
         after the prior hub event, the host-signed append time, the dev marker. Fail closed."""
         try:
-            keys = wire.JOINED_KEYS if event["type"] == "hub.joined" else wire.LEFT_KEYS
+            keys = wire.recorded_keys(event["type"])
             payload = {k: event[k] for k in (*keys, "owner_proof") if k in event}
             wire.check_recorded_owner_proof(
                 event["type"], payload, at_ms=at_ms, prior=prior, workspace_id=workspace_id,

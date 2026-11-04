@@ -1,7 +1,7 @@
 // Pure reducers: workspace state and grants are derived from seed + workspace events.
 import { addonStatus } from '@/api/addons'
 import { validIcon } from '@/api/wsIcons'
-import type { CodeReviewApplies, GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent, WorkspaceRepo } from '@/api/types'
+import type { AddonEventDecl, CodeReviewApplies, GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent, WorkspaceRepo } from '@/api/types'
 
 export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Workspace {
   const ws: Workspace = structuredClone(seed)
@@ -54,6 +54,7 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
         a.granted = {
           version: String(e.version),
           capabilities: Array.isArray(e.capabilities) ? (e.capabilities as string[]) : [],
+          ...(Array.isArray(e.events) ? { events: e.events as AddonEventDecl[] } : {}),
           package_sha256: String(e.package_sha256),
           at: e.at,
           by: e.actor.id,

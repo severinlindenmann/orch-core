@@ -54,7 +54,7 @@ def ask(n: dict) -> str:
     return n.get("detail") or ""
 
 
-def item(n: dict, titles: dict[str, str], sign: str | None = None) -> dict:
+def item(n: dict, titles: dict[str, str]) -> dict:
     kind = "verdict" if n["kind"] == "approve" and n.get("ref") == "verify" else KIND[n["kind"]]
     out = {
         "kind": kind,
@@ -67,8 +67,6 @@ def item(n: dict, titles: dict[str, str], sign: str | None = None) -> dict:
         "since": n.get("since") or "",
         "blocking": n["kind"] == "question" and n.get("detail") == "blocking",
     }
-    if sign == "hub":
-        out["sign"] = "hub"  # V3 C11: the row is approved on the phone or in the hub, never by a local key
     if n.get("text_cut"):
         out["cut"] = True  # a Snip: shown as shortened; the ticket page has the full question
     if n.get("status") == "closed":
@@ -77,6 +75,9 @@ def item(n: dict, titles: dict[str, str], sign: str | None = None) -> dict:
 
 
 TERMINAL_WAIT = "Agent may need you: check its terminal"
+#: run-10 J04: the host saw the agent inside `orch wait` (source "wait"): it waits for a decision, not at its prompt
+AGENT_WAITS = "Agent is waiting for the next step"
+SOURCES = ("wait", "hook", "quiet")
 
 
 def _at(value) -> float | None:
@@ -86,10 +87,16 @@ def _at(value) -> float | None:
         return None
 
 
+FINISHED = ("done", "closed", "cancelled")
+
+
 def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict]]) -> list[dict]:
     """Run-9 feedback 3.6: an agent run the host marks `waiting` (Notification hook, else a quiet terminal) on a ticket
-    where nothing is open for the person and no event came after the marker. Local and display only; it is not a need
-    (never counted). `ref` is the run id: "Open terminal" attaches to it."""
+    where nothing is open for the person. Local and display only; it is not a need (never counted). `ref` is the run id:
+    "Open terminal" attaches to it. This is the dashboard's one "agent idle" signal (run-9 J04): a ticket event after
+    the marker does NOT hide it (the person's own approval is such an event, and the idle agent stays idle); the host
+    clears `waiting` itself as soon as the agent prints again. `source` says how the host knows: "wait" (the agent is
+    inside `orch wait`, whatever its terminal prints: run-10 J04), "hook" or "quiet" (fallbacks outside orch wait)."""
     by_key = {r["key"]: r for r in rows if "key" in r}
     out = []
     for r in runs:
@@ -97,19 +104,22 @@ def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict
         row = by_key.get(r.get("ticket") or "")
         if not isinstance(w, dict) or row is None or mine.get(row.get("uid")):
             continue
-        since, updated = _at(w.get("since")), _at(row.get("updated_at"))
-        if since is None or (updated is not None and updated > since):
-            continue  # a new event: the agent has moved on
+        if row.get("status") in FINISHED:  # nothing is waiting on a finished ticket (run-11 P06)
+            continue
+        if _at(w.get("since")) is None:
+            continue
+        source = w.get("source") if w.get("source") in SOURCES else None
         out.append(
             {
                 "kind": "terminal_wait",
                 "ticket": row["key"],
                 "uid": row["uid"],
                 "title": row["title"],
-                "text": TERMINAL_WAIT,
+                "text": AGENT_WAITS if source == "wait" else TERMINAL_WAIT,
                 "ref": r["run"],
                 "since": w["since"],
                 "blocking": False,
+                **({"source": source} if source else {}),
             }
         )
     return out
@@ -138,7 +148,6 @@ def today(
     role: str,
     recent: list[dict] | None = None,
     closed: list[dict] | None = None,
-    sign: str | None = None,
     runs: list[dict] | None = None,
 ) -> dict:
     titles = {r["uid"]: r["title"] for r in [*rows, *(closed or [])]}
@@ -146,8 +155,9 @@ def today(
     for n in needs["items"]:
         if n.get("uid"):
             mine.setdefault(n["uid"], []).append(n)
-    items = [item(n, titles, sign) for n in needs["items"]]
+    items = [item(n, titles) for n in needs["items"]]
     waits = terminal_waits(runs or [], rows, mine)
+    idle = {w["uid"] for w in waits}
     counts: dict[str, int] = {}
     for r in rows:
         status = r["status"].replace("_", "-")
@@ -160,7 +170,8 @@ def today(
         "needs_you": [] if viewer_role else [*items, *waits],
         "read_only_open": items if viewer_role else [],
         "waiting_on_others": {"count": len(waiting), "people": []},
-        "working": [summary(r, viewer, mine) for r in rows if r["status"] == "in_progress"],
+        # an agent that is idle at its prompt is not working (run-9 J04): its ticket is in needs_you as terminal_wait
+        "working": [summary(r, viewer, mine) for r in rows if r["status"] == "in_progress" and r["uid"] not in idle],
         "recent": [recent_row(a) for a in recent or []],
         "counts": counts,
         "sub_cursor": needs.get("sub_cursor"),

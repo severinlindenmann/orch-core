@@ -1,0 +1,38 @@
+name: orch-core root tests
+# tests/setup/test_osapply_linux_root.py creates real system users and units on the runner. Its `useradd` step used to
+# hang past 120 s (it copied /etc/skel, gigabytes on the CI image); since 36c29f98d it runs with `--skel /dev/null` and
+# the root runs are green (#1308). It is still NOT part of PR CI and not a required check: it runs on develop pushes and
+# on demand; a failure prints what the hung process waited for (see the diagnose step).
+on:
+  push:  # schedule and workflow_dispatch only exist once the file is on the default branch (main); develop pushes work now
+    branches: [develop]
+    paths: ["packages/core/**", ".github/workflows/orch-core-root.yml"]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: packages/core
+jobs:
+  root-tests:
+    name: root tests (real useradd / systemd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: packages/core/uv.lock
+      - run: uv sync --locked
+      - name: Watch for a hung useradd (background, evidence only)
+        run: |
+          nohup bash -c 'while sleep 20; do for p in $(pgrep -x useradd); do
+            echo "== $(date +%T) useradd $p"; sudo cat /proc/$p/stack /proc/$p/wchan 2>&1; sudo ls -l /proc/$p/fd 2>&1
+            ps -eo pid,ppid,stat,wchan:30,etime,cmd --sort=etime | tail -25; df -h /var /home; done; done' > "$RUNNER_TEMP/useradd-watch.log" 2>&1 &
+      - run: uv run pytest -q -m "linux_root and not slow" -p no:xdist
+      - if: always()
+        run: cat "$RUNNER_TEMP/useradd-watch.log" || true

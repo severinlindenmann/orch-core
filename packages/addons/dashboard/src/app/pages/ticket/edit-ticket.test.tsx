@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
+import * as gesture from '@/components/sign/trustedPress'
 import { buildEdit, canEditTicket, EditTicket, TicketEditProvider } from './EditTicket'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -11,8 +12,9 @@ import type { Viewer } from './shared'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: vi.fn(() => true) }))
 // The signing dialog is its own feature (SignPopover tests); here it only shows the typed action it was given.
 vi.mock('@/components/sign/SignPopover', () => ({
-  SignPopover: (p: { title: string; action: unknown; onSettled?: (phase: string) => void; onClose: () => void }) => (
-    <div role="dialog" aria-label={`sign ${p.title}`}>
+  SignPopover: (p: { title: string; action: unknown; inline?: boolean; autoStart?: boolean; armOnStart?: boolean; armLine?: string; lead?: React.ReactNode; confirmLabel?: string; onSettled?: (phase: string) => void; onClose: () => void }) => (
+    <div role={p.inline ? 'region' : 'dialog'} aria-label={`sign ${p.title}`} data-confirm={p.confirmLabel} data-autostart={String(p.autoStart)} data-arm={String(p.armOnStart)} data-armline={p.armLine}>
+      {p.lead}
       <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
       <button onClick={() => p.onSettled?.('done')}>signed</button>
       <button onClick={p.onClose}>cancelled</button>
@@ -20,7 +22,9 @@ vi.mock('@/components/sign/SignPopover', () => ({
   ),
 }))
 
-const T = { timeout: 5000 }
+// The first test pays the cold load of the lazy ticket page; on a busy machine that alone can pass 5 s.
+vi.setConfig({ testTimeout: 30000 })
+const T = { timeout: 15000 }
 afterEach(() => { vi.restoreAllMocks(); vi.mocked(handoffMode).mockReturnValue(true) })
 
 const ticket = {
@@ -75,7 +79,88 @@ describe('buildEdit: what the person changed, as one typed action', () => {
   })
 })
 
+describe('buildEdit: the title (r7-P07)', () => {
+  const titled = { ...ticket, title: 'Invoice export' }
+  it('is nothing when the title is as it was, one extra step when it changed', () => {
+    expect(buildEdit(titled, { ...none, title: ' Invoice export ' }, true)).toEqual({ nothing: true })
+    expect(buildEdit(titled, { ...none, title: 'Invoice export for Ben' }, true)).toEqual({
+      steps: 1,
+      action: { action: 'edit_sequence', key: 'DEMO-0001', head_seq: 7, title: 'Invoice export for Ben' },
+    })
+    expect(buildEdit(titled, { ...none, title: 'New', sections: { summary: 'New summary' } }, true)).toMatchObject({ steps: 2, action: { title: 'New' } })
+  })
+  it('refuses an empty, multi-line or overlong title in words', () => {
+    expect(buildEdit(titled, { ...none, title: '  ' }, true)).toHaveProperty('problem')
+    expect(buildEdit(titled, { ...none, title: 'a\nb' }, true)).toHaveProperty('problem')
+    expect(buildEdit(titled, { ...none, title: 'x'.repeat(201) }, true)).toHaveProperty('problem')
+  })
+})
+
 describe('the ticket page edit', () => {
+  it('renaming from the heading is one short step: new title, Rename, the one review (r10-P09)', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    expect(within(dialog).queryByRole('button', { name: /Review and sign/ })).toBeNull() // not the long form
+    const field = within(dialog).getByLabelText('Title')
+    await waitFor(() => expect(field).toHaveFocus(), T)
+    const input = field as HTMLInputElement
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, input.value.length]) // the current title is selected
+    await user.type(field, ' v2{Enter}') // Enter goes through the same review as the button
+    const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
+    expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043' })
+    expect(sent.title).toMatch(/ v2$/)
+    // r12-P11: no sheet on top of the box: the review is inline in it, shows old -> new, and Rename confirms
+    expect(screen.queryByRole('dialog', { name: 'sign Rename DEMO-0043' })).toBeNull()
+    const inline = within(dialog).getByRole('region', { name: 'sign Rename DEMO-0043' })
+    expect(inline).toHaveAttribute('data-confirm', 'Rename')
+    expect(within(inline).getByTestId('rename-diff')).toHaveTextContent('Load tariff tables as dbt seeds → Load tariff tables as dbt seeds v2')
+    expect(within(dialog).getByLabelText('Title')).toHaveAttribute('readonly') // the title is read-only while signing (run-11 P08)
+    // the signed content is exactly the title change: nothing else rides along
+    for (const k of ['sections', 'criteria', 'added', 'links', 'people', 'owner', 'assignees', 'reviewers']) expect(sent).not.toHaveProperty(k)
+  })
+  it('P07: one trusted press on Rename opens the review armed ("Renaming in a moment"); the description no longer asks for a second press', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    expect(within(dialog).getByText('Write the new title.')).toBeInTheDocument()
+    expect(dialog).not.toHaveTextContent(/once more/)
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) // user-event is untrusted: stand in for the person's own press
+    await user.type(within(dialog).getByLabelText('Title'), ' v2')
+    await user.click(within(dialog).getByRole('button', { name: 'Rename' }))
+    const inline = await within(dialog).findByRole('region', { name: 'sign Rename DEMO-0043' })
+    expect(inline).toHaveAttribute('data-autostart', 'true')
+    expect(inline).toHaveAttribute('data-arm', 'true')
+    expect(inline).toHaveAttribute('data-armline', 'Renaming in a moment')
+    expect(within(inline).getByTestId('rename-diff')).toHaveTextContent('→') // the old -> new line stays what is shown
+  })
+  it('P07: an untrusted (scripted) Rename never arms: the review still opens, the signature stays the person\'s own press', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(false)
+    await user.type(within(dialog).getByLabelText('Title'), ' v2{Enter}')
+    const inline = await within(dialog).findByRole('region', { name: 'sign Rename DEMO-0043' })
+    expect(inline).toHaveAttribute('data-autostart', 'false')
+  })
+  it('P61: Rename starts with the selected title, no early error, and only Cancel and Rename', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    const input = within(dialog).getByLabelText('Title') as HTMLInputElement
+    expect(input).toHaveValue('Load tariff tables as dbt seeds')
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, input.value.length])
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'More fields…' })).toBeNull()
+    const rename = within(dialog).getByRole('button', { name: 'Rename' })
+    expect(rename).toBeDisabled()
+    await user.clear(input)
+    expect(rename).toBeDisabled()
+    await user.keyboard('{Enter}')
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    await user.type(input, 'A new title')
+    expect(rename).toBeEnabled()
+  })
   it('edits text, a criterion and the people, then asks for ONE signature', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
@@ -85,6 +170,12 @@ describe('the ticket page edit', () => {
     await user.type(within(dialog).getByLabelText('New acceptance criterion'), 'A header row is exported')
     await user.click(within(dialog).getByRole('button', { name: 'Add' }))
     await user.click(within(dialog).getByRole('button', { name: /^Review and sign \(1 change\)$/ }))
+    // the full edit is not a rename: no inline review, no Rename button, no old -> new line, and its fields cannot change while signing
+    const review = await screen.findByRole('dialog', { name: 'sign Edit DEMO-0043' })
+    expect(review).not.toHaveAttribute('data-confirm')
+    expect(screen.queryByTestId('rename-diff')).toBeNull()
+    expect(within(dialog).getByTestId('edit-fields')).toBeDisabled()
+    expect(within(dialog).getByLabelText('Title')).toBeDisabled()
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043', acceptance: { edit: {}, add: ['A header row is exported'] } })
     expect(typeof sent.head_seq).toBe('number')

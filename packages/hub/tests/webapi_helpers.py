@@ -10,6 +10,7 @@ from channels_helpers import Env as ChEnv
 from channels_helpers import new_channel, prove
 from custodial_helpers import WK, WS, StubView, core_seal
 
+from orch_hub.changes import Changes
 from orch_hub.contract import hub as H
 from orch_hub.contract import keystore as KS
 from orch_hub.contract.canon import b64u
@@ -37,6 +38,12 @@ class FakeRegistry:
     ) -> None:
         self.ws[ws] = {"mode": mode, "owner": owner, "status": status, "name": name, "left_ms": left_ms}
 
+    def profile(self, ws):
+        return self.ws.get(ws, {}).get("profile")
+
+    def status(self, ws):
+        return {"version": None, "commit": None, "host": None, "address": "", "last_seen_ms": None}
+
     def unbound_ms(self, ws):
         r = self.ws.get(ws)
         return r["left_ms"] if r and r["status"] == "unbound" else None
@@ -49,7 +56,11 @@ class FakeRegistry:
 
     def binding_state(self, ws):
         r = self.ws.get(ws)
-        return None if r is None else {"status": r["status"], "binding": {"mode": r["mode"]}}
+        return (
+            None
+            if r is None
+            else {"status": r["status"], "binding": {"mode": r["mode"]}, "binding_seq": r.get("seq", 1)}
+        )
 
     def last_mode(self, ws):
         return self.ws[ws]["mode"] if ws in self.ws else None
@@ -59,10 +70,16 @@ class FakeRegistry:
         return r["mode"] if r and r["status"] == "bound" else None
 
     def owner_alias(self, ws):
-        return self.ws[ws]["owner"]
+        return self.ws.get(ws, {}).get("owner")
 
     def card(self, ws):
         return {"name": self.ws[ws]["name"]} if self.ws[ws]["name"] else {}
+
+    def display_name(self, ws):
+        return self.ws[ws]["name"] or None
+
+    def own_name(self, ws):
+        return self.ws[ws].get("own_name")
 
 
 class FakeShares:
@@ -134,6 +151,19 @@ class Web:
             now_ms=self.clock,
             dev_mode=True,
         )
+        from orch_hub.connections import Connections
+
+        self.connections = Connections(str(tmp_path / "hub" / "connections.db"), now_ms=self.clock)
+        self.changes = Changes(  # access changes that wait for a workspace owner (M2-8a)
+            str(tmp_path / "hub" / "changes.db"),
+            connections=self.connections,
+            access=e.acc,
+            registry=self.reg,
+            snapshots=e.snaps,
+            keys=e.keys,
+            channels=e.svc,
+            now_ms=self.clock,
+        )
         self.api = WebApi(
             WebDeps(
                 keys=e.keys,
@@ -141,6 +171,8 @@ class Web:
                 channels=e.svc,
                 registry=self.reg,
                 audit=e.audit,
+                changes=self.changes,
+                connections=self.connections,
                 engine=self.engine,
                 shares=self.shares,
                 view=self.view,
@@ -158,6 +190,8 @@ class Web:
         e.acc.grant(WS, "team", "edit")
 
     def close(self) -> None:
+        self.changes.close()
+        self.connections.close()
         self.seals.close()
         self.env.close()
 

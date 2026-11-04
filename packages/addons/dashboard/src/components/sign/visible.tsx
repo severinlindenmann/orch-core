@@ -76,6 +76,11 @@ export const Raw = ({ children }: { children: string }) => (
   <bdi className="whitespace-pre-wrap break-all font-mono text-[12px] text-text [unicode-bidi:isolate]">{visible(children)}</bdi>
 )
 
+/** A name, title or description someone else wrote, in the normal font: the SAME `visible()` encoding and bidi isolation as `Raw` (hidden and bidi characters stay visible); only the font differs. Inherits size and colour. */
+export const Name = ({ children }: { children: string }) => (
+  <bdi className="whitespace-pre-wrap break-all [unicode-bidi:isolate]">{visible(children)}</bdi>
+)
+
 /** A typed signed value (`visibleValue`): strings quoted, numbers and booleans bare; isolated like `Raw`. */
 export const RawValue = ({ value }: { value: unknown }) => (
   <bdi data-value-type={typeof value} className="whitespace-pre-wrap break-all font-mono text-[12px] text-text [unicode-bidi:isolate]">

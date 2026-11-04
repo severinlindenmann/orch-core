@@ -2,7 +2,7 @@
 // the next read of "what needs you" (which can still list it for a moment). The server's list stays the truth: an entry
 // ends when the server stops listing the item, and after DROP_MS at the latest, so a reopened item comes back.
 import type { QueryClient } from '@tanstack/react-query'
-import type { NeedsYouItem, TodayDocument } from './types'
+import type { NeedsYouItem, QuestionStatus, TicketDocument, TodayDocument } from './types'
 
 const DROP_MS = 30_000
 interface Drop { ticket: string; ref: string | undefined; hash?: string | null; at: number }
@@ -31,6 +31,26 @@ export function signedNow(qc: QueryClient, ws: string | undefined, ticket: strin
   drops.set(ws, [...(drops.get(ws) ?? []), { ticket, ref, hash, at: Date.now() }])
   qc.setQueryData<TodayDocument>(['today', ws], (d) => (d ? withoutSigned(ws, d) : d))
   for (const k of refreshed) void qc.invalidateQueries({ queryKey: [k] })
+}
+
+/** The host confirmed this answer: the question shows as answered now, without waiting for the next read of the ticket. */
+export async function answeredNow(
+  qc: QueryClient,
+  ws: string | undefined,
+  ticketKey: string,
+  questionId: string,
+  answer: { option?: string; text?: string },
+  by: string,
+) {
+  if (!ws) return
+  const at = new Date().toISOString()
+  // A read of the ticket still in flight would overwrite the answer with the old state.
+  await qc.cancelQueries({ queryKey: ['ticket', ws, ticketKey] })
+  qc.setQueryData<TicketDocument>(['ticket', ws, ticketKey], (d) => {
+    if (!d) return d
+    const done = (q: QuestionStatus) => ({ ...q, state: 'answered', answer: { by, at, ...(answer.option ? { option: answer.option } : {}), ...(answer.text ? { text: answer.text } : {}) } }) as QuestionStatus
+    return { ...d, questions_state: d.questions_state.map((q) => (q.id === questionId ? done(q) : q)) }
+  })
 }
 
 export function resetSignedDrops() {

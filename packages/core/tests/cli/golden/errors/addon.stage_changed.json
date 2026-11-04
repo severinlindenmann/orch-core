@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "addon.stage_changed",
+    "message": "the staged package changed after review",
+    "hint": "stage and review again",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

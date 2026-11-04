@@ -51,6 +51,7 @@ from orch.gitread.refs import branch_ok
 from orch.gitread.repo import Repo
 from orch.land import key
 from orch.land.key import LandKeyError
+from orch.privdir import others_can_write
 
 __all__ = [
     "BOT_EMAIL", "BOT_NAME", "Candidate", "Conflict", "ImportStats", "LandGitError", "LandRepo", "target_ref",
@@ -254,7 +255,11 @@ class LandRepo:
             return cls(path, env_own)  # reopening never runs ``git init`` there; the first operation gates it
         try:
             parent = os.lstat(os.path.dirname(path))
-            if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
+            if (
+                not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != os.geteuid()
+                or others_can_write(parent, os.geteuid())
+            ):
                 raise LandGitError("land.unsafe", "the landing directory is not private to this user")
             os.mkdir(path, 0o700)
         except OSError:

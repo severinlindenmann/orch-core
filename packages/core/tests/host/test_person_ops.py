@@ -65,7 +65,7 @@ def test_the_host_person_ops_are_not_registry_ops():
     import orch.ops as ops
     from orch.model.emits import EMITS_V1
 
-    want = {"move", "policy.set", "settings.set", "people.set", "publish.share"}  # B12D, P5
+    want = {"move", "policy.set", "settings.set", "people.set", "publish.share", "app.release"}  # B12D, P5, #1457
     want |= {
         "ac.accept",
         "ac.unaccept",
@@ -76,6 +76,8 @@ def test_the_host_person_ops_are_not_registry_ops():
         "device.mark_exposed",
         "device.rotate",
         "device.remove",
+        "remote.set",
+        "remote.device_confirm",
     }  # V3 C2a, C2b, C10, #1097, #1198 C15
     assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == want
     for name in person_ops.OPS:
@@ -382,26 +384,6 @@ def test_the_signer_refuses_a_person_op_event_outside_its_table(human):
 
 def _registry(prefix: str = "MINE"):
     return lambda wid: ("my workspace", prefix)
-
-
-def test_the_confirmation_words_of_the_three_ops(human):
-    from orch.host import signer
-
-    _, key = human.ticket()
-    moved = human.prepare("move", {"ref": key, "to": "backlog"})
-    assert signer.confirm_word(moved, _registry()) == f"{key}/{moved['log'][-8:]}"
-    ticket_policy = human.prepare("policy.set", {"ref": key, "gates": {"requirements": policy(count=2)}})
-    assert signer.confirm_word(ticket_policy, _registry()) == f"{key}/{ticket_policy['log'][-8:]}"
-    ws_policy = human.prepare("policy.set", {"gates": {"requirements": policy(count=2)}})
-    # the prefix comes from the signer's own registry, never from the host
-    ws8 = ws_policy["workspace_id"][-8:]
-    assert signer.confirm_word(ws_policy, _registry("MINE")) == f"MINE~{ws8}/POLICY"
-    settings = human.prepare("settings.set", {"set": {"lease_ttl_min": 10}})
-    assert signer.confirm_word(settings, _registry("MINE")) == f"MINE~{ws8}/SETTINGS"
-    other = {**settings, "workspace_id": settings["workspace_id"][:-8] + "0" * 8}  # same prefix, another workspace
-    assert signer.confirm_word(other, _registry("MINE")) != signer.confirm_word(settings, _registry("MINE"))
-    with pytest.raises(signer.SignerRefused):
-        signer.confirm_word(settings, lambda wid: None)  # not in the signer's registry: nothing to type
 
 
 def test_the_signer_header_names_the_three_ops_in_plain_words(human):

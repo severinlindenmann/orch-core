@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
-import time
 
 import pytest
-from channels_helpers import PW, Env, register
+from channels_helpers import PW, Env, register, wall_codes
 from test_channels_service import held, refused
 
 from orch_hub.access import ADMIN_GROUP
-from orch_hub.channels.service import totp_code
 from orch_hub.cli import main
 from orch_hub.contract import hub as H
 from orch_hub.contract.canon import b64u
@@ -191,9 +189,7 @@ def test_cli_password_totp_list_revoke_and_pairing(tmp_path, capsys, monkeypatch
         code,
         s.public,
         "iPhone",
-        token=svc.sign_in(
-            u, PW, totp_code(base64.b32decode(secret + "=" * (-len(secret) % 8)), int(time.time()) // 30)
-        )["token"],
+        token=svc.sign_in(u, PW, wall_codes(base64.b32decode(secret + "=" * (-len(secret) % 8)))[0])["token"],
     )
     cert = svc.complete_registration(begun["challenge_id"], prove(s, begun))
     cid = cert["o"]["channel_id"]

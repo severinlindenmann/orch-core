@@ -11,33 +11,43 @@ the signer forwards it to `human.prepare`
 and the host answers every tab, retry and re-login with the SAME request (or its terminal state). The records below are
 a convenience (which ids this dashboard prepared, what a View is checked against, a settling display), never the guard.
 
-A request obtained through an intent belongs to the PERSON in that workspace: any session of that person may view, sign,
-poll and cancel it (the signer separately refuses anything it did not prepare itself, and signs a request once).
+A request obtained through an intent belongs to the PERSON in that workspace. D5 holds and cancellation are bound
+to the preparing session by the signer; other views retain the existing per-person read boundary.
 """
 
 import hashlib
 import re
 import threading
+import time
 from collections import OrderedDict
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
+from orch.click.protocol import ONE_PRESS_OPS
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
-from .handoff import (
+from .hubapprove import mode_of
+from .reads import workspace
+from .signing import (
+    NEXT_RETRY_HOPS,
     AddonEnable,
     AgentAccess,
+    ApproveBoth,
     EditTicket,
     HubJoin,
     HubLeave,
     HubModeFull,
+    MarketGrant,
     NewTicketSequence,
     PrepareBody,
     QuickStart,
+    RemoteDeviceConfirm,
+    RemoteSet,
+    RepoSet,
     RequestId,
     RunnerGrant,
     done_error,
@@ -48,15 +58,14 @@ from .handoff import (
     send_prepare,
     sequence_progress,
 )
-from .hubapprove import mode_of, refuse_if_hub_only
-from .reads import workspace
-from .stepup import refusal_check, refuse_step_up
+from .stepup import LOCAL, refusal_check, refuse_step_up
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 TTL = 660  # a request lives 10 minutes at most (the signer caps it); the session forgets it a minute later
 REMEMBERED = 256
+BINDING_KEEP = 2 * TTL  # a tombstoned binding outlives the longest request by a whole lifetime
 #: refusals after which a request can no longer be signed: its slot is free again
 ENDED = {"expired", "not_prepared_here", "custody_changed", "human.request_expired", "human.request_state"}
 #: the signer says `the request is <state>` when an intent's idem returns a request that already ended
@@ -65,10 +74,7 @@ SUBMITTED = "the request is submitted"  # cancelled/expired never get here: send
 # M7b, the runner grant (D-P2-27, section 0.8.6 item 6): a click request of its own action. The texts are core's
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
-DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 #: core's constants (orch.click.protocol REVEAL_LINE, REVEAL_RISK): a shown-secret View that lacks either is not shown
 REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
 REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
@@ -135,6 +141,29 @@ class SealBegin(BaseModel):
 ClickBody = PrepareBody
 
 
+#: contract 4 (run 13 C3): a View's `risk_lines` is at most this many lines of at most this many characters
+RISK_LINES_MAX, RISK_LINE_CHARS, HEADLINE_CHARS = 64, 400, 60
+
+
+def contract4_view_ok(view: dict) -> bool:
+    """Contract 4's View fields: `headline`, one line of text (not empty), and `risk_lines`, a list of lines of text
+    (maybe empty), and `headline_detail`, null or one line of text (the capped, quoted free text beside the headline),
+    all the signer's and in its `view_digest`. Passed on unchanged; only their shape is checked here."""
+    head, risk, detail = view.get("headline"), view.get("risk_lines"), view.get("headline_detail")
+    return (
+        isinstance(head, str)
+        and 0 < len(head) <= HEADLINE_CHARS
+        and "\n" not in head
+        and (
+            detail is None or (isinstance(detail, str) and 0 < len(detail) <= HEADLINE_CHARS + 3 and "\n" not in detail)
+        )
+        and isinstance(risk, list)
+        and (risk == []) == (view.get("op") in ONE_PRESS_OPS)
+        and len(risk) <= RISK_LINES_MAX
+        and all(isinstance(x, str) and 0 < len(x) <= RISK_LINE_CHARS and "\n" not in x for x in risk)
+    )
+
+
 def deposit_view_ok(view: dict, ws: str) -> bool:
     """A deposit grant's View (section 0.8.6 item 6): `deposit:true`, core's deposit line in `deposit_line` and in
     `lines`, the owner's risk sentence in `lines`, this workspace and a plain click
@@ -151,6 +180,8 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
         and isinstance(lines, list)
         and DEPOSIT_LINE in lines
         and DEPOSIT_RISK in lines
+        and isinstance(view.get("risk_lines"), list)
+        and view["risk_lines"][:1] == [DEPOSIT_RISK]  # contract 4: the signer marks it as the risk
         and confirm == {"kind": "click"}
     )
 
@@ -177,6 +208,8 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
         and isinstance(lines, list)
         and REVEAL_LINE in lines
         and REVEAL_RISK in lines
+        and isinstance(view.get("risk_lines"), list)
+        and view["risk_lines"][:1] == [REVEAL_RISK]  # contract 4: the signer marks it as the risk
         and view.get("confirm") == {"kind": "click"}
     )
 
@@ -185,7 +218,8 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
 RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
-HUB_STEPS = (HubJoin, HubModeFull, HubLeave)
+REMOTE_STEPS = (RemoteSet, RemoteDeviceConfirm)
+HUB_STEPS = (HubJoin, HubModeFull, HubLeave, *REMOTE_STEPS)
 B64URL = r"[A-Za-z0-9_-]"
 
 
@@ -356,6 +390,7 @@ class RunnerBody(BaseModel):
 
 
 class Sign(Step):
+    delay_s: Literal[0, 10] = 0
     view_digest: ViewDigest
     #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
     reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")] | None = None
@@ -370,10 +405,44 @@ class Clicks:
     def __init__(self):
         self.lock = threading.Lock()
         self.ops: OrderedDict[str, tuple[str, str, object, int]] = OrderedDict()
+        #: request id -> [session token, ended, time ended] of every REMOTE_STEP request. Never deleted while the
+        #: request can still be live at the host: `forget` only tombstones it, purged after BINDING_KEEP.
+        self.bindings: OrderedDict[str, list] = OrderedDict()
+        self.clock = time.monotonic
+        self.known: OrderedDict[str, None] = OrderedDict()  # ids of the other (non-remote) requests ever added
+
+    def _purge(self) -> None:
+        now = self.clock()
+        for rid in [r for r, (_, ended, at) in self.bindings.items() if ended and now - at > BINDING_KEEP]:
+            del self.bindings[rid]
+
+    def bind(self, request_id: str, token: str) -> bool:
+        """Bind a request prepared by `token`. False when another session already holds it (live or tombstoned)."""
+        with self.lock:
+            self._purge()
+            held = self.bindings.get(request_id)
+            if held is not None and held[0] != token:
+                return False
+            self.bindings[request_id] = [token, False, 0.0]
+            return True
+
+    def is_known(self, request_id: str) -> bool:
+        with self.lock:
+            return request_id in self.known
+
+    def binding(self, request_id: str) -> tuple[str, bool] | None:
+        with self.lock:
+            self._purge()
+            held = self.bindings.get(request_id)
+            return None if held is None else (held[0], held[1])
 
     def add(self, ws: str, request_id: str, op: str, body: object, epoch: int) -> None:
         with self.lock:
             self.ops[request_id] = (ws, op, body, epoch)
+            if not isinstance(body, REMOTE_STEPS):
+                self.known[request_id] = None
+                while len(self.known) > 16 * REMEMBERED:
+                    self.known.popitem(last=False)
             self.ops.move_to_end(request_id)
             while len(self.ops) > REMEMBERED:
                 self.ops.popitem(last=False)
@@ -390,6 +459,9 @@ class Clicks:
     def forget(self, request_id: str) -> None:
         with self.lock:
             self.ops.pop(request_id, None)
+            held = self.bindings.get(request_id)
+            if held is not None and not held[1]:  # tombstone, never delete: it stays refused for its lifetime
+                held[1], held[2] = True, self.clock()
 
 
 def verify(prepared: dict, ws: str, **expect) -> dict:
@@ -398,12 +470,91 @@ def verify(prepared: dict, ws: str, **expect) -> dict:
 
 
 def register(app: FastAPI, gateway: Gateway):
+    def contract(request: Request):
+        if request.headers.get("X-Orch-Click-Contract") != "4":
+            raise fail("click.contract", "Reload the page: this page is out of date.", exit=9)
+
     clicks = app.state.clicks = Clicks()
+
+    def take_presence(workspace_id: str, view_digest: str) -> dict:
+        """D88: a stream's presence route asks the signer to take its digest from the stream's batch (once). The
+        signer client stamps `remote` and the stream id itself; a refusal is `remote.presence_required` & co."""
+        return signer.call("presence_take", {"workspace_id": workspace_id, "digest": view_digest})
+
+    def presence_nonce(workspace_id: str) -> dict:
+        return signer.call("presence_nonce", {"workspace_id": workspace_id})
+
+    def presence(workspace_id: str, nonce: str, digests: list, assertion: dict) -> dict:
+        return signer.call(
+            "presence", {"workspace_id": workspace_id, "nonce": nonce, "digests": digests, "assertion": assertion}
+        )
+
+    app.state.take_presence = take_presence
+    app.state.presence_nonce = presence_nonce  # R3 T4: the stream's presence routes (remote_routes.py) go through here
+    app.state.presence = presence
     failed_bumps: dict[str, int] = {}
+    hold_gate = threading.Lock()  # serialize admission only; logout never waits for it
+    held: dict[str, tuple[str, str]] = {}  # request -> (workspace, preparing session); no signed bytes
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
     signer.unsettled = handoffs.any_unsettled  # a hung signer is not replaced while a signature may be mid-submit
     STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
+
+    lease_workers: set[str] = set()
+
+    def renew_session(token: str) -> None:
+        auth = app.state.auth
+
+        def live() -> bool:
+            with auth.lock:
+                return (
+                    token in auth.sessions
+                    and token not in auth.ending
+                    and any(owner == token for _, owner in list(held.values()))
+                )
+
+        stop = threading.Event()  # one Event for this renewer thread; nothing sets it, the wait is its timer
+        try:
+            while not stop.wait(2):
+                if not auth.valid(token, touch=False):
+                    return
+                with auth.lock:
+                    if token in auth.ending:
+                        return
+                    pending = [(rid, ws) for rid, (ws, owner) in list(held.items()) if owner == token]
+                if not pending:
+                    return
+                try:
+                    for rid, ws in pending:
+                        state = signer.call(
+                            "status",
+                            {
+                                "workspace_id": ws,
+                                "request_id": rid,
+                                "session": hashlib.sha256(token.encode()).hexdigest(),
+                            },
+                        )
+                        if state.get("state") != "held":
+                            held.pop(rid, None)
+                    if not live():
+                        return
+                    signer.session_alive(hashlib.sha256(token.encode()).hexdigest(), live)
+                except Exception:  # no renewal on channel failure: the signer lease expires
+                    return
+        finally:
+            with auth.lock:
+                lease_workers.discard(token)
+
+    def start_renewing(token: str) -> None:
+        if app.state.auth.stream_of(token) is not None:
+            # a stream's signer calls are stamped from its context, which a thread does not have, and `session_alive`
+            # is refused over a stream: a held intent of a stream lapses with its lease (fail closed)
+            return
+        with app.state.auth.lock:
+            if token in lease_workers:
+                return
+            lease_workers.add(token)
+            threading.Thread(target=renew_session, args=(token,), daemon=True).start()
 
     def ready(step: dict) -> dict:
         """A remote session's call goes to a signer that checks the passkey itself (`remote`, `stepup`), or to none: an
@@ -429,6 +580,26 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle_all(rid)
             handoffs.disown(rid)
 
+    def authorize(request_id: str | None, token: str, body: object = None) -> None:
+        """THE rule for remote-access changes (R2), the only place LOCAL and the token are decided: prepare (`body`
+        given), view, sign and cancel all come here. A bound request id (live or tombstoned) needs a session opened on
+        this computer AND the very token that prepared it, whatever the ops record says; a remote-step record without
+        a binding is `not_found`. Fail closed."""
+        local = app.state.auth.login_kind(token) == LOCAL
+        if request_id is None:
+            if isinstance(body, REMOTE_STEPS) and not local:
+                raise fail("op.not_allowed", "Change remote access on the computer itself.", exit=3)
+            return
+        held = clicks.binding(request_id)
+        if held is not None:
+            if held[1] or held[0] != token or not local:
+                raise fail("not_found", exit=2)
+            return
+        if isinstance(clicks.get(request_id)[2], REMOTE_STEPS):
+            raise fail("not_found", exit=2)
+        if clicks.get(request_id)[2] is None and not clicks.is_known(request_id):
+            raise fail("not_found", exit=2)  # neither a record nor a binding nor ever seen: unknown means refuse
+
     def mine(ws: str, request_id: str) -> None:
         """A request of this PERSON in this workspace (any of their sessions); another's, or none, is `not_found`."""
         gateway.enabled(ws)  # the workspace is pinned and the dashboard addon is enabled in it, like the hand-off
@@ -436,7 +607,7 @@ def register(app: FastAPI, gateway: Gateway):
         if not handoffs.owns(app.state.person_of(ws), ws, request_id):
             raise fail("not_found", exit=2)
 
-    @app.get("/api/w/{ws}/click/status")
+    @app.get("/api/w/{ws}/click/status", dependencies=[Depends(contract)])
     def status(ws: str = Depends(workspace)):
         gateway.enabled(ws)
         card = adapters.click_card(signer.status().get(ws)) or {
@@ -474,7 +645,7 @@ def register(app: FastAPI, gateway: Gateway):
         me = app.state.person_of(ws)
         return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
 
-    @app.post("/api/w/{ws}/click/custody/seal")
+    @app.post("/api/w/{ws}/click/custody/seal", dependencies=[Depends(contract)])
     def custody_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The signer's one-use key for the NEW passphrase of "One click off" (#1198 C12): request id, review digest
         and the public key. Owners. Nothing secret passes here."""
@@ -537,7 +708,7 @@ def register(app: FastAPI, gateway: Gateway):
         if not signer.rotations():
             raise fail("click.contract", "Update orch-core: its signing helper cannot replace a key yet.", exit=9)
 
-    @app.post("/api/w/{ws}/click/rotate/seal")
+    @app.post("/api/w/{ws}/click/rotate/seal", dependencies=[Depends(contract)])
     def rotate_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The review of "Replace this device's key" with the signer's one-use key for the recovery code and the new
         passphrase (#1198 C13). Nothing secret passes here; the signer refuses while One click is on."""
@@ -551,7 +722,7 @@ def register(app: FastAPI, gateway: Gateway):
             )
         return got
 
-    @app.post("/api/w/{ws}/click/rotate")
+    @app.post("/api/w/{ws}/click/rotate", dependencies=[Depends(contract)])
     def rotate(body: RotateBody, request: Request, ws: str = Depends(workspace)):
         """Replace this computer's device key: ciphertext only, relayed and never opened here (#1198 C13)."""
         step = refuse_step_up(app.state.auth, request, "rotate", body, ws)
@@ -580,7 +751,7 @@ def register(app: FastAPI, gateway: Gateway):
         if not signer.github_tokens():
             raise fail("click.contract", "This dashboard needs an update before it can save a GitHub token.", exit=9)
 
-    @app.get("/api/w/{ws}/click/github")
+    @app.get("/api/w/{ws}/click/github", dependencies=[Depends(contract)])
     def github_state(ws: str = Depends(workspace)):
         """Is a GitHub token saved? `stored`, `missing`, or `null` when the GitHub add-on is off or asks for no key.
         Read from `addon.list`; the token itself is never read here. Owners only, like the other GitHub routes."""
@@ -594,7 +765,7 @@ def register(app: FastAPI, gateway: Gateway):
         state = None if row is None else row.get("credential")
         return {"credential": state if state in ("stored", "missing") else None}
 
-    @app.post("/api/w/{ws}/click/github/seal")
+    @app.post("/api/w/{ws}/click/github/seal", dependencies=[Depends(contract)])
     def github_seal(_body: SealBegin, ws: str = Depends(workspace)):
         """The signer's one-use key for the GitHub token (#1198 C16). Owners. Nothing secret passes here; the signer
         refuses when the GitHub add-on is off."""
@@ -606,7 +777,7 @@ def register(app: FastAPI, gateway: Gateway):
             )
         return got
 
-    @app.post("/api/w/{ws}/click/github")
+    @app.post("/api/w/{ws}/click/github", dependencies=[Depends(contract)])
     def github_token(body: GithubBody, request: Request, ws: str = Depends(workspace)):
         """Save the GitHub token: ciphertext only, relayed and never opened here (#1198 C16). On a remote session
         this needs the passkey step-up (`stepup.py`)."""
@@ -627,7 +798,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("internal", "The signing helper answered something unexpected.", exit=9)
         return {"credential": "stored"}
 
-    @app.post("/api/w/{ws}/click/github/remove")
+    @app.post("/api/w/{ws}/click/github/remove", dependencies=[Depends(contract)])
     def github_remove(_body: SealBegin, ws: str = Depends(workspace)):
         """Delete the stored GitHub token. It only takes authority away, so it is a plain click everywhere."""
         github_gate(ws)
@@ -636,7 +807,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("internal", "The signing helper answered something unexpected.", exit=9)
         return {"credential": "missing"}
 
-    @app.post("/api/w/{ws}/click/custody")
+    @app.post("/api/w/{ws}/click/custody", dependencies=[Depends(contract)])
     def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):
         """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
         (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
@@ -702,7 +873,7 @@ def register(app: FastAPI, gateway: Gateway):
             and (view.get("terminals") is body.terminals if body.on else True)
         )
 
-    @app.post("/api/w/{ws}/click/runner/review")
+    @app.post("/api/w/{ws}/click/runner/review", dependencies=[Depends(contract)])
     def runner_review(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
         """The review of turning dashboard execution on or off: core's own words, relayed after a check."""
         runner_gate(request, ws, body)
@@ -713,7 +884,7 @@ def register(app: FastAPI, gateway: Gateway):
             )
         return got
 
-    @app.post("/api/w/{ws}/click/runner")
+    @app.post("/api/w/{ws}/click/runner", dependencies=[Depends(contract)])
     def runner_switch(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
         """Turn dashboard execution on or off after the review (#1198 C14): the signer does what `orch runner enable` or
         `disable` does. This process starts no service and writes no switch."""
@@ -731,7 +902,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("internal", "The signing helper answered something unexpected.", exit=9)
         return {"enabled": enabled, "terminals": terminals}
 
-    @app.post("/api/w/{ws}/click/images")
+    @app.post("/api/w/{ws}/click/images", dependencies=[Depends(contract)])
     def images(body: ImageChunk, ws: str = Depends(workspace)):
         """R3 part B: one chunk of a pasted screenshot, relayed to the signer, which holds the bytes and checks them
         against the digest of the intent the person reviews. This server keeps nothing of them."""
@@ -740,12 +911,13 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("click.contract", "Update orch-core: its signing helper cannot take pictures yet.", exit=9)
         return signer.call("stash", {"workspace_id": ws, **body.model_dump()})
 
-    @app.post("/api/w/{ws}/click/prepare")
+    @app.post("/api/w/{ws}/click/prepare", dependencies=[Depends(contract)])
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
+        if app.state.auth.login_kind(token) == "switch":
+            raise fail("session.readonly", "Open a full session to sign.", exit=3)
+        authorize(None, token, body)  # R2: remote access is changed only from a session opened on this computer
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
-        if not isinstance(body, HubLeave):  # leaving is the break-glass the host allows by click (e2e-4)
-            refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:
@@ -758,40 +930,36 @@ def register(app: FastAPI, gateway: Gateway):
         grant = isinstance(body, RunnerGrant)
         if isinstance(body, AgentAccess) and not signer.reveals():
             raise fail("click.contract", "Update orch-core: its signing helper cannot show a grant secret yet.", exit=9)
-        if isinstance(body, NewTicketSequence | EditTicket | QuickStart | AddonEnable) and not signer.sequences():
+        if (
+            isinstance(body, NewTicketSequence | EditTicket | ApproveBoth | QuickStart | AddonEnable | MarketGrant)
+            and not signer.sequences()
+        ):
             # an older signer would ignore `sequence` and sign the first step only
             raise fail(
                 "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
             )
         if isinstance(body, HUB_STEPS) and not signer.backup_keys():
             raise fail("click.contract", "Update orch-core: its signing helper cannot take a backup key yet.", exit=9)
+        if isinstance(body, RepoSet):  # the host's path check, before any request exists (plain refusal in the dialog)
+            gateway.check_repo_path(ws, body.path)
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         if planned.sequence and planned.sequence["intent"].get("images") and not signer.images():
             raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)
-        # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
-        # is prepared beside it (the host refuses to flip the flag with one pending; this is defence in depth).
-        key = getattr(body, "key", None)
-        for row in human(ws, "human.pending", {}).get("requests", []):
-            if (
-                isinstance(row, dict)
-                and row.get("code")
-                and row.get("state") in ("prepared", "bound")
-                and row.get("op") == planned.op
-                and row.get("key") == key
-            ):
-                raise HostError(
-                    {
-                        "code": "intent.open",
-                        "message": "An attempt from the terminal is still open; it expires at "
-                        + f"{row.get('expires_at')}.",
-                        "retryable": False,
-                    },
-                    exit=5,
-                )
+        # A grant-carrying sequence requires a grant/press View, checked before it reaches the page.
+        # Keep the host-selected intent: valid access can remove the browser's proposed grant.
+        if isinstance(body, NewTicketSequence | QuickStart) and body.agent is not None:
+            if planned.sequence and not planned.sequence["intent"].get("agent"):
+                body = body.model_copy(update={"agent": None})
         files = planned.files
 
         def call(idem: str):
-            sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
+            sent = {
+                "workspace_id": ws,
+                "op": planned.op,
+                "args": planned.args,
+                "idem": idem,
+                "session": hashlib.sha256(token.encode()).hexdigest(),
+            }
             if files:
                 sent["files"] = files
             if planned.sequence:
@@ -803,6 +971,28 @@ def register(app: FastAPI, gateway: Gateway):
             return signer.call("prepare", sent)
 
         idem_key = planned.idem(ws, 0)
+        repeated = False
+
+        def step_past_signed(plan_, ws_, first, call_, key):
+            """P06: the signed twin's record is a genuine conflict. Prepare the next retry (a new idem, a fresh
+            request); if that one is itself already signed, step once more. A bounded walk, never a signature."""
+            at = first
+            for _ in range(NEXT_RETRY_HOPS + 1):
+                failed_bumps[key] = at
+                try:
+                    return send_prepare(plan_, ws_, at, call_, lambda: human(ws_, "human.pending", {}))
+                except HostError as err:
+                    said_ = str(err.error.get("message", "")) if err.error["code"] == "human.request_state" else ""
+                    if said_ != SUBMITTED:
+                        raise
+                    at = getattr(err, "retry_used", at) + 1
+            raise fail(
+                "intent.blocked",
+                "The earlier attempt was signed, but its record can't be read here. Start again only if you intend "
+                "another attempt; an earlier one may have been signed.",
+                exit=5,
+            )
+
         start = max(body.retry, failed_bumps.get(idem_key, 0))
         try:
             got = send_prepare(planned, ws, start, call, lambda: human(ws, "human.pending", {}))
@@ -818,11 +1008,18 @@ def register(app: FastAPI, gateway: Gateway):
             device = signer.status().get(ws, {}).get("device")
             if not device:
                 raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
+            stepped = None
             try:
                 prepared = app.state.human(
                     ws,
                     "human.prepare",
-                    {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
+                    {
+                        "op": planned.op,
+                        "args": planned.args,
+                        "signer": {"device": device, "auth": "convenience"},
+                        # the host binds the sequence too: without it a signed twin could never be read back
+                        **({"sequence": planned.sequence} if planned.sequence else {}),
+                    },
                     idem=planned.idem(ws, signed_retry),
                     files=files,
                 )
@@ -836,33 +1033,49 @@ def register(app: FastAPI, gateway: Gateway):
                         "another attempt; an earlier one may have been signed.",
                         exit=5,
                     ) from None
-                if code == "idem.conflict":
+                if code == "idem.conflict" and isinstance(body, NewTicketSequence | QuickStart):
+                    # P06: a new ticket whose earlier twin (same title and text) was signed but is unreadable here.
+                    # Step to the next retry: a NEW idem, so a fresh request and review; nothing signed is reused,
+                    # and nothing is signed until the person presses Sign on that review.
+                    stepped = step_past_signed(planned, ws, signed_retry + 1, call, idem_key)
+                elif code == "idem.conflict":
                     raise fail(
                         "intent.blocked",
                         "The earlier attempt was signed, but its record can't be read here. Start again only if "
                         "you intend another attempt; an earlier one may have been signed.",
                         exit=5,
                     ) from None
-                raise
-            if prepared.get("request", {}).get("state") != "submitted":
-                raise fail("internal", "The host did not return the submitted intent.")
-            error = read_done(human, ws, prepared["request"]["id"])
-            if error.error["code"] == "intent.failed":
-                failed_bumps[idem_key] = signed_retry + 1
-            raise error from None
+                else:
+                    raise
+            if stepped is not None:
+                got = stepped
+                repeated = True
+            else:
+                if prepared.get("request", {}).get("state") != "submitted":
+                    raise fail("internal", "The host did not return the submitted intent.")
+                error = read_done(human, ws, prepared["request"]["id"])
+                if error.error["code"] == "intent.failed":
+                    failed_bumps[idem_key] = signed_retry + 1
+                raise error from None
         rid = got["request_id"]
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
+        if isinstance(body, REMOTE_STEPS) and not clicks.bind(rid, token):  # bound before the record exists
+            raise fail("intent.blocked", "This change is open in another window.", exit=5)
         clicks.add(ws, rid, planned.op, body, signer.restarts)
         if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
             handoffs.note_intent(planned.person, rid, planned.sequence["intent"])
         handoffs.own(planned.person, ws, rid, TTL)
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
-        return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
+        answer = {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
+        if repeated:
+            answer["repeat"] = True  # shown beside the review: this makes another ticket like one already signed
+        return answer
 
-    @app.post("/api/w/{ws}/click/view")
-    def view(body: Step, ws: str = Depends(workspace)):
+    @app.post("/api/w/{ws}/click/view", dependencies=[Depends(contract)])
+    def view(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
+        authorize(body.request_id, request.state.token)
         rid = body.request_id
         _, op, wanted, _ = clicks.get(rid)
         # The hand-off's gate on the host's own record: it must be the action that was asked for (the ticket, the exact
@@ -887,8 +1100,18 @@ def register(app: FastAPI, gateway: Gateway):
         got = _signer_call("view", ws, rid)
         # The signer's View and digest, unchanged: nothing is added, hidden or re-rendered here.
         shown = got.get("view") if isinstance(got, dict) else None
-        if not isinstance(shown, dict) or shown.get("op") != op or shown.get("risk") != RISK:
+        press_required = isinstance(wanted, NewTicketSequence | QuickStart) and wanted.agent is not None
+        view_op = "grant" if press_required else op
+        if press_required and (
+            not isinstance(shown, dict)
+            or not shown.get("risk_lines")
+            or (shown.get("confirm") or {}).get("mode") != "press"
+        ):
+            raise refusal_check("A grant sequence requires a risk View in press mode. Cancel it.")
+        if not isinstance(shown, dict) or shown.get("op") != view_op or shown.get("risk") != RISK:
             raise refusal_check("The review is not what was asked for, or lacks the risk line. Cancel it.")
+        if not contract4_view_ok(shown):  # run 13 C3: the headline and the signer's own risk lines
+            raise refusal_check("The review lacks its headline or its risk lines. Nothing was shown. Cancel it.")
         # The runner grant asked for `deposit:true`; its View must say so (and carry the deposit and risk lines), and
         # no other View may claim a deposit: the two must agree, or nothing is shown (no Sign button).
         if isinstance(wanted, RunnerGrant) != (shown.get("deposit") is True) or (
@@ -943,11 +1166,30 @@ def register(app: FastAPI, gateway: Gateway):
             sweep()  # a restart may have happened inside this call
             raise
 
-    @app.post("/api/w/{ws}/click/state")
-    def state(body: Step, ws: str = Depends(workspace)):
+    @app.post("/api/w/{ws}/click/state", dependencies=[Depends(contract)])
+    def state(body: Step, request: Request, ws: str = Depends(workspace)):
         """Where a request stands at the host (read through our own link): the answer to an unknown outcome."""
         rid = body.request_id
-        mine(ws, rid)
+        if rid in held:
+            if held[rid] != (ws, request.state.token):
+                raise fail("not_found", exit=2)
+            got = signer.call(
+                "status",
+                {
+                    "workspace_id": ws,
+                    "request_id": rid,
+                    "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+                },
+            )
+            if got["state"] not in {"held", "unknown"}:
+                held.pop(rid, None)
+            if got["state"] != "unknown":
+                return {"id": rid, **got}
+        else:
+            mine(ws, rid)
+            authorize(
+                rid, request.state.token
+            )  # the one rule: a remote-step request answers its preparing session only
         try:
             rows = human(ws, "human.pending", {"request_id": rid})["requests"]
         except HostError:
@@ -963,6 +1205,7 @@ def register(app: FastAPI, gateway: Gateway):
         if got not in STATES:
             return {"id": rid, "state": "unknown"}  # the host sent something this dashboard does not know: say so
         if got not in ("prepared", "bound"):
+            held.pop(rid, None)
             handoffs.settle_all(rid)  # every session's slot
             handoffs.settled(rid)
             clicks.forget(rid)
@@ -982,19 +1225,29 @@ def register(app: FastAPI, gateway: Gateway):
                 out |= {"key": key, "progress": progress}
         return out
 
-    @app.post("/api/w/{ws}/click/sign")
+    @app.post("/api/w/{ws}/click/sign", dependencies=[Depends(contract)])
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
+        authorize(body.request_id, request.state.token)  # first: a remote change is the preparing session's only
         step = refuse_step_up(app.state.auth, request, "sign", body, ws)  # where a typed key arrives: fail closed
         step = ready(step)
         mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]
+        if wanted is None and clicks.binding(rid) is not None:  # a remote change is never signed blind
+            raise fail("not_found", exit=2)
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         try:
-            sent = {**step, "workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
+            sent = {
+                **step,
+                "workspace_id": ws,
+                "request_id": rid,
+                "view_digest": body.view_digest,
+                "delay_s": body.delay_s,
+                "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+            }
             if isinstance(wanted, AgentAccess):
                 if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
                     raise fail("invalid.input", "reveal_key is not the key this review was made for", exit=1)
@@ -1006,11 +1259,28 @@ def register(app: FastAPI, gateway: Gateway):
                     sent["sealed"] = {"hub.backup_key": body.sealed.hub_backup_key.model_dump()}
             elif body.sealed is not None:
                 raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
-            got = signer.call("sign", sent, lost=lost_sign())
+            if body.delay_s:
+                # Logout marks ending independently of this gate; IPC never holds auth.lock.
+                auth = app.state.auth
+                if not auth.valid(request.state.token, touch=False):
+                    raise fail("session.ended", exit=2)
+                with hold_gate:
+                    with auth.lock:
+                        if request.state.token in auth.ending or request.state.token not in auth.sessions:
+                            raise fail("session.ended", exit=2)
+                        held[rid] = (ws, request.state.token)
+                    start_renewing(request.state.token)
+                    got = signer.call("sign", sent, lost=lost_sign())
+                    if got.get("state") != "held":
+                        held.pop(rid, None)
+            else:
+                got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
             # concurrent unknown outcome; the rule lives in Handoffs.end_sign.
             outcome = "uncertain" if exc.error.get("reason") == "uncertain" else "definite"
+            if body.delay_s and outcome == "definite":
+                held.pop(rid, None)
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, outcome)
             if exc.error.get("code") == "human.request_state":
                 rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
@@ -1032,6 +1302,10 @@ def register(app: FastAPI, gateway: Gateway):
             # Anything else: nobody knows whether the signer signed.
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "uncertain")
             raise
+        if got.get("state") == "held":
+            handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "definite")
+            handoffs.settle_all(rid)  # holds have their own signer-owned quota
+            return {**got, "duplicate": False}
         handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "ok")
         clicks.forget(rid)
         handoffs.settle_all(rid)
@@ -1061,14 +1335,30 @@ def register(app: FastAPI, gateway: Gateway):
             return out | deposit_answer(got, rid)
         return out
 
-    @app.post("/api/w/{ws}/click/cancel")
-    def cancel(body: Step, ws: str = Depends(workspace)):
+    @app.post("/api/w/{ws}/click/cancel", dependencies=[Depends(contract)])
+    def cancel(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
+        authorize(body.request_id, request.state.token)
         rid = body.request_id
+        if rid in held:
+            if held[rid] != (ws, request.state.token):
+                raise fail("not_found", exit=2)
+            got = signer.call(
+                "cancel",
+                {
+                    "workspace_id": ws,
+                    "request_id": rid,
+                    "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+                },
+            )
+            if got.get("state") != "held":
+                held.pop(rid, None)
+            return {"id": rid, **got}
+        mine(ws, rid)
         if handoffs.is_unsettled(rid):
             raise refusal_check("A signature of this is settling; it cannot be cancelled now.")
         try:
-            got = _signer_call("cancel", ws, rid)
+            got = _signer_call("cancel", ws, rid, session=hashlib.sha256(request.state.token.encode()).hexdigest())
         except HostError as exc:
             if (exc.error.get("reason") or exc.error["code"]) in ENDED | {"not_found"}:
                 ended(ws, rid)  # the signer forgot it: cancel it at the host ourselves
@@ -1081,6 +1371,18 @@ def register(app: FastAPI, gateway: Gateway):
     def cancel_session(token: str):
         """Logout: the click requests this session left open are cancelled (best effort, each on its own), except one
         whose signature is unknown and one another session of the person holds too."""
+        # Stop renewal before any potentially blocked IPC. The signer's lease is the safety boundary.
+        for rid, (_, owner) in list(held.items()):
+            if owner == token:
+                held.pop(rid, None)
+                clicks.forget(rid)
+        try:
+            signer.call("cancel_holds", {"session": hashlib.sha256(token.encode()).hexdigest()})
+        except Exception:  # restart is only a backstop; safety does not depend on success
+            try:
+                signer.restart()
+            except Exception:
+                pass
         for rid, ws in handoffs.held(token, "click"):
             if handoffs.is_unsettled(rid):
                 continue  # logout never cancels a signature whose outcome is unknown
@@ -1088,10 +1390,14 @@ def register(app: FastAPI, gateway: Gateway):
                 handoffs.settle(token, rid)
                 continue
             try:
-                signer.call("cancel", {"workspace_id": ws, "request_id": rid})
+                signer.call(
+                    "cancel",
+                    {"workspace_id": ws, "request_id": rid, "session": hashlib.sha256(token.encode()).hexdigest()},
+                )
             except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
                 pass
             clicks.forget(rid)
             handoffs.settle(token, rid)
 
     app.state.cancel_clicks = cancel_session
+    app.state.auth.on_session_end = cancel_session

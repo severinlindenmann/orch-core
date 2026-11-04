@@ -41,6 +41,8 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
       await Promise.all([...ADDON_OP_WS_KEYS.map((k) => [k, ws]), ...ADDON_OP_GLOBAL_KEYS.map((k) => [k])].map((queryKey) => qc.invalidateQueries({ queryKey })))
     } catch (e) {
       toastApiError(e, 'Could not change the addon')
+      // Whatever the page showed for the switch is read again from the host: a refused change never stays on screen.
+      await qc.invalidateQueries({ queryKey: ['workspace-addons', ws] })
     }
   }
   /** The success toast of a grant that turned the addon on: Open its page, or Pin it to the sidebar. */

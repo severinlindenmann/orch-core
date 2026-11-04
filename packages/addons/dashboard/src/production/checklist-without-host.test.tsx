@@ -1,5 +1,5 @@
 // Before `orch host enable` / `orch setup` the host registry is missing and /api/session is refused (503). The tester's
-// checklist still opens then; every other address still says the server did not answer.
+// checklist still opens then; every other address waits calmly for the host (it may still be starting).
 import { render, screen, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { bootstrap, clearSession } from '../api/bootstrap'
@@ -31,8 +31,9 @@ it('opens the checklist although the host does not answer', async () => {
   expect(await screen.findByText('/state/testrun/run2')).toBeInTheDocument()
 })
 
-it('still reports a dead server on any other address', async () => {
+it('any other address shows the calm waiting screen, never the raw code', async () => {
   history.replaceState(null, '', '/board')
   render(<QueryClientProvider client={queryClient}><Shell /></QueryClientProvider>)
-  expect(await screen.findByText('The dashboard server did not answer')).toBeInTheDocument()
+  expect(await screen.findByText('Getting your workspace ready…', {}, { timeout: 4000 })).toBeInTheDocument()
+  expect(screen.queryByText(/host\.unavailable/)).not.toBeInTheDocument()
 })

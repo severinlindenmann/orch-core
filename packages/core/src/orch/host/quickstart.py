@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TextIO
 
-from . import handoff, sequence, sequence_terminal, signer
+from . import sequence, sequence_terminal, signer, signer_registry
 from .errors import HostError
 
 __all__ = ["main"]
@@ -92,17 +92,17 @@ def main(
         intent = build_intent(args)
         state = args.state.resolve() if args.state is not None else state_dir(env)
         uid = os.getuid()
-        entries = handoff._own_workspaces(state, uid, args.workspace)
+        entries = signer_registry._own_workspaces(state, uid, args.workspace)
         if len(entries) != 1:
             raise HostError(
                 "invalid.input", "name the workspace with --workspace (none or several map you to a person)"
             )
         entry = entries[0]
         wid, person = entry["workspace_id"], entry["peers"][str(uid)]["person"]
-        backend = handoff._backend(state, wid)
+        backend = signer_registry._backend(state, wid)
         device = device_ref(backend.public_key(human.KEY_ID))
         name = Path(str(entry.get("root") or wid)).name
-        path = handoff._socket(args.run, state, int(entry["host_uid"]), wid)
+        path = signer_registry._socket(args.run, state, int(entry["host_uid"]), wid)
         conn = Connection(Pin(int(entry["host_uid"]), wid, path), client="orch quick")
         op, op_args = sequence.step_args(intent, 0, None)
         meta = {
@@ -128,21 +128,21 @@ def main(
             confirm=human.review_prompt,
             sessions=sequence.Sessions(state),
             new_idem=new_idem,
-            deliver=lambda secret, rid: handoff._deliver(
-                conn.call, secret, rid, human.secret_destination, human.show_secret
-            ),
+            deliver=lambda secret, rid: signer.deposit_lines(signer.hand_over(conn.call, secret, rid[3:])),
         )
     except sequence.Aborted as exc:
         text = f"stopped after {exc.landed} of {exc.total} signatures: {exc.reason}"
         if exc.landed:
             text += "; what was signed stays in the ticket"
-        return handoff._fail(out, args.json, HostError("human.request_mismatch", text))
+        return _fail(out, args.json, HostError("human.request_mismatch", text))
     except signer.SignerRefused as exc:
-        return handoff._fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))
+        return _fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))
+    except human.OrchError as exc:
+        return _fail(out, args.json, HostError(exc.code, str(exc)))
     except HostError as exc:
-        return handoff._fail(out, args.json, exc)
+        return _fail(out, args.json, exc)
     except (OSError, ConnectionError) as exc:
-        return handoff._fail(out, args.json, HostError("host.unavailable", str(exc)[:400]), exit_code=9)
+        return _fail(out, args.json, HostError("host.unavailable", str(exc)[:400]), exit_code=9)
     finally:
         if conn is not None:
             conn.close()
@@ -153,3 +153,11 @@ def main(
         for line in result.get("lines") or []:
             out.write(line + "\n")
     return 0
+
+
+def _fail(out: TextIO, as_json: bool, exc: HostError, exit_code: int | None = None) -> int:
+    if as_json:
+        out.write(json.dumps({"ok": False, "error": exc.error()}, sort_keys=True) + "\n")
+    else:
+        out.write(f"orch quick start: {exc.code}: {exc.message}\n")
+    return exc.exit if exit_code is None else exit_code

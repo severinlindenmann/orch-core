@@ -1,0 +1,39 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "topic": "wait",
+    "steps": [
+      {
+        "op": "follow_up",
+        "call": "orch follow-up --in 36h --brief-file brief.md"
+      },
+      {
+        "op": "webhook.new",
+        "call": "orch webhook new --label 'backfill 8812 done'"
+      },
+      {
+        "op": "follow_up",
+        "call": "orch follow-up --on webhook:<id> --in 3d --brief-file brief.md"
+      },
+      {
+        "op": "follow_up",
+        "call": "orch follow-up --on question.answered --in 2d --brief-file brief.md"
+      },
+      {
+        "op": "follow_up.show",
+        "call": "orch follow-up show <id>"
+      },
+      {
+        "op": "follow_up.cancel",
+        "call": "orch follow-up cancel <id>"
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch describe CMD"
+  ]
+}

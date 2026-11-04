@@ -21,6 +21,7 @@ def test_claim_makes_the_work_folder_and_names_it_and_show_repeats_it(ws, cli):
 
 
 def test_a_check_with_no_codebase_runs_in_the_work_folder_not_the_project_root(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval in this test; an agent builds only after one
     claimed(cli)
     cli("task", "add", "t1", "--verify", py("open('made-by-check.txt', 'w').write('x')"))
     r = cli("task", "done", "T1", "--run")

@@ -471,7 +471,7 @@ export function CommandPalette() {
         </CommandList>
       </CommandDialog>
       {ticket.data && <SignDialog ticket={ticket.data} action={signing} onClose={() => setSigning(null)} />}
-      {handoff && workspace && <SignPopover title={handoff.title} ws={workspace.id} action={handoff.action} autoStart onClose={() => setHandoff(null)} />}
+      {handoff && workspace && <SignPopover title={handoff.title} ws={workspace.id} action={handoff.action} onClose={() => setHandoff(null)} />}
       {runAddon.dialog}
     </>
   )

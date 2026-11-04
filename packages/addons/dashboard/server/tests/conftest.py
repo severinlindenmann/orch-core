@@ -130,7 +130,9 @@ def client(gateway, auth, tmp_path):
     (static / "assets").mkdir(parents=True)
     (static / "index.html").write_text('<html><head><script src="/assets/main-hash.js"></script></head></html>')
     (static / "assets/main-hash.js").write_text('console.log("public bundle")')
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         yield client
 
 
@@ -237,86 +239,6 @@ def rich(p1, stub):
     return env, ids
 
 
-class DevBackend:
-    """The dev workspace's device custody for tests: the owner's in-memory device key behind the Backend surface."""
-
-    name = "passphrase"
-    auth = "passphrase"
-    person_capable = True
-
-    def __init__(self, person):
-        self.person = person
-        self.signed = []
-
-    def public_key(self, key_id):
-        return self.person.sig_pub
-
-    def sign(self, key_id, payload, action=""):
-        self.signed.append(action)
-        return self.person.dk_sign(payload)
-
-
-class Signing:
-    """A connection factory to the stub (a socket pair per link), the pins and the stub signer's seams."""
-
-    def __init__(self, stub, p1, tmp_path):
-        import shutil
-
-        from orch.ops.runtime import _config  # noqa: F401  (the workspace config exists under p1.root)
-
-        from tests.store.helpers import WS
-
-        self.stub, self.p1, self.ws = stub, p1, WS
-        keys = p1.host_state / "hosts" / WS / "keys"
-        keys.parent.mkdir(parents=True, exist_ok=True)
-        if not keys.exists():
-            shutil.copytree(tmp_path / "wsk", keys)
-        for path in (p1.host_state, p1.host_state / "hosts", keys.parent, keys):
-            path.chmod(0o700)
-        registry = p1.host_state / "host"
-        registry.mkdir(mode=0o700, exist_ok=True)
-        pin = {
-            "workspace_id": WS,
-            "root": str(p1.root),
-            "host_uid": os.getuid(),
-            "peers": {str(os.getuid()): {"class": "person", "person": stub.person}},
-        }
-        (registry / "workspaces.json").write_text(json.dumps({"workspaces": [pin]}))
-        (registry / "workspaces.json").chmod(0o600)
-        self.backend = DevBackend(p1.owner)
-        self.threads = []
-
-    def link(self):
-        client, host = socket.socketpair()
-        thread = threading.Thread(target=self.stub.serve_connection, args=(host, False), daemon=True)
-        thread.start()
-        self.threads.append(thread)
-        return HostLink(client, os.getuid(), self.ws)
-
-    def connect(self, path, uid, ws):
-        return self.link()
-
-    def sign(self, code, confirm=lambda text, word: True, backend=None):
-        from devhost import sign
-
-        shown = []
-        status = sign.run(
-            code,
-            state=self.p1.host_state,
-            run_dir=self.p1.host_state / "run",
-            open_backend=lambda directory: backend or self.backend,
-            confirm=lambda text, word: (shown.append((text, word)), confirm(text, word))[1],
-            out=shown.append,
-            connect=self.connect,
-        )
-        return status, shown
-
-
-@pytest.fixture
-def signing(stub, p1, tmp_path):
-    return Signing(stub, p1, tmp_path)
-
-
 class World:
     """One dashboard server (its own session) for one person of the dev workspace."""
 
@@ -372,7 +294,9 @@ def worlds(p1, tmp_path, monkeypatch):
         static = tmp_path / f"static-{len(routes)}"
         (static / "assets").mkdir(parents=True)
         (static / "index.html").write_text("<html></html>")
-        app_client = TestClient(create_app(PORT, gateway, Auth(), static), base_url=ORIGIN)
+        app_client = TestClient(
+            create_app(PORT, gateway, Auth(), static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+        )
         app_client.__enter__()
         stack.append((app_client, gateway))
         launch = app_client.app.state.auth.launch(PORT)
@@ -386,3 +310,16 @@ def worlds(p1, tmp_path, monkeypatch):
         gateway.close()
     for thread in threads:
         thread.join(timeout=3)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """The nightly realhost job (ORCH_REALHOST_STRICT=1) must not go green on skips: 'the real host cannot start here'
+    is how a stale test or a broken setup hides (#587). Locally the skip stays, for machines without a pty."""
+    outcome = yield
+    report = outcome.get_result()
+    if os.environ.get("ORCH_REALHOST_STRICT") and report.skipped and "cannot start here" in str(report.longrepr):
+        report.outcome = "failed"
+        report.longrepr = (
+            f"strict realhost run: {report.longrepr[2] if isinstance(report.longrepr, tuple) else report.longrepr}"
+        )

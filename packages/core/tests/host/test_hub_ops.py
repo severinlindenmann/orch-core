@@ -12,6 +12,7 @@ from orch.ops import person_ops
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION
 from tests.host.human_helpers import err
+from tests.hub.fake import BareLink
 from tests.hub.vec import V
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
@@ -72,7 +73,9 @@ def test_join_selective_signs_hub_joined_and_adds_no_member(human, served):
 def test_the_review_says_what_the_hub_does_not_get(human):
     prepared = human.prepare("hub.join", join_args())
     content = signcontent.build(prepared, verified=True)
-    assert content["headline"] == f"Join hub {HUB_ID[:12]} in selective mode: the hub sees only what you share"
+    assert content["headline"] == (
+        f"Join hub {HUB_ID[:12]} in selective mode: the hub sees only what you share, plus this workspace's name"
+    )
     notes = " ".join(content["notes"])
     assert "never gets the workspace key" in notes and "not a member" in notes
     assert signer._PLAIN["hub.join"].format(hub_id=HUB_ID, mode="selective").startswith("join hub")
@@ -206,6 +209,15 @@ def test_only_the_owner_may_be_aliased(human):
     assert signed.events[0]["aliases"] == [me]
 
 
+def test_a_connect_link_owner_becomes_the_owners_alias(human):
+    """Run-12 6.2: the console link names the owner's hub user; the signed join records it, so the hub role counts."""
+    user = V["ids"]["user_alice"]
+    me = {"person_id": human.person.ref.removeprefix("p_"), "user_id": user}
+    assert err(human.prepare_res("hub.join", join_args(owner_user_id=user, aliases=[me]))) == "hub.refused"
+    _, _, signed = human.run("hub.join", join_args(owner_user_id=user))
+    assert signed.events[0]["aliases"] == [me]
+
+
 def test_agents_are_refused(human, served):
     c = served.client()
     mode_args = {"hub_card": copy.deepcopy(CARD), "mode": "full"}
@@ -273,7 +285,7 @@ def test_the_signer_refuses_what_hub_join_must_not_sign():
 # --- the host ops: connect, unbind, status --------------------------------------------------------------------------
 
 
-class StubHub:
+class StubHub(BareLink):
     """A hub that takes every message and answers it, signed by the vector HK_op. It checks nothing: the contract's
     checks are in tests/hub (the fake hub); here we look at what the host SENDS."""
 
@@ -288,7 +300,10 @@ class StubHub:
         m = message["o"]
         # connect fetches the first snapshot; the stub answers {}, which the host refuses and audits (the op itself is
         # covered by tests/hub/test_snapshot.py and test_hub_join_real.py), so it is kept apart from what join sends
-        (self.snapshot_gets if m["op"] == "snapshot_get" else self.sent).append(copy.deepcopy(message))
+        # the display-only status report (status_put) is not under test here: kept apart like the snapshot
+        (self.snapshot_gets if m["op"] in ("snapshot_get", "status_put", "profile_put") else self.sent).append(
+            copy.deepcopy(message)
+        )
         o = {
             "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": m["hub_id"], "workspace_id": m["workspace_id"],
             "dir": "h2w", "seq": 1, "ts_ms": m["ts_ms"], "op": m["op"], "re": m["seq"], "body": {},
@@ -337,7 +352,7 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert got["status"] == "bound" and got["binding_seq"] == 1 and got["hub_id"] == HUB_ID
     assert stub.ops() == ["join"]
     body = stub.sent[0]["o"]["body"]
-    assert set(body) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
+    assert set(body) == {"invite", "card", "pk_pub", "binding", "owner_proof", "alias_users"}
     assert body["owner_proof"]["o"]["op"] == "hub.join"  # #1198 C9: the proof the signed log holds goes to the hub
     b = body["binding"]["o"]
     assert (b["mode"], b["binding_seq"], b["dev"], b["hub_id"]) == ("selective", 1, True, HUB_ID)
@@ -755,3 +770,20 @@ def test_a_full_join_without_a_relay_is_not_relay_paired_after_a_leave_without_u
     assert (served.lab.state / "hosts" / served.wid / "membership").exists()
     human.run("hub.leave", {})
     assert not convenience._relay_paired(served.lab.state, served.wid)
+
+
+def test_hub_profile_sent_at_connect_and_after_owner_change(human, served, stub):
+    from tests.host.dispatch_helpers import ok
+
+    profile = {**hubops._DEFAULT_PROFILE, "listed": True, "description": "Support"}
+    c = served.client()
+    assert ok(c.req("hub.profile", {"profile": profile}, idem=True))["data"]["profile"] == profile
+    human.run("hub.join", join_args())
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    sent = [m["o"]["body"] for m in stub.snapshot_gets if m["o"]["op"] == "profile_put"]
+    assert sent == [profile]
+    profile = {**profile, "description": "Changed"}
+    ok(c.req("hub.profile", {"profile": profile}, idem=True))
+    sent = [m["o"]["body"] for m in stub.snapshot_gets if m["o"]["op"] == "profile_put"]
+    assert sent[-1] == profile and len(sent) == 2
+    assert ok(c.req("hub.profile", {}, idem=True))["data"]["profile"] == profile

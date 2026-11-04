@@ -22,7 +22,7 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture(autouse=True)
 def _quick_on(served):
-    """Quick tasks is a built-in add-on: without its grant the sequence is refused (quick.off)."""
+    """Quick tasks is a built-in add-on: without its grant the sequence is refused (addon.off)."""
     hws = served.lab.ws
     hws.tick()
     served.append(
@@ -184,27 +184,6 @@ def test_the_grant_is_last_and_an_abort_before_it_leaves_an_approved_ticket_with
     assert grants is None
 
 
-def test_the_grant_lands_last_and_the_review_is_honest_about_its_reach(human, tmp_path):
-    from orch.host import signcontent
-
-    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
-    first = rig.first()
-    human.check(first)
-    content = signcontent.build(first, verified=True)
-    note = next(n for n in content["notes"] if n.startswith("Agents may work"))
-    assert (
-        "any ticket they are allowed to work on, not only this one" in note
-        and "until about" in note
-        and "GRANT" in note
-    )
-    assert signer.confirm_word(first) == "GRANT"
-    assert sequence.confirm_kind(rig.intent) == "click"  # the terminal still types GRANT
-    out = rig.driver().run(first)
-    assert out["landed"] == 9
-    types = [e["type"] for _, ev, _ in rig.submitted for e in ev]
-    assert types[-1] == "grant.issued" and types.count("gate.approved") == 2
-
-
 def test_a_grant_with_other_hours_or_a_wrong_time_span_is_refused(human, tmp_path):
     rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
     first = rig.first()
@@ -265,58 +244,6 @@ def test_the_phone_is_excluded(human, tmp_path):
 # --- the custody paths -------------------------------------------------------------------------------------------
 
 
-def test_terminal_one_word_one_unlock_and_the_grant_secret_only_after_the_commit(human, served, tmp_path):
-    from tests.host.test_handoff import Shown
-    from tests.host.test_sequence import handoff_first
-
-    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
-    p = handoff_first(rig)
-    unlocks = []
-
-    class OpenOnce:
-        name, person_capable, auth = "test", True, "passphrase"
-
-        def unlocked(self, key_id, *, action, digest, labels, fields=()):
-            import contextlib
-
-            unlocks.append(action)
-
-            @contextlib.contextmanager
-            def cm():
-                yield lambda payload: human.person.dk_sign(payload)
-
-            return cm()
-
-    shown = Shown()
-    from orch.host import handoff
-
-    clock = lambda: served.lab.ws.clock[0]  # noqa: E731
-    from orch.host.control_client import new_idem
-    from tests.host.test_handoff import connect
-
-    with connect(served) as conn:
-        result = handoff.sign_code(
-            conn.call,
-            p["request"]["code"],
-            backend=OpenOnce(),
-            key_id="dk",
-            workspace_id=served.wid,
-            person=rig.person,
-            device=human.person.device,
-            workspace=lambda w: ("Acme", "DEMO"),
-            confirm=shown.confirm,
-            show_secret=shown.secret,
-            idem=new_idem(),
-            sessions=rig.sessions,
-            now=clock,
-        )
-    assert shown.words == [shown.words[0]] and shown.words[0] == "GRANT"  # the strongest step's word
-    assert len(unlocks) == 1 and result["steps"] == 9
-    assert len(shown.secrets) == 1 and "ORCH_GRANT=" in shown.secrets[0]  # shown once, after the last commit
-    assert "Agents may work on any ticket they are allowed to work on" in shown.plain[0]
-    assert "Checked by" in shown.plain[0] and "Quick task: do these steps in order" in shown.plain[0]
-
-
 def _real_passphrase_backend(human, tmp_path):
     """The REAL passphrase file backend over the test person's own device key (nothing here accepts a label it
     should not: the custody checks every payload against the labels the batch was opened for)."""
@@ -328,35 +255,6 @@ def _real_passphrase_backend(human, tmp_path):
     pub = be.create("dk", secret=scalar, role="device", passphrase=PASSPHRASE)
     assert pub == human.person.sig_pub
     return be
-
-
-def test_a_quick_task_with_agent_access_lands_nine_of_nine_through_the_real_passphrase_backend(human, served, tmp_path):
-    from orch.host import handoff
-    from orch.host.control_client import new_idem
-    from tests.host.test_handoff import Shown, connect
-    from tests.host.test_sequence import handoff_first
-
-    rig = Rig(human, tmp_path, quick(agent={"hours": 8, "scope": "workable"}))
-    p = handoff_first(rig)
-    shown = Shown()
-    be = _real_passphrase_backend(human, tmp_path)
-    with connect(served) as conn:
-        result = handoff.sign_code(
-            conn.call,
-            p["request"]["code"],
-            backend=be,
-            key_id="dk",
-            workspace_id=served.wid,
-            person=rig.person,
-            device=human.person.device,
-            workspace=lambda w: ("Acme", "DEMO"),
-            confirm=shown.confirm,
-            show_secret=shown.secret,
-            idem=new_idem(),
-            sessions=rig.sessions,
-            now=lambda: served.lab.ws.clock[0],
-        )
-    assert result["steps"] == 9 and shown.words == ["GRANT"] and len(shown.secrets) == 1
 
 
 def test_the_unlock_covers_exactly_the_labels_the_reviewed_steps_need(human, tmp_path):
@@ -408,7 +306,7 @@ def click_prepare(click_, intent):
 def test_one_click_signs_the_whole_quick_task(click, served, human):  # noqa: F811
     p = click_prepare(click, quick())
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"] == {"kind": "click"} and v["view"]["headline"].startswith("Start task")
+    assert v["view"]["confirm"] == {"kind": "click"} and v["view"]["headline"].startswith("Create a ticket")
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 8
@@ -424,12 +322,17 @@ def test_the_grant_is_only_ever_the_last_step():
     assert kinds.index("grant") == len(kinds) - 1 and kinds.count("grant") == 1  # the grant is only ever last
 
 
-def test_a_grant_is_one_click_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
+def test_a_quick_task_with_a_grant_signs_after_its_press_mode_review(click, served, human):  # noqa: F811
+
     click.signer._execution = lambda entry: True
     p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"] == {"kind": "click"}
+    assert v["view"]["confirm"] == {"kind": "click", "mode": "press"}
+    assert v["view"]["op"] == "grant" and v["view"]["risk_lines"]
     assert "Agents may work on any ticket they are allowed to work on" in "\n".join(v["view"]["lines"])
+    assert "from when you sign" in "\n".join(v["view"]["lines"])  # the technical review has the full sentence
+    note = "Agents may work, as you, on any ticket you allow, not only this one, for 8 hours."
+    assert note in v["view"]["content"]["notes"]
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 9
@@ -547,42 +450,6 @@ def test_the_cli_builds_the_same_intent_as_the_form():
 
 
 # --- `orch quick start` against a real test registry and host ----------------------------------------------------
-
-
-def test_orch_quick_start_runs_the_whole_sequence_against_a_real_registry(human, served, monkeypatch, tmp_path):
-    import io
-    import json
-
-    from orch.cli.main import main
-    from tests.host.test_handoff import Cli, CliBackend
-
-    class Unlocking(CliBackend):  # one passphrase for the batch, like the real passphrase backend
-        opened = 0
-
-        def unlocked(self, key_id, *, action, digest, labels, fields=()):
-            import contextlib
-
-            Unlocking.opened += 1
-
-            @contextlib.contextmanager
-            def cm():
-                yield lambda payload: human.person.dk_sign(payload)
-
-            return cm()
-
-    cli = Cli(human, served, monkeypatch, backend=Unlocking(human.person))
-    out, errs = io.StringIO(), io.StringIO()
-    argv = [
-        "quick", "start", "Fix the typo", "--details", "It says teh.", "--step", "Typo gone", "--check", "true",
-        "--state", str(served.lab.state), "--run", str(served.lab.run), "--json",
-    ]  # fmt: skip
-    rc = main(argv, env={"HOME": str(served.lab.tmp)}, stdout=out, stderr=errs)
-    assert rc == 0, (out.getvalue(), errs.getvalue())
-    res = json.loads(out.getvalue())["result"]
-    assert res["steps"] == 8 and Unlocking.opened == 1 and len(cli.shown.words) == 1
-    got = doc(human, res["key"])
-    assert got["doc"]["labels"] == ["quick"] and got["gates"]["plan"]["state"] == "approved"
-    assert "Quick task: do these steps in order" in cli.shown.plain[0]
 
 
 def test_orch_quick_start_is_a_persons_command(monkeypatch, tmp_path):

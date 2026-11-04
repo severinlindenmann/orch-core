@@ -1,9 +1,10 @@
-"""#740 manual acceptance and verify decisions along the FULL path the page takes for "Sign in a terminal".
+"""#740 manual acceptance and verify decisions: the host's request, the server's check and the page's check agree.
 
-Core's in-process host (tests.host.live_helpers) serves a workspace; the dashboard's own app answers `POST /handoff`
-through its real Gateway; the response is then checked by the page's own `requestIsConsistent` (src/api/handoff.ts,
-run by node with its types stripped), which is what turns a mismatch into "Not shown: ... fingerprint does not match".
-A drift between the host's `Material` and either the server's or the browser's check fails here.
+Core's in-process host (tests.host.live_helpers) serves a workspace; the dashboard's own app prepares the request as
+the one-click path does (its `plan`, a signer-bound `human.prepare` through its real Gateway, `click/view`'s check of
+the host's record); the result is then checked by the page's own `requestIsConsistent` (src/api/handoff.ts, run by
+node with its types stripped). A drift between the host's `Material` and either the server's or the browser's check
+fails here.
 """
 
 import json
@@ -15,12 +16,14 @@ from types import SimpleNamespace
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
 from termkit import grant_dashboard
 
 from orch_dashboard import adapters
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
 from orch_dashboard.gateway import Gateway
+from orch_dashboard.signing import PrepareBody, expected, expected_material, plan
 
 API = Path(__file__).resolve().parents[2] / "src" / "api"
 NODE = shutil.which("node")
@@ -80,18 +83,28 @@ def page(tmp_path, monkeypatch):
         (static / "index.html").write_text("<html></html>")
         client = TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN)
         client.__enter__()
-        launch = auth.launch(PORT)
-        token = client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN}).json()["token"]
         retries = iter(range(1, 1000))
+        owner = w.lab.ws.owner
+        signer = {"device": owner.device, "auth": "passphrase"}
 
         def handoff(body: dict) -> dict:
-            res = client.post(
-                f"/api/w/{w.wid}/handoff",
-                content=json.dumps(body | {"retry": next(retries)}),
-                headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN, "Content-Type": "application/json"},
+            action = TypeAdapter(PrepareBody).validate_python(body | {"retry": next(retries)})
+            planned = plan(gateway, w.wid, action)
+            prepared = client.app.state.human(
+                w.wid,
+                "human.prepare",
+                {"op": planned.op, "args": planned.args, "signer": signer},
+                idem=planned.idem(w.wid, action.retry),
+                files=planned.files,
             )
-            assert res.status_code == 200, res.text
-            return res.json()
+            return adapters.handoff.request(
+                prepared,
+                w.wid,
+                expect_op=planned.op,
+                expect_key=getattr(action, "key", None),
+                expect_events=expected(action, planned.person),
+                expect_material=expected_material(action),
+            )
 
         yield SimpleNamespace(w=w, h=Human(w), handoff=handoff, now=lambda: float(w.lab.ws.clock[0]))
     finally:
@@ -110,9 +123,9 @@ def criterion(page):
 
 
 def shown(page, page_check, body):
-    """POST /handoff as the page does, then the page's own consistency check (False = "Not shown")."""
+    """The request as the server checked it, then the page's own consistency check (False = "Not shown")."""
     got = page.handoff(body)
-    assert got["state"] == "prepared", got
+    assert got["state"] == "bound", got
     assert page_check(got, page.now()), (body["action"], got["op"], sorted(got["material"]))
     return got
 

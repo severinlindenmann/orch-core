@@ -51,7 +51,7 @@ export const RUN2_INTRO = [
 export const RUN2_KNOWN_GAPS = [
   'Quick tasks do not close by themselves yet (auto-close comes after this run). Close them by hand.',
   'A project folder that still has an orch store from an older version in its root (config.json, keys.jsonl, events/) is refused by setup, with a message saying what to delete. Nothing is converted.',
-  'Phone pairing only works through the CLI (see F). Setup and Settings do not offer it.',
+  'Phones pair through the hub (see F): Settings, Devices, "Add a phone" opens the hub\'s Phones page. Setup does not offer it.',
 ]
 
 export const RUN2_REPORT_HELP = {
@@ -112,7 +112,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         points: [
           'Welcome: your folder is named; everything stays on this computer.',
           'You: name (e.g. Severin) and short name RA (the ticket prefix, e.g. RA-0001). Continue stays grey until both are filled.',
-          'What may agents do here: switches, each with a one-line description. Dashboard is on and cannot be turned off. Start agents, Terminals and Worktrees are already ticked (leave them on), and agent access of 3 days is already selected; the others are your choice. Check that the review at the end lists them.',
+          'What may agents do here: switches, each with a one-line description. Dashboard is on and cannot be turned off. Start agents, Command window and Work copies are already ticked (leave them on), and agent access of 3 days is already selected; the others are your choice. Check that the review at the end lists them.',
           'How do you want to approve things: choose Terminal. Then "Let agents work for you for": choose 3 days. Runner access: on. (Warning: a "relay and phone" option should NOT appear, it is a later add-on. If you see it, tell the lead.)',
           'Secret words: the passphrase is shown once, plus 24 numbered recovery words. Write them down on paper. Tick "I saved ...". Type the 3 words asked and press Confirm. Try one wrong word first: it says how many tries are left (5 in all; do not use them all). A wrong word clears only that field. The page never asks for the passphrase itself.',
           'Review: it lists what will be created (workspace, short name, person, folder) and what you approve (add-ons, "Agents may work for 3 days", runner access). Plain sentences first, details in a fold-out.',
@@ -193,15 +193,14 @@ const CORE_SECTIONS: ChecklistSection[] = [
         text: 'Click "New ticket", fill the text, acceptance checks and people (owner, assignee, reviewer).',
         points: [
           'Next to the key the view says "key per host" (by design).',
-          'The main button is your method ("Sign in Terminal"); "Other ways" lists only ways your workspace allows.',
-          'Terminal: a hand-over code appears; run "orch sign CODE".',
+          'Press Create, read the review, then press Approve. The button waits about a second before it works; press it again then.',
         ],
-        see: 'ONE review for everything, plain like a ticket (a headline, the text, the checklist, people by name), with "Technical details" folded away. In the Terminal: a short plain review, a word to type, d = details. After signing the drawer closes and the new ticket opens.',
+        see: 'ONE review for everything, plain like a ticket (a headline, the text, the checklist, people by name), with "Technical details" folded away. Nothing to type. After signing the drawer closes and the new ticket opens.',
       },
       {
         id: 'C3',
         title: 'Edit a ticket',
-        text: 'Open the ticket page, "Edit text, checks, repositories and people". Sign it in the Terminal as in C2.',
+        text: 'Open the ticket page, "Edit text, checks, repositories and people". Press Approve, then the button again after a second, as in C2.',
         see: 'ONE review for all changes (old to new is clear, e.g. "remove: Severin").',
         warn: 'This crashed before (KeyError: title): if it fails again, BLOCKING.',
       },
@@ -213,7 +212,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'C5',
         title: 'Quick task',
-        text: 'Use Quick tasks, "Start task". Optional agent access: 8 h, 1 day or 3 days, never above your workspace maximum. Type the word GRANT in the dialog and in the Terminal.',
+        text: 'Use Quick tasks, "Start task". Optional agent access: 8 h, 1 day or 3 days, never above your workspace maximum. Press Approve, then the button again after a second.',
         see: 'ONE signature for everything (ticket, approvals, agent access). The pill moves to the new end. Quick tasks do not close by themselves yet (known gap).',
       },
       {
@@ -223,15 +222,14 @@ const CORE_SECTIONS: ChecklistSection[] = [
         points: [
           'Extend: choose a length, sign. Running agents stop; new ones use the new end. The pill shows the new end.',
           'Stop: sign each stop. After: "Agents stopped . Start again". Cancel a stop request: the pill must return to normal at once (report if it shows "Stopped 0 of 2").',
-          'Start again: choose 8 h / 1 day / 3 days, sign (in the Terminal press r to hand it to the runner). Times in these reviews are local, not "...Z".',
+          'Start again: choose 8 h / 1 day / 3 days, sign (the access goes to this computer\'s agent runner). Times in these reviews are local, not "...Z".',
         ],
       },
       {
         id: 'C7',
         title: 'Settings',
-        text: 'Allowed ways to approve. On a fresh terminal workspace Terminal is the only way you can use.',
+        text: 'Allowed ways to approve. You approve in the dashboard: press Approve, then the button again after a second.',
         points: [
-          'One click shows how to set it up (it needs "Sign in the dashboard" switched on first, and the optional workspace RC).',
           'Phone says it needs the relay add-on (later).',
           'Boxes that cannot change are greyed with a reason: report anything that is greyed without an explanation.',
           '"My settings": your own default way. "Agents may work for you for up to": 8 h / 1 day / 3 days / 7 days (lowering never shortens access already given).',
@@ -243,7 +241,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         title: 'One-click workspace RC',
         optional: true,
         text: 'Only if you did B3: create a ticket.',
-        see: 'One click signs after about 1 s, a small "One-click" badge, no big warning banner; "Other ways" still offers Terminal.',
+        see: 'Approve works after about 1 s, a small "One-click" badge, no big warning banner.',
       },
     ],
   },
@@ -358,7 +356,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'E2',
         title: 'Start an agent',
         text: 'Ticket RA-0001 (requirements approved), "Start agent": pick the harness and mode Work, Start. First time it may ask to issue a runner access: sign it.',
-        see: 'No raw shell command on screen (it is folded behind "Details"); if something is missing the panel says it in words, not Terminal commands. A run appears; a terminal opens in the Terminals view; the agent runs "orch status" and "orch claim RA-0001".',
+        see: 'No raw shell command on screen (it is folded behind "Details"); if something is missing the panel says it in words, not Terminal commands. A run appears; a terminal opens in the Command window view; the agent runs "orch status" and "orch claim RA-0001".',
       },
       {
         id: 'E3',
@@ -389,7 +387,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
     title: 'Phone',
     where: 'iPhone, optional. Uses workspace A (terminal approval)',
     intro:
-      'Setup and Settings do not offer pairing yet: use the CLI path below (untested on a real phone). The lead prepares the TestFlight build number (newer than 0.1.0 261016.160026; it needs the B10 "Approve on your phone" screens, orch-mobile #92, and push), and the invite file for the relay: save it as ~/orch-invite and chmod 600 it. Ask the lead; single use, valid 1 h.',
+      'Phones pair through the hub: Settings, Devices, "Add a phone" opens the hub\'s Phones page (the workspace must be joined to a hub). The lead prepares the TestFlight build number (newer than 0.1.0 261016.160026; it needs the B10 "Approve on your phone" screens, orch-mobile #92, and push), and the invite file for the relay: save it as ~/orch-invite and chmod 600 it. Ask the lead; single use, valid 1 h.',
     steps: [
       {
         id: 'F1',
@@ -399,23 +397,9 @@ const CORE_SECTIONS: ChecklistSection[] = [
       },
       {
         id: 'F2',
-        title: 'Pairing (CLI path)',
-        text: 'Find the id: "orch host list" (workspace_id = W, all 32 characters). Then:',
-        commands: [
-          'orch host list',
-          'orch keys primary init --workspace W --relay https://relay.dev.severin.io --invite-file ~/orch-invite',
-          'orch host relay link --workspace W --max-publication-bytes 4194304',
-          'orch host relay primary set --workspace W',
-          'orch host relay pair --workspace W',
-        ],
-        points: [
-          'a) keys primary init: new primary passphrase twice, once more to unlock, then the 24 recovery words typed; this is a different passphrase from the workspace one. See "registered": true. primary.invite_unusable: ask for a new invite. primary.account_failed: run again.',
-          'b) host relay link: type <8 hex>/GENESIS, workspace passphrase.',
-          'c) host relay primary set.',
-          'd) Phone: "Pair your Mac"; then run host relay pair. See a QR, an orch:// link, "valid 10 min". Scan it in the app; "Review this invitation" shows relay.dev.severin.io; Connect.',
-          'e) Mac asks the phone\'s 6 characters; then primary passphrase + recovery words; then the phone\'s second 6 characters; then a review ending "Type <8 chars of the device id>" and the workspace passphrase. Phone shows "Ready" with Look and Decide, then Live Home.',
-          'If the offer expires or breaks: orch host relay pair --workspace W --resume --offer O',
-        ],
+        title: 'Pairing (through the hub)',
+        text: 'Join the workspace to the hub first. Then Settings, Devices, "Add a phone": the hub console opens on its Phones page. Make the pairing code there and enter it in the phone app.',
+        see: 'The hub lists the phone. Without a hub, Devices says "Phones connect through your company hub" and has no button.',
       },
       {
         id: 'F3',

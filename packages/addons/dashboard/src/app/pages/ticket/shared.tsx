@@ -48,9 +48,12 @@ export function displayName(members: Member[], id: string | null | undefined): s
   return agentName(id)
 }
 
-/** The harness name when the agent id is one this dashboard knows, else "An agent": ids like "orch-cli" mean nothing to a person (same rule as Activity). */
+/** What an agent with no known harness is called on a ticket. */
+export const UNKNOWN_AGENT = 'Your agent'
+
+/** The harness name when the agent id is one this dashboard knows, else "Your agent": ids like "orch-cli" mean nothing to a person. */
 export function agentName(id: string): string {
-  return findHarness(harnessForAgent(id))?.label ?? 'An agent'
+  return findHarness(harnessForAgent(id))?.label ?? UNKNOWN_AGENT
 }
 
 const AVATAR_TONES = ['bg-brand-soft text-brand', 'bg-info-soft text-info', 'bg-warning-soft text-warning', 'bg-success-soft text-success']
@@ -79,6 +82,13 @@ export function PersonChip({ id, viewer, role }: { id: string; viewer: Viewer; r
 
 // One formatter for the whole dashboard (src/lib/time.ts); these names stay for the ticket page's callers.
 export { fmtDateTime as fmtTime, fmtDay, fmtClock, fmtExact, fmtWhen as ago } from '@/lib/time'
+import { fmtWhen } from '@/lib/time'
+import { useNow } from '@/lib/useNow'
+
+/** "just now", "3 min ago": counts up on its own (one shared 30 s clock), no reload needed. */
+export function Ago({ at }: { at: string }) {
+  return <>{fmtWhen(at, useNow())}</>
+}
 
 /** Viewport at least `min` px wide (the ticket rail sits next to the content from 1280 px; below it is a sheet). */
 /** Room for the wide layout? Reads the page's layout width (the window minus a right-hand terminal dock). */
@@ -204,7 +214,7 @@ export function shortHash(h: string, n = 8): string {
   return h.replace(/^sha256:/, '').replace(/…$/, '').slice(0, n)
 }
 
-export type TabId = 'overview' | 'acceptance' | 'changes' | 'questions' | 'artifacts' | 'history' | 'raw'
+export type TabId = 'overview' | 'acceptance' | 'changes' | 'questions' | 'artifacts' | 'work' | 'history' | 'raw'
 
 export interface Jump {
   tab: TabId
@@ -221,7 +231,10 @@ export interface TabProps {
 }
 
 export type HumanAction =
-  | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' }
+  /** `pressed`: the opening click/keydown was a real press (read in the caller's handler): the review opens at once and signs after the 1 s arm. */
+  | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code'; pressed?: boolean }
+  /** R11 P09: requirements and plan, one signature. */
+  | { kind: 'approve_both'; pressed?: boolean }
   | { kind: 'request_changes'; gate: 'requirements' | 'plan' | 'verify' | 'code' }
   | { kind: 'verdict' }
   | { kind: 'answer'; question: string; option?: string; text?: string }

@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { openInfo } from '@/test/info'
 import userEvent from '@testing-library/user-event'
 import { runsApi, type Run } from '@/api/runs'
 import { onDockRequest } from '@/app/terminal/dock/request'
@@ -38,7 +39,7 @@ const calls = (p: string) => state.host.calls.filter((c) => c.path.includes(p))
 it('lists each ticket’s worktree in plain words and keeps folder and branch behind Technical details', async () => {
   route()
   show('/w/DEMO/worktrees')
-  const list = await screen.findByRole('list', { name: 'Worktrees' }, T)
+  const list = await screen.findByRole('list', { name: 'Work copies' }, T)
   const [first, second] = within(list).getAllByRole('listitem')
   expect(first).toHaveTextContent('Ready')
   expect(first).toHaveTextContent('no unsaved changes')
@@ -47,8 +48,7 @@ it('lists each ticket’s worktree in plain words and keeps folder and branch be
   expect(second).toHaveTextContent('not checked') // unknown is never zero
   expect(second).toHaveTextContent('by you')
   expect(second).not.toHaveTextContent(/0 changed|no unsaved/)
-  const details = within(first).getByText('Technical details').closest('details')!
-  expect(details).not.toHaveAttribute('open')
+  const details = await openInfo(first)
   expect(details).toHaveTextContent('/work/code.worktrees/aaaaaaaa-DEMO-0001')
   expect(calls('/worktrees')[0].method).toBe('GET')
 })
@@ -100,7 +100,7 @@ it('the ticket page shows its worktree per repository and the shared copy when t
   expect(calls('/worktrees?ticket=DEMO-0001').length).toBeGreaterThan(0)
 })
 
-it('previews the worktree cwd and opens its confirmed terminal in the dock', async () => {
+it('previews the worktree cwd and opens its terminal in the dock in one press', async () => {
   route()
   const preview = vi.spyOn(runsApi, 'preview').mockResolvedValue({ spec: 'demo-spec', display: 'shell', display_hidden: false, cwd_path: '/work/code.worktrees/demo', cwd_path_hidden: false, notice: null, as_person: true, login_shell: true, env: [], blocked: null, warnings: [] })
   const open = vi.spyOn(runsApi, 'open').mockResolvedValue({ run: { run: 'demo-new-run' } as Run })
@@ -113,11 +113,10 @@ it('previews the worktree cwd and opens its confirmed terminal in the dock', asy
     expect(screen.queryByRole('button', { name: 'Open a terminal in the worktree of DEMO-0002' })).not.toBeInTheDocument()
     const args = { ticket: 'DEMO-0001', cwd: { kind: 'worktree', repo: 'code', ticket: 'DEMO-0001' } }
     expect(preview).toHaveBeenCalledWith(A, args)
-    const dialog = await screen.findByRole('dialog')
-    expect(dialog).toHaveTextContent('/work/code.worktrees/demo')
-    expect(open).not.toHaveBeenCalled()
-    await user.click(within(dialog).getByRole('button', { name: 'Open terminal' }))
+    // No "Open a terminal?" confirm: the previewed spec is opened at once, then shown in the dock.
     await waitFor(() => expect(open).toHaveBeenCalledWith(A, args, 'demo-spec', expect.stringMatching(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)))
-    expect(dock).toHaveBeenCalledWith('demo-new-run')
+    expect(preview.mock.invocationCallOrder[0]).toBeLessThan(open.mock.invocationCallOrder[0])
+    await waitFor(() => expect(dock).toHaveBeenCalledWith('demo-new-run'))
+    expect(screen.queryByRole('dialog')).toBeNull()
   } finally { unsubscribe(); preview.mockRestore(); open.mockRestore() }
 })

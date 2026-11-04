@@ -12,7 +12,10 @@ Contract for orch-core (`hub join --link`). Code: `src/orch_hub/connect.py` (`bu
   Path is exactly `/c`, no query. The page at `/c` is a static landing text; the fragment never reaches the server.
 - `h1`: literal version tag. `hub_id`: 32 lowercase hex (the hub id of protocol section 2.3).
 - `code`: single-use invite, `[A-Za-z0-9_-]{1,64}` (no dots). Valid 30 minutes.
-- `endpoint` (optional): where the host dials the hub link: `host:port`, `[v6]:port` or the word `local`.
+- `endpoint` (optional): where the host dials the hub link: the word `local` or a link address of protocol.md
+  §10.10.1 (`host:port`, `[v6]:port`, and from R6 `ws://host[:port]` / `wss://host[:port]`; no path, query, user info
+  or proxy). It is a hint: the host dials it only with the card's pinned TLS. Vectors: `connect_*` in
+  `contracts/hub/vectors_link_ws.json`.
   It may contain dots, so split the fragment with at most 3 splits (`fragment.split(".", 3)`).
 
 Test vector:
@@ -43,3 +46,6 @@ Workspace side: parse the link, GET the card, run `verify_card`, require `card.o
 `POST /api/v1/admin/connect` (hub-admin session, body optional `{"endpoint": "host:port"}`, default: the hub's own
 link address) answers `{link, code, hub_id, endpoint, expires_ms}`. The base origin is the console origin the admin
 used. Console: Admin, Workspaces tab, "Connect a workspace".
+A workspace on a new server: Workspaces, "New workspace on a server" is a guide only (install, `orch setup --no-browser`, the
+`ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:47821:127.0.0.1:47821 user@server` tunnel, then this connect link). The hub never
+connects to the server and never sees its keys or the setup link.

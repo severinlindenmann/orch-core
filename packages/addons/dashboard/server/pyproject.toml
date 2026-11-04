@@ -1,6 +1,6 @@
 [project]
 name = "orch-dashboard"
-version = "0.1.0"
+version = "2.0.0.dev0"
 description = "Local read-only orch dashboard addon"
 requires-python = ">=3.14"
 dependencies = ["fastapi==0.143.1", "starlette==1.8.0", "uvicorn==0.34.2", "websockets==13.1", "orch-core>=2.0.0.dev0"]

@@ -7,7 +7,7 @@ import Testing
 /// H12d: the runtime view KAT and the reader_decl object, against orch-core's `reader_kat_1.json` and orch-relay's `reader_decl` vectors.
 enum ReaderVectors {
     static let kat = F1Vectors.load("reader_kat_1")
-    static let relay: JSONValue = try! StrictJSON.parse(OrchTestVectors.Vectors.readerDecl, maxBytes: .max, maxDepth: 64)
+    static var relay: JSONValue { Vectors.suite2 }  // contracts/relay/vectors_v2.json, suite 2, read by path (no copy)
     static var group: JSONValue { relay["reader_decl"] }
     static func signer(_ name: String) -> SoftwareSigner { try! SoftwareSigner(testScalar: scalar(fromSeed: relay["keys"][name]["seed"].hexData)) }
     static func kx(_ name: String) -> AgreementPublicKey { relay["keys"][name]["pub"].kxPub }

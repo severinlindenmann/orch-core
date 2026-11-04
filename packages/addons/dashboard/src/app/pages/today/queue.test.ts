@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import type { AddonDecision, NeedsYouItem } from '@/api/types'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
+import * as features from '@/api/features'
 import { countAttention } from '@/api/attention'
 import { terminalWaitsOf } from '@/app/attention'
-import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, sortEntries, toEntries } from './queue'
+import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, shapeApprovals, sortEntries, toEntries } from './queue'
 
 const q = (ticket: string, since: string, blocking = false, ref = 'Q1'): NeedsYouItem => ({ kind: 'question', ticket, title: `T ${ticket}`, text: 'Which?', since, ref, blocking })
 const ap = (ticket: string, since: string): NeedsYouItem => ({ kind: 'approval', ticket, title: `T ${ticket}`, text: 'Approve the plan.', since, ref: 'plan' })
@@ -100,5 +101,52 @@ describe('today queue: new items are buffered', () => {
     const { shown, fresh } = reconcile(pruned, first) // D-1 reopened
     expect(shown.map((e) => e.id)).toEqual(['approval:D-2:plan'])
     expect(fresh.map((e) => e.id)).toEqual(['question:D-1:Q1'])
+  })
+})
+
+describe('today queue: requirements and plan in one approval (R12 P03)', () => {
+  afterEach(() => vi.restoreAllMocks())
+  const viewer = { person: 'p_sev', role: 'owner' as const, members: [], name: (id: string | null | undefined) => id ?? 'nobody', ready: true }
+  const gate = (missing: string[] = []) => ({ state: 'open', missing, approvals: [], needed: 1, hash: 'h', eligible: ['p_sev'], approvers: 'owner' })
+  const ticket = (o: { planMissing?: boolean; claim?: boolean } = {}) =>
+    ({
+      key: 'D-1', status: 'open', head: { seq: 3 }, people: { assignees: [], reviewers: [] }, questions_state: [], tasks: [{ id: 'T1', text: 't' }],
+      body: { requirements: 'R', plan: o.planMissing ? '' : 'P' },
+      claim: o.claim ? { live: true } : null,
+      gates: { requirements: gate(), plan: gate(o.planMissing ? ['plan'] : []), verify: gate(), code: gate() },
+    }) as unknown as TicketDocument
+  const req = { ...ap('D-1', '2026-10-09T09:00:00Z'), ref: 'requirements', text: 'Approve the requirements.' }
+  const plan = { ...ap('D-1', '2026-10-09T09:00:00Z'), ref: 'plan' }
+  const wait = (source: 'wait' | 'hook'): NeedsYouItem => ({ kind: 'terminal_wait', ticket: 'D-1', title: 'T', text: 'x', since: '2026-10-09T09:00:00Z', ref: 'r_1', source })
+  const counts = (items: NeedsYouItem[]) => countAttention(items, []).core
+
+  it('withholds the requirements item while the plan is missing and the agent works: a quiet line, not counted', () => {
+    const r = shapeApprovals([req], { 'D-1': ticket({ planMissing: true, claim: true }) }, viewer)
+    expect(r.items).toEqual([])
+    expect(r.writing).toEqual([req])
+    expect(counts(r.items)).toBe(0)
+    expect(toEntries(r.items, [])).toEqual([])
+  })
+
+  it('lists the requirements again at once when the agent has stopped, waits (orch wait) or the ticket is unclaimed', () => {
+    expect(shapeApprovals([req], { 'D-1': ticket({ planMissing: true, claim: false }) }, viewer)).toEqual({ items: [req], writing: [] })
+    expect(shapeApprovals([req, wait('wait')], { 'D-1': ticket({ planMissing: true, claim: true }) }, viewer).items).toEqual([req, wait('wait')])
+  })
+
+  it('leaves items as sent while the ticket is not read', () => {
+    expect(shapeApprovals([req], {}, viewer)).toEqual({ items: [req], writing: [] })
+  })
+
+  it('on a real host merges requirements + plan into one combined item (approve_both) and drops the plan item', () => {
+    vi.spyOn(features, 'isRealHost').mockReturnValue(true)
+    const r = shapeApprovals([req, plan], { 'D-1': ticket({ claim: true }) }, viewer)
+    expect(r.items).toEqual([{ ...req, text: 'Approve requirements and plan', both: true }])
+    expect(r.writing).toEqual([])
+    expect(counts(r.items)).toBe(1) // one card, one count
+  })
+
+  it('without the combined action (mock host) both items stay as the host sent them', () => {
+    vi.spyOn(features, 'isRealHost').mockReturnValue(false)
+    expect(shapeApprovals([req, plan], { 'D-1': ticket() }, viewer).items).toEqual([req, plan])
   })
 })

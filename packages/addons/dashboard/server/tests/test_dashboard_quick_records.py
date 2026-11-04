@@ -239,7 +239,7 @@ def test_current_route(client, token, stub, m6, gateway, monkeypatch):
 
 
 def test_empty_labels_reach_set():
-    from orch_dashboard.handoff import Details, host_call
+    from orch_dashboard.signing import Details, host_call
 
     assert host_call(Details(action="details", key="DEMO-0001", labels=[])) == (
         "set",

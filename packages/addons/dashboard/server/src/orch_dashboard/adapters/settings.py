@@ -12,7 +12,7 @@ asked for another way. A `remote` is shown only as a canonical identity without 
 
 import re
 
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import BaseModel
 
 from ..errors import fail
 from ..text import hidden
@@ -23,6 +23,8 @@ DURATIONS = {"grant_hours": (1, 168), "claim_ttl_min": (15, 1440), "lease_ttl_mi
 APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
 PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")
+#: who signed a stamp: a workspace person, or the hub user a hub-signed event names (`u_<user id>`, hub protocol 8.8)
+SIGNER = re.compile(r"^[pu]_[A-Za-z0-9]{1,64}$")
 REPO = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 # No control, bidi, zero-width or byte-order characters in anything shown from the host (they could reorder a line).
 BRANCH = re.compile(r"^.{1,255}$")
@@ -31,7 +33,7 @@ WORD = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 REMOTE = re.compile(r"^(?:https://[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?/[^\s@?#]{0,1000}|local:[A-Za-z0-9._-]{1,64})$")
 USERINFO = re.compile(r"^(https://)[^/@\s]*@")
 TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,18}$")
-GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+GRANT_ID = re.compile(r"^f?gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 #: a grant's label (common.json `label`): `runner` marks the runner grant (H11c-2); anything else is shown as text
 GRANT_LABEL = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
@@ -74,23 +76,12 @@ class Settings(BaseModel):
     grant_hours: int | None = None
     claim_ttl_min: int | None = None
     lease_ttl_min: int | None = None
-    #: B6: the workspace's allowed ways to sign (`terminal` always). Absent when the host did not say (an older core).
-    sign_methods: list[str] | None = None
-    #: whether the host reported sign_methods at all (an explicit null = not set, every way allowed)
-    sign_methods_known: bool = Field(default=False, exclude=True)
     defaults: list[str] | None = None
     gates: dict[str, dict] | None = None
     repos: list[Repo] | None = None
     repos_more: bool = False
     settings_at: Stamp | None = None
     policy_at: Stamp | None = None
-
-    @model_serializer(mode="wrap")
-    def _omit_unknown_sign_methods(self, handler):
-        out = handler(self)
-        if out.get("sign_methods") is None and not self.sign_methods_known:
-            out.pop("sign_methods", None)  # an older core said nothing: absent (the UI shows it read-only)
-        return out
 
 
 def unavailable() -> Settings:
@@ -108,7 +99,7 @@ def stamp(value) -> Stamp | None:
         not isinstance(value, dict)
         or type(value.get("seq")) is not int
         or not TIME.fullmatch(str(value.get("at")))
-        or not PERSON.fullmatch(str(value.get("by")))
+        or not SIGNER.fullmatch(str(value.get("by")))
     ):
         raise bad()
     return Stamp(seq=value["seq"], at=value["at"], by=value["by"])
@@ -205,20 +196,11 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
         defaults = first["defaults"]
         if not isinstance(defaults, list) or any(d not in DURATIONS for d in defaults):
             raise bad()
-        methods = first.get("sign_methods")
-        if methods is not None and (
-            not isinstance(methods, list)
-            or "terminal" not in methods
-            or any(m not in ("terminal", "click", "phone", "touchid") for m in methods)
-        ):
-            raise bad()
         repos: list[Repo] = []
         for page in [first, *more_pages]:
             repos += [repo(n, e) for n, e in sorted(page["settings"]["repos"].items())]
         return Settings(
             **out,
-            sign_methods=methods,
-            sign_methods_known="sign_methods" in first,
             defaults=sorted(set(defaults)),
             gates={g: policy(p) for g, p in gates.items()},
             repos=repos,
@@ -332,6 +314,8 @@ class Grant(BaseModel):
     # read_ext/2: absent means unknown (None), not "none". `session_ids` is capped at 100; `sessions` counts all.
     session_ids: list[str] | None = None
     sessions_more: bool | None = None
+    # a follow-up grant (`fgr_`) names the grant it was derived from; None for every other grant
+    parent: str | None = None
 
 
 def revoked(at, detail) -> Revoked | None:
@@ -368,6 +352,9 @@ def grants(data, ext: bool) -> list[Grant]:
                     label=g["label"] if isinstance(g.get("label"), str) and GRANT_LABEL.fullmatch(g["label"]) else None,
                     session_ids=ids[:MAX_SESSION_IDS] if ids is not None else None,
                     sessions_more=bool(g.get("sessions_more")) if ext and "sessions_more" in g else None,
+                    parent=g["parent"]
+                    if isinstance(g.get("parent"), str) and GRANT_ID.fullmatch(g["parent"])
+                    else None,
                 )
             )
         return out

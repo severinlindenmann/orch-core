@@ -1,0 +1,59 @@
+"""Run-11 #12/#13 from a real browser: Services and Workspaces pages. Skipped without node Playwright.
+
+Run under the playwright lease: ``~/orch-dev/scripts/lease.sh run playwright r11 -- uv run pytest tests/test_browser_r11.py -q``
+(set ``SHOT_DIR`` to keep desktop + 390 px screenshots).
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+from channels_helpers import PW, wall_codes
+from test_browser_s5 import NODE, playwright_path
+from test_serve_wired import host_link, hub  # noqa: F401  (the wired hub fixture)
+
+from orch_hub.access import ADMIN_GROUP, Access
+
+pytestmark = pytest.mark.slow
+
+
+@pytest.mark.skipif(playwright_path() is None, reason="playwright for node is not installed")
+def test_services_and_workspaces_pages_in_a_browser(hub):  # noqa: F811
+    acc = Access(str(hub["state"] / "access.db"))
+    acc.add_member(ADMIN_GROUP, hub["user"])
+    acc.close()
+    (code_signin,) = wall_codes(hub["secret"], (-1,), left_s=10)  # the run stays inside this step
+    env = {
+        **os.environ,
+        "NODE_PATH": playwright_path(),
+        "HUB_URL": f"http://127.0.0.1:{hub['web'].port}",
+        "HUB_USER": hub["user"],
+        "HUB_PW": PW,
+        "CODE_SIGNIN": code_signin,
+    }
+    script = Path(__file__).parent / "js" / "browser_r11.mjs"
+    # The page opens on an empty Workspaces list; the script prints JOIN_NOW, we join a stub workspace, it must show up by itself.
+    proc = subprocess.Popen(
+        [NODE, str(script)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    c = None
+    out: list[str] = []
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        for line in proc.stdout:
+            out.append(line)
+            if line.strip() == "JOIN_NOW":
+                c = host_link(hub)
+                proc.stdin.write("joined\n")
+                proc.stdin.flush()
+        rest, err = proc.communicate(timeout=120)
+    finally:
+        proc.kill()
+        if c is not None:
+            c.close()
+    stdout = "".join(out) + (rest or "")
+    assert proc.returncode == 0, stdout[-2000:] + err[-3000:]
+    assert "R11 browser: ok" in stdout

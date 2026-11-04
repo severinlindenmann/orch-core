@@ -587,7 +587,7 @@ def _with_actor(t, kind, base=None):
         e.pop(k, None)
     if kind == "person":
         e.update(sig=ex.SIG, auth="passphrase", roster_v=0 if t == "workspace.created" else 7)
-    if t == "grant.issued" and kind == "host":  # C10: the host answers a grant.requested, and only then
+    if t in ("grant.issued", "addon.granted") and kind == "host":  # the host answers a request, and only then
         e["request"] = ex.EID
     if t == "ticket.created":
         e["owner"] = actor["id"] if kind == "person" else actor.get("for", "p_" + ex.PID)
@@ -624,8 +624,8 @@ def test_person_events_need_signature_auth_and_roster_version():
 
 
 def test_agent_and_host_never_stand_in_for_a_person():
-    for t in ("gate.approved", "verdict.given", "question.answered", "ticket.closed", "restore", "grant.requested",
-              "member.added", "invalid.acknowledged", "addon.granted", "settings.changed"):  # fmt: skip
+    for t in ("gate.approved", "verdict.given", "question.answered", "restore", "grant.requested",
+              "member.added", "invalid.acknowledged", "settings.changed"):  # fmt: skip
         e = ex.EVENTS[t]
         log = log_of(t)
         for kind in ("agent", "unattended", "host"):
@@ -1616,6 +1616,7 @@ def test_event_types_match_doc_tables():
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
     "relay.submit",  # an operation (host, §11A), not an event
+    "remote.set", "remote.device_confirm", "remote.owner_proof", "remote.invalid",  # R2: ops, a proof kind, a code
     # §15 (C3b): signed hub objects pinned by hub.pinned, and the model refusal codes
     "hub.card", "hub.op_revoked", "hub.snapshot", "hub.cert_invalid", "hub.unknown_snapshot", "hub.foreign_user",
     "hub.denied", "hub.invalid", "hub.channel_cert", "hub.uk_cert",
@@ -1630,7 +1631,7 @@ DOC_NON_EVENTS = {
     "ticket.questions", "ticket.schema", "ticket.size", "ticket.tasks", "ticket.title", "ticket.type", "ticket.uid",
     "ticket.visibility",
     # refusal codes of the §5.11 refusal order
-    "addon.field_unknown", "addon.value_invalid", "device.invalid", "device.scope", "sign.method",
+    "addon.field_unknown", "addon.value_invalid", "device.invalid", "device.scope",
     "gate.invalidated_mismatch",
     "gate.not_applicable", "gate.not_eligible", "gate.status", "grant.invalid", "grant.scope", "member.unknown",
     "role.denied", "ticket.exists", "ticket.not_visible", "ticket.unknown",
@@ -2183,9 +2184,11 @@ def test_repeated_patterns_are_references_not_copies():
 @pytest.mark.slow
 def test_validation_speed_of_an_event_stays_cheap():
     """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined). The
-    bound is relative to a calibration loop on the same machine (a slow CI box scales both), and the best of 5
-    runs counts, so a return to $ref chains (about 6x slower: over 200x the calibration, today about 40x)
-    fails and load noise does not."""
+    bound is relative to a calibration loop on the same machine, measured interleaved round by round (a noisy
+    neighbour hits both), best of 7. The ratio is about 40x on a laptop but about 100x on the GitHub runners
+    (their JSON round trip is relatively faster), and it failed twice at 100x on 29 Oct. A return to $ref
+    chains is about 6x slower (over 240x on a laptop, about 600x on CI), so 300x keeps that signal with room
+    for the runner's own ratio."""
     import time
 
     events = [(e["type"], e) for e in ex.EVENTS.values()]
@@ -2208,10 +2211,14 @@ def test_validation_speed_of_an_event_stays_cheap():
                 V("event", e)
         return (time.process_time() - t0) / (20 * len(events))
 
-    cal = min(calibration() for _ in range(5))
-    per_event = min(validation() for _ in range(5))
-    print(f"validation {per_event * 1000:.3f} ms per event, calibration {cal * 1e6:.2f} us")
-    assert per_event < 100 * cal, f"{per_event * 1000:.2f} ms per event, calibration {cal * 1e6:.2f} us"
+    cals, vals = [], []
+    for _ in range(7):  # interleaved: each round measures both back to back
+        cals.append(calibration())
+        vals.append(validation())
+    cal, per_event = min(cals), min(vals)
+    print(f"validation {per_event * 1000:.3f} ms per event, calibration {cal * 1e6:.2f} us, {per_event / cal:.0f}x")
+    ratio = per_event / cal
+    assert ratio < 300, f"{per_event * 1000:.2f} ms per event, calibration {cal * 1e6:.2f} us ({ratio:.0f}x)"
 
 
 def test_event_schemas_repeat_the_envelope_of_event_json():
@@ -2227,7 +2234,16 @@ def test_event_schemas_repeat_the_envelope_of_event_json():
             else:
                 assert s["properties"][k] == v, (t, k)
         assert set(env["required"]) <= set(s["required"]), t
-        assert s["allOf"][: len(env["allOf"])] == env["allOf"], t
+        from copy import deepcopy
+
+        expected = deepcopy(env["allOf"])
+        if t == "ticket.created":  # core's schedule child uses via instead of a fresh person signature
+            expected[0]["if"]["not"] = {"required": ["via"]}
+        if t == "schedule.set":  # the signed anchor action shares its initial null base
+            expected[2]["else"]["properties"]["based_on"] = {
+                "oneOf": [{"$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"}, {"type": "null"}]
+            }
+        assert s["allOf"][: len(expected)] == expected, t
         assert s["additionalProperties"] is False, t
 
 
@@ -2396,3 +2412,17 @@ def test_branch_components_cannot_start_with_marks(mark, prefix):
     }
     with pytest.raises(SchemaError):
         V("event.ticket.updated", e, log="ticket")
+
+
+def test_addon_granted_host_actor_needs_request_and_a_person_never_has_one():
+    """FB15 (hub protocol 8.8b): the host answers an addon.requested, and only then; a person never writes `request`."""
+    t = "addon.granted"
+    V("event", _with_actor(t, "host"), log="workspace")  # with its request
+    e = _with_actor(t, "host")
+    e.pop("request")
+    with pytest.raises(SchemaError):
+        V("event", e, log="workspace")
+    e = _with_actor(t, "person")
+    e["request"] = ex.EID
+    with pytest.raises(SchemaError):
+        V("event", e, log="workspace")

@@ -1,0 +1,9 @@
+{
+  "host_id": "vec-host",
+  "parts": {
+    "hub": {"kind": "systemd-user", "label": "Hub", "unit": "orch-ab12cd-hub.service"},
+    "publish": {"kind": "systemd-user", "label": "Publish", "unit": "orch-ab12cd-publish.service"},
+    "relay": {"kind": "systemd-user", "label": "Relay", "unit": "orch-ab12cd-relay.service"}
+  },
+  "v": 1
+}

@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
-import { ChevronRight, Lock, TriangleAlert, X } from 'lucide-react'
+import { Dropdown } from '@/components/pickers/Dropdown'
+import { DatePicker } from '@/components/pickers/DatePicker'
+import { ChevronDown, ChevronRight, Lock, TriangleAlert, X } from 'lucide-react'
 import { RadioGroup as RadioGroupPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -9,8 +11,11 @@ import { handoffMode } from '@/api/features'
 import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
-import { SignPopover } from '@/components/sign/SignPopover'
+import { trustedPress } from '@/components/sign/trustedPress'
+import { SignPopover, type SignedHow } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
+import { markJustCreated } from './justCreated'
+import { useCreatedToast } from './useQuickCreate'
 import { SignButton } from '@/components/sign/SignButton'
 import { AccessSelect } from '@/components/sign/AccessSelect'
 import { hasFeature } from '@/api/features'
@@ -19,21 +24,22 @@ import { ApiError, type BodySections, type Me, type NewTicketRequest, type Prior
 import { Button } from '@/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
 import { PRIORITY_RANK } from '../board/lib'
-import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
+import { PeoplePicker, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
-import { AgentLine, NotSignedBlock } from './AgentLine'
-import { harnessName } from '@/components/agents/AgentChoice'
+import { ChangeDialog, AgentLine, NotSignedBlock } from './AgentLine'
+import { harnessName, MODE_LABEL } from '@/components/agents/AgentChoice'
 import type { StartPlan } from './useStartPlan'
-import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
+import type { StartInitial } from '@/app/terminal/real/StartAgentDialog'
 import { cn } from '@/lib/utils'
 import { newIdem } from '@/api/runs'
-import { useStartAfterCreate } from './useStartAfterCreate'
+import { failMark, startInBackground } from '../ticket/progress'
 import { useStartPlan } from './useStartPlan'
 import type { Reviewed } from './startAfterCreate'
 import { queries } from '@/api/queries'
@@ -42,6 +48,7 @@ import { useMe } from '@/app/useMe'
 const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
 const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
+const NO_ACCESS = 'Agent access is not confirmed yet. Start an agent to give access.'
 /**
  * A new ticket through the hand-off is ONE review and ONE confirmation (B11, finding 9): the title, the type, the
  * fields and every written section go to the signer as one intent. The signer signs `ticket.created`, the fields and one
@@ -324,12 +331,15 @@ export interface NewTicketFormProps {
   footerExtra?: ReactNode
   /** Focus promote: a prefilled draft that wins over a remembered one (the person edits it before creating). */
   initial?: Partial<Draft>
+  /** The New ticket sheet: after a signed create stay where you were (a toast offers Open). Other hosts (Focus) navigate themselves. */
+  stayOnCreate?: boolean
 }
 
-export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra, initial }: NewTicketFormProps) {
+export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra, initial, stayOnCreate }: NewTicketFormProps) {
   const overlay = variant === 'overlay'
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const signedToast = useCreatedToast()
   const key = draftKey(me.person, workspace.id)
   const restored = useMemo(() => readDraft(key), [key])
   const [draft, setDraft] = useState<Draft>(initial ? { ...EMPTY, ...initial } : restored ?? EMPTY)
@@ -361,22 +371,24 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
 
   // "Create and start agent": what the review shows about the start, kept with the request so the start afterwards is
   // compared with exactly that (never with whatever the form says by then). One idem per review.
-  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean }
-  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; draft: Draft; another: boolean; start: StartSnapshot | null; anchor: HTMLElement | null; n: number } | null>(null)
+  // `notice`: the review shows the full "runs as you" notice (not read yet). Signing counts as reading it only when the
+  // one-click review showed it (see `noticeSeen`); signed any other way, the start is refused and the pill offers Start agent.
+  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean; notice: boolean }
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; draft: Draft; another: boolean; start: StartSnapshot | null; anchor: HTMLElement | null; n: number; trusted: boolean } | null>(null)
   const [signing, setSigning] = useState(false)
   const primaryRef = useRef<HTMLButtonElement>(null)
   const secondaryRef = useRef<HTMLButtonElement>(null)
   const handoffOn = handoffMode(workspace.id)
   const plan = useStartPlan(workspace, me.person)
-  const after = useStartAfterCreate()
   const partialKey = useRef<{ key: string; initial: StartInitial } | null>(null)
-  const busyAfter = after.state.kind !== 'idle'
   // The access would be one signature too many: say so now, and create without starting (no surprise at the click).
   const tooMany = useMemo(() => {
     if (!plan.available || !plan.needsGrant) return false
     return accessTooMany(draft, me.person, plan.hours)
   }, [plan.available, plan.needsGrant, plan.hours, draft, me.person])
+  const [pickAgent, setPickAgent] = useState(false)
   const startPossible = plan.available && !tooMany
+  // The person's auto-start preference (default on) decides which action of the pair is the main button.
   const startFirst = startPossible && plan.pref.start
 
   const create = useMutation({
@@ -387,7 +399,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const submitting = useRef(false)
   // E-7: a criterion typed in the box but not added with "Add" is added when the ticket is submitted, never dropped.
   const flushAc = useRef<(() => string) | null>(null)
-  const submit = async (another: boolean, wantStart = false, anchor: HTMLElement | null = null) => {
+  // remember: the main button (and Cmd+Enter) keep the choice as the default; a menu item is used once (P09).
+  const submit = async (another: boolean, wantStart = false, anchor: HTMLElement | null = null, remember = true, trusted = false) => {
     if (submitting.current) return
     const extra = flushAc.current?.() ?? ''
     const full = extra ? { ...draft, acceptance: [...draft.acceptance, extra] } : draft
@@ -400,21 +413,24 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       return
     }
     if (handoffOn) {
-      // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
+      // On a real host the ticket is created by a signed event: prepare it and sign it with one click (design 4.5).
       // "Usable" is a matter of time: decide on the grant as it is right now, not as the form last drew it.
       const fresh = plan.grantNow()
       // F-712-B: so is the step limit (it depends on whether the access has to be signed too): recompute it with the fresh grant,
       // so a grant that lapsed since the form was drawn falls back to "Only create" and not to a form error.
       const startPossibleNow = plan.available && !(!fresh && accessTooMany(full, me.person, plan.hours))
       const startNow = wantStart && startPossibleNow && !another
-      if (startPossibleNow) plan.setPref({ start: wantStart })
+      if (startPossibleNow && remember) plan.setPref({ start: wantStart })
       const withAccess = startNow && !fresh
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
+      if (startNow && made.action.action === 'new_sequence') {
+        made.action.launch = { harness: plan.choice.harness, mode: plan.choice.mode, ...(plan.choice.model ? { model: plan.choice.model } : {}) }
+      }
       const start: StartSnapshot | null = startNow
-        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess }
+        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess, notice: plan.noticeUnread }
         : null
-      return setHandoffNew((old) => ({ action: made.action, draft: full, another, start, anchor, n: (old?.n ?? 0) + 1 }))
+      return setHandoffNew((old) => ({ action: made.action, draft: full, another, start, anchor, n: (old?.n ?? 0) + 1, trusted }))
     }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[full.type]
@@ -469,37 +485,44 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string) => {
+  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, made: { title: string; type: string }, deposit?: string, how?: SignedHow, requestId?: string) => {
     ticketExists()
+    if (ticketKey) markJustCreated(ticketKey)
     setHandoffNew(null)
     // One click signed the agent access too: only a confirmed hand-over to the runner counts as access given.
-    if (start && ticketKey && start.withAccess && deposit !== undefined && deposit !== 'confirmed') return after.noAccess(ticketKey, initialOf(start))
-    // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
-    if (start && ticketKey) return void beginStart(ticketKey, start)
-    afterCreate(another, ticketKey)
-  }
-  const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
-  /** Every signature landed: preview for the ticket's own key and start only if it is what the review showed. */
-  const beginStart = async (ticketKey: string, snap: StartSnapshot) => {
-    const out = await after.run({ ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds })
-    if (out.kind === 'started') {
-      toast.success(`Created ${ticketKey} and started ${harnessName(snap.reviewed.choice.harness)}`)
-      afterCreate(false, ticketKey)
+    if (start && ticketKey && start.withAccess && deposit !== undefined && deposit !== 'confirmed') {
+      failMark(workspace.id, ticketKey, NO_ACCESS, initialOf(start))
+      return afterCreate(false, ticketKey)
     }
-    // not started: the Start agent dialog opens with the same sentence, so no second message here
+    // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
+    if (start && ticketKey) return void beginStart(ticketKey, start, noticeSeen(start, how), requestId)
+    // A signed ticket without an agent: say what was created, with Open (no Undo: that would need a second signature).
+    // The sheet closes and the person stays where they were; the full page opens the ticket as before.
+    if (ticketKey) signedToast({ key: ticketKey, type: made.type as TicketType, title: made.title }, workspace.id, { undo: false })
+    else toast.success('Ticket created')
+    afterCreate(another, ticketKey, { toasted: true, stay: overlay && !!stayOnCreate })
   }
-  const afterCreate = (another: boolean, ticketKey: string | null) => {
+  /** The notice counts as read only when the person saw it: the review's slot showed it next to the one-click review
+   * they signed from in that same popover. The terminal, the hub, or a review where the slot was not on screen: not read. */
+  const noticeSeen = (snap: StartSnapshot, how?: SignedHow) => snap.notice && how?.via === 'click' && how.unsignedShown
+  const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
+  /** Every signature landed: the start runs in the background and the ticket page opens at once with "Getting started…". */
+  const beginStart = (ticketKey: string, snap: StartSnapshot, noticeRead: boolean, requestId?: string) => {
+    void startInBackground(qc, { ws: workspace.id, key: ticketKey, requestId, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds, noticeRead })
+    afterCreate(false, ticketKey)
+  }
+  const afterCreate = (another: boolean, ticketKey: string | null, opts: { toasted?: boolean; stay?: boolean } = {}) => {
     if (another) {
       setDraft({ ...EMPTY, type: draft.type, priority: draft.priority })
       setAttempted(false)
-      toast.success(`Created ${ticketKey ?? 'the ticket'}`)
+      if (!opts.toasted) toast.success(`Created ${ticketKey ?? 'the ticket'}`)
       titleRef.current?.focus()
       return
     }
     leaving.current = true
     setDraft(EMPTY)
     if (overlay) (onClosed ?? onCancel)?.()
-    if (ticketKey) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
+    if (ticketKey && !opts.stay) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
   }
   // A refused submit: focus the first invalid field (title, then the sections in page order).
   useEffect(() => {
@@ -513,19 +536,18 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     setAttempted(false)
   }
 
-  const primaryLabel = startFirst ? 'Review and start agent' : startPossible || tooMany ? 'Only create' : handoffOn ? 'Create ticket' : 'Create'
+  const createLabel = handoffOn ? 'Create ticket' : 'Create'
+  const primaryLabel = startFirst ? 'Create and start' : createLabel
   const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (
     <div
       ref={root}
-      // M-1: once the ticket exists and the Start agent dialog (or the "no access" notice) is open, the emptied form is not shown behind it.
-      className={cn(overlay ? 'flex min-h-0 flex-1 flex-col' : 'mx-auto max-w-[1100px]', (after.state.kind === 'ask' || after.state.kind === 'no-access') && 'hidden')}
-      data-ticket-created={after.state.kind === 'ask' || after.state.kind === 'no-access' ? '' : undefined}
+      className={cn(overlay ? 'flex min-h-0 flex-1 flex-col' : 'mx-auto max-w-[1100px]')}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
-          void submit(false, startFirst, primaryRef.current)
+          void submit(false, startFirst, primaryRef.current, true, trustedPress(e.nativeEvent))
         }
       }}
     >
@@ -558,12 +580,20 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 autoFocus={!overlay}
                 value={draft.title}
                 onChange={(e) => patch({ title: e.target.value })}
+                onKeyDown={(e) => {
+                  // Enter in the title moves on to the next field (the requirements); it never submits.
+                  if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    root.current?.querySelector<HTMLElement>('textarea')?.focus()
+                  }
+                }}
                 maxLength={160}
                 placeholder="What needs to happen?"
                 aria-invalid={(attempted && !!check.title) || undefined}
                 aria-describedby={attempted && check.title ? 'nt-title-error' : undefined}
                 className="h-11 text-lg md:text-lg"
               />
+              <p className="text-[12px] text-text-muted" data-testid="nt-title-hint">Press Enter to continue with the requirements.</p>
               {attempted && check.title && (
                 <p id="nt-title-error" className="text-[12px] text-danger">
                   {check.title}
@@ -582,24 +612,11 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
               extra={
                 <div className="grid gap-4 sm:grid-cols-2" aria-label="Properties" role="group">
                   <Field label="Priority" htmlFor="nt-priority">
-                    <select id="nt-priority" className={fieldCls} value={draft.priority} onChange={(e) => patch({ priority: e.target.value as Priority })}>
-                      {PRIORITIES.map((p) => (
-                        <option key={p} value={p}>
-                          {p[0].toUpperCase() + p.slice(1)}
-                        </option>
-                      ))}
-                    </select>
+                    <Dropdown id="nt-priority" ariaLabel="Priority" value={draft.priority} onChange={(v) => patch({ priority: v as Priority })} options={PRIORITIES.map((p) => ({ value: p, label: p[0].toUpperCase() + p.slice(1) }))} />
                   </Field>
                   {(hasFeature('estimate', workspace.id) || draft.size) && (
                     <Field label="Size" htmlFor="nt-size">
-                      <select id="nt-size" className={fieldCls} value={draft.size ?? ''} onChange={(e) => patch({ size: (e.target.value || null) as Size | null })}>
-                        <option value="">Not sized</option>
-                        {SIZES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
+                      <Dropdown id="nt-size" ariaLabel="Size" value={draft.size ?? ''} onChange={(v) => patch({ size: (v || null) as Size | null })} options={[{ value: '', label: 'Not sized' }, ...SIZES.map((s) => ({ value: s, label: s }))]} />
                     </Field>
                   )}
                   <Field label="Labels">
@@ -607,18 +624,11 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                   </Field>
                   {draft.type !== 'epic' && (
                     <Field label="Parent epic" htmlFor="nt-parent">
-                      <select id="nt-parent" className={fieldCls} value={draft.parent ?? ''} onChange={(e) => patch({ parent: e.target.value || null })}>
-                        <option value="">None</option>
-                        {epics.map((t) => (
-                          <option key={t.key} value={t.key}>
-                            {t.key} · {t.title}
-                          </option>
-                        ))}
-                      </select>
+                      <Dropdown id="nt-parent" ariaLabel="Parent epic" value={draft.parent ?? ''} onChange={(v) => patch({ parent: v || null })} options={[{ value: '', label: 'None' }, ...epics.map((t) => ({ value: t.key, label: `${t.key} · ${t.title}` }))]} />
                     </Field>
                   )}
                   <Field label="Due" htmlFor="nt-due">
-                    <Input id="nt-due" type="date" value={draft.due} onChange={(e) => patch({ due: e.target.value })} className="h-8 text-[13px]" />
+                    <DatePicker id="nt-due" ariaLabel="Due" placeholder="No due date" allowClear value={draft.due} onChange={(due) => patch({ due })} />
                   </Field>
                   <div className="sm:col-span-2">
                     <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
@@ -642,61 +652,93 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           )}
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <AgentLine plan={plan} tooMany={tooMany} />
-            <div className="ml-auto flex flex-wrap items-center gap-2">
+            {/* While the sign box is open its own Cancel and Sign are the only ones: the form's copies are hidden (kept in layout,
+                the box is anchored to the main button). Errors live in the alert above and in the box, never in here. */}
+            <div className="ml-auto flex flex-wrap items-center gap-2" style={handoffNew ? { visibility: 'hidden' } : undefined} aria-hidden={handoffNew ? true : undefined} data-testid="nt-buttons">
+              {startPossible && (
+                <span className="text-[12px] text-text-muted" data-testid="nt-agent-summary">
+                  {harnessName(plan.choice.harness)} · {MODE_LABEL[plan.choice.mode]}
+                </span>
+              )}
               {footerExtra}
               <Button type="button" variant="ghost" onClick={() => (overlay ? onCancel?.() : void navigate({ to: '/tickets' }))}>
                 Cancel
               </Button>
-              {startPossible && (
-                <Button ref={secondaryRef} type="button" variant="outline" onClick={() => void submit(false, !startFirst, secondaryRef.current)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
-                  {startFirst ? 'Only create' : 'Review and start agent'}
-                </Button>
-              )}
               <SignButton
                 ref={primaryRef}
                 label={primaryLabel}
                 aria-keyshortcuts="Meta+Enter Control+Enter"
                 signing={signing}
-                after={after.state.kind === 'running' ? 'Starting agent…' : null}
                 slowLabel="Still starting…"
                 data-testid="nt-primary"
-                onClick={() => void submit(false, startFirst, primaryRef.current)}
-                disabled={!canCreate || create.isPending || (!!handoffNew && !signing) || busyAfter}
+                onClick={(e) => void submit(false, startFirst, primaryRef.current, true, trustedPress(e.nativeEvent))}
+                disabled={!canCreate || create.isPending || (!!handoffNew && !signing)}
               />
+              {startPossible && (
+                <Button
+                  ref={secondaryRef}
+                  type="button"
+                  variant="outline"
+                  data-testid="nt-secondary"
+                  onClick={(e) => void submit(false, !startFirst, startFirst ? null : secondaryRef.current, false, trustedPress(e.nativeEvent))}
+                  disabled={!canCreate || create.isPending || !!handoffNew}
+                >
+                  {startFirst ? createLabel : 'Create and start'}
+                </Button>
+              )}
+              {startPossible && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" size="icon" aria-label="More ways to create" disabled={!canCreate || create.isPending || !!handoffNew}>
+                      <ChevronDown className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => setPickAgent(true)}>Choose agent…</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
           </div>
         </div>
       </div>
 
+      {pickAgent && <ChangeDialog plan={plan} onClose={() => setPickAgent(false)} />}
       {handoffNew && (
         <SignPopover
           key={`${handoffNew.n}-${handoffNew.start?.withAccess ? plan.hours : 0}`}
-          title="New ticket"
+          autoStart={handoffNew.trusted}
+          armOnStart={!handoffNew.start}
+          armLine="Creating in a moment"
+          prepareOnOpen
+          title={handoffNew.start ? 'New ticket' : 'Create this ticket?'}
           ws={workspace.id}
           action={(() => {
             // The access length is chosen in the review; the action follows it (a refusal for size keeps the one that was prepared).
             if (!handoffNew.start?.withAccess) return handoffNew.action
             const again = handoffNewTicket(handoffNew.draft, me.person, plan.hours)
-            return 'problem' in again ? handoffNew.action : again.action
+            return 'problem' in again ? handoffNew.action : { ...again.action, launch: handoffNew.action.action === 'new_sequence' ? handoffNew.action.launch : undefined }
           })()}
-          autoStart
           startsAgent={!!handoffNew.start}
+          lead={handoffNew.start ? undefined : <p className="text-[13px] text-text-muted" data-testid="nt-lead">No agent starts. You can start one later.</p>}
+          claudeCode={handoffNew.start?.reviewed.choice.harness === 'claude-code'}
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}
-          doneToast={handoffNew.start ? '' : 'Ticket created'}
+          doneToast=""
           onSigning={setSigning}
-          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} /> : undefined}
+          onOpenExisting={ticketExists} // the same text is saved there: leaving for it must not ask to discard the draft
+          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} notice={handoffNew.start.notice} /> : undefined}
           onClose={() => {
             // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).
             const landed = partialKey.current
             partialKey.current = null
             setHandoffNew(null)
-            if (landed) { ticketExists(); after.noAccess(landed.key, landed.initial) }
+            if (landed) { ticketExists(); failMark(workspace.id, landed.key, NO_ACCESS, landed.initial); afterCreate(false, landed.key) }
           }}
-          onSettled={(phase, state, request) => {
+          onSettled={(phase, state, request, how) => {
             const ticketKey = ownKey(state, request)
-            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit)
+            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, { title: handoffNew.draft.title.trim(), type: handoffNew.draft.type }, state?.deposit, how, request?.id)
             const p = state?.progress
             if (handoffNew.start && ticketKey && p?.last === 'grant' && p.done === p.of - 1) {
               partialKey.current = { key: ticketKey, initial: initialOf(handoffNew.start) }
@@ -704,32 +746,6 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             }
           }}
         />
-      )}
-
-      {after.state.kind === 'ask' && (
-        <StartAgentDialog
-          ws={workspace.id}
-          ticket={after.state.key}
-          open
-          initial={after.state.initial}
-          onClose={() => { const k = after.state.kind === 'ask' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}
-        />
-      )}
-      {after.state.kind === 'no-access' && (
-        <Dialog open onOpenChange={(o) => { if (!o) { const k = after.state.kind === 'no-access' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) } }}>
-          <DialogContent data-testid="agent-no-access">
-            <DialogHeader>
-              <DialogTitle>Ticket created</DialogTitle>
-              <DialogDescription>
-                {after.state.key} exists. Agent access is not confirmed yet: the last signature has not arrived, so no agent was started. Start one now to give access, or open the ticket.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => { const k = after.state.kind === 'no-access' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}>Open the ticket</Button>
-              <Button onClick={() => { if (after.state.kind === 'no-access') after.ask(after.state.key, after.state.initial) }}>Start agent</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       )}
 
       <Dialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>

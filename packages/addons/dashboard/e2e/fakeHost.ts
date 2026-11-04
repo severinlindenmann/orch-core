@@ -1,18 +1,18 @@
+import onePressOps from '../../../../contracts/core/click_one_press_ops.json' with { type: 'json' }
 // A fake dashboard server for the browser spec of the Add-ons page (A10): it serves the production build (`dist/`) and answers
 // the dashboard server's /api routes from plain data, including the marketplace host ops (mocked: the Python side is G3's).
 // Every request is recorded in `calls`, so the spec can prove what the page asked for (the staged id in the hand-off) and that
 // nothing was signed by the page. The hand-off requests carry hashes that recompute, like the real server's.
 import fs from 'node:fs'
+import { orgHandle } from '../src/mocks/org'
 import http from 'node:http'
 import path from 'node:path'
-import { fingerprintOf, reviewDigestOf, type HandoffEvent, type HandoffRequest } from '../src/api/handoff'
 
 export const WS = 'a'.repeat(32)
 export const OWNER = 'p_' + 'a'.repeat(32)
 export const STAGE = 'ms_' + '1'.repeat(32)
 export const STAGE_UPDATE = 'ms_' + '2'.repeat(32)
 export const STAGE_WIDE = 'ms_' + '3'.repeat(32)
-export const CODE = '7F3K-Q2MA'
 
 export interface Call { method: string; path: string; body?: Record<string, any> }
 
@@ -72,24 +72,12 @@ export function stage(id: string, update: boolean) {
   return { ...base, stage: STAGE, name: id, version: '1.2.0', review: ['Connects to your Jira site', 'Uses your Jira token', 'Adds fields to tickets'], deps: { count: 3, verified: true }, update: null }
 }
 
-/** A hand-off request for `addon.grant` of a staged package, as the dashboard server would send it. */
-export function grantRequest(name: string, staged: string, serial: number): HandoffRequest {
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const event = { type: 'addon.granted', name, staged }
-  const events: HandoffEvent[] = [{ v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: OWNER, device: null }, auth: null, ...event } as unknown as HandoffEvent]
-  const { type, ...payload } = event
-  const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type, payload, derived: {} }] }
-  const digest = reviewDigestOf(material)
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'), code: CODE, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'), state: 'prepared', op: 'addon.grant', key: null,
-    fingerprint: fingerprintOf(digest, events, 'addon.grant'), review_digest: digest, gate_hash: null, material, events,
-    origin: { uid: 501, pid: 4312, client: 'orch-dashboard', created_at: new Date().toISOString() },
-  } as unknown as HandoffRequest
-}
-
 /** The signer's View of a market grant, as core renders it: the signed event line by line, then the marketplace block. */
 function clickView(name: string) {
   return {
+    // Contract 4 (C3): the signer's headline, and its risk line for the add-on's capability (a second press signs).
+    headline: `Install the add-on ${name}`,
+    risk_lines: onePressOps.includes('addon.grant') ? [] : [`The add-on ${name} can reach the network`],
     risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.', op: 'addon.grant',
     workspace: { id: WS, name: 'Dev workspace', prefix: 'DEMO' }, fingerprint: '5b9f4bcf5cca',
     lines: [
@@ -104,16 +92,23 @@ function clickView(name: string) {
 
 export class FakeServer {
   calls: Call[] = []
-  requests = new Map<string, HandoffRequest>()
-  /** Hand-off ids "signed in the terminal": the test flips this (the mocked human.submit). */
-  submitted = new Set<string>()
   installedNames = new Set<string>()
   server: http.Server
   port = 0
   /** One click switched on for the workspace (V3-D38): the page signs through /click/* instead of the terminal hand-off. */
   clickOn = false
+  /** The hub feature (the Hub and Company tabs) and the mock company offers behind it. */
+  hubOn = false
+  /** The Publish feature (Share files on a ticket), on or off. */
+  publishOn = false
   clickSigned = new Set<string>()
+  /** Settings switches (run 13 UE): Claude Code folder trust and the records timer. */
+  trustOn = false
+  historyOn = false
+  trustParent = ''
   clickRequests = new Map<string, { name: string; staged: string }>()
+  /** R2 T4: remote access (Settings > Devices), as the host would answer the closed view. */
+  remote: Record<string, any> = { on: false, level: null, until_ms: null, premises: null, off_reason: null, isolated: false, hub_mode: 'none', devices: [], pending: [], sessions: [] }
   constructor(private dist: string) {
     this.server = http.createServer((req, res) => void this.handle(req, res))
   }
@@ -123,8 +118,6 @@ export class FakeServer {
     return `http://127.0.0.1:${this.port}`
   }
   stop() { this.server.close() }
-  /** The mocked `human.submit`: the person approved in the terminal. */
-  signLast() { const id = [...this.requests.keys()].pop(); if (id) this.submitted.add(id) }
   posts = (suffix: string) => this.calls.filter((c) => c.method === 'POST' && c.path.endsWith(suffix))
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -150,12 +143,21 @@ export class FakeServer {
       return
     }
     if (p === '/api/host') return json({})
-    const features = this.clickOn ? [...FEATURES, 'click'] : FEATURES
-    if (p === '/api/session') return json({ features, workspaces: { [WS]: features } })
+    const features = [...FEATURES, 'remote', ...(this.clickOn ? ['click'] : []), ...(this.hubOn ? ['hub'] : []), ...(this.publishOn ? ['publish'] : [])]
+    if (p === '/api/session') return json({ features, login: 'local', workspaces: { [WS]: features } })
     if (p === '/api/workspaces') return json([{ id: WS, prefix: 'DEMO', name: 'Dev workspace', members: [{ person: OWNER, name: 'Sev', role: 'owner', devices: 1 }], needs_you: 0, host_state: 'ok', features, click: this.clickOn ? { custody: 'convenience', enabled: true, available: true, switchable: true } : null }])
     if (p === '/api/me') return json([{ person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS }])
     const m = /^\/api\/w\/[0-9a-f]{32}\/(.*)$/.exec(p)
     const rest = m?.[1] ?? ''
+    if (this.hubOn && rest.startsWith('org')) {
+      const reply = orgHandle(method, rest, url.searchParams, body)
+      if (reply) return json(reply.json, reply.status)
+    }
+    if (this.hubOn && rest === 'hub') return json({ mode: 'standalone', joined: false, hub_id: null, member: false, link: null, reachable: null, not_told: false, owed: 0, reseal_needed: false, key_change_pending: false, log_sync_stuck: false, groups: null, snapshot_version: null })
+    if (rest === 'remote' && method === 'GET') return json(this.remote)
+    if (rest === 'remote/code' && method === 'POST') return json({ code: 'orch-rc1.' + WS.slice(0, 8) + '.Zm9vYmFyYmF6cXV4.cHVibGljLWtleS1ieXRlcw', expires_ms: Date.now() + 900_000 })
+    if (rest === 'remote/off' && method === 'POST') { this.remote = { ...this.remote, on: false, devices: [], pending: [] }; return json({ changed: true }) }
+    if (/^remote\/devices\/rd_[0-9a-f]{32}\/remove$/.test(rest) && method === 'POST') { this.remote = { ...this.remote, devices: [] }; return json({ removed: true }) }
     if (rest === 'market' && method === 'GET') {
       const l = marketList() // a package whose grant was signed shows as installed (Off until turned on)
       for (const m of l.markets) for (const a of m.addons) if (this.installedNames.has(a.id) && !a.installed) a.installed = { version: a.version, state: 'disabled' }
@@ -165,18 +167,6 @@ export class FakeServer {
     if (rest === 'market/stage' && method === 'POST') return json(stage(String(body?.id), !!body?.update))
     if (rest.startsWith('market/stage/') && method === 'DELETE') return json({ removed: true })
     if (rest === 'market/uninstall' && method === 'POST') return json({ name: body?.name, removed: true })
-    if (rest === 'handoff' && method === 'POST') {
-      const r = grantRequest(String(body?.name), String(body?.staged), this.requests.size + 1)
-      this.requests.set(r.id, r)
-      return json(r)
-    }
-    const h = /^handoff\/(hr_[0-9A-Z]+)$/.exec(rest)
-    if (h && method === 'GET') {
-      const r = this.requests.get(h[1]); const signed = this.submitted.has(h[1])
-      if (signed) this.installedNames.add(String((r?.events[0] as any)?.name))
-      return r ? json({ id: r.id, state: signed ? 'submitted' : 'prepared', op: r.op, key: null, expires_at: r.expires_at, event_ids: signed ? ['01J9ZP0000000000000000SIGN'] : [], seq: signed ? 7 : null }) : json({ ok: false, error: { code: 'not_found', message: 'x', retryable: false } }, 404)
-    }
-    if (h && method === 'DELETE') return json({ id: h[1], state: 'cancelled' })
     if (rest === 'click/prepare' && method === 'POST' && this.clickOn) {
       const id = 'hr_' + '0'.repeat(22) + String(this.clickRequests.size + 1).padStart(4, '0')
       this.clickRequests.set(id, { name: String(body?.name), staged: String(body?.staged) })
@@ -191,9 +181,13 @@ export class FakeServer {
       if (c[1] === 'cancel') return json({ id: rid, state: 'cancelled' })
       return json({ id: rid, state: this.clickSigned.has(rid) ? 'submitted' : 'prepared' })
     }
-    if (rest === 'me/sign_default') return json(this.clickOn ? { method: 'click', is_default: true, allowed: ['terminal', 'click'] } : { method: 'terminal', is_default: true, allowed: ['terminal'] })
     if (rest === 'identity') return json({ uuid: WS, prefix: 'DEMO', genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS } })
-    if (rest === 'settings') return json({ gates: {}, sign_methods: this.clickOn ? ['terminal', 'click'] : ['terminal'], grant_hours: 8, claim_ttl_min: 60, lease_ttl_min: 60 })
+    if (rest === 'settings') return json({ gates: {}, grant_hours: 8, claim_ttl_min: 60, lease_ttl_min: 60 })
+    if (rest === 'claude-trust' && method === 'GET') return json({ available: true, on: this.trustOn, offered: !this.trustParent, why_not: this.trustParent ? 'A folder above this one has its own Claude Code settings.' : '', parent_config: this.trustParent })
+    if (rest === 'claude-trust' && method === 'POST') { this.trustOn = true; return json({ on: true }) }
+    if (rest === 'records' && method === 'GET') return json({ available: true, configured: true, repo: { state: 'ok', problem: null, problem_hidden: false }, pending: null, last: null, last_noted: null, auto: this.historyOn ? { on: true, every_min: 15, push: false } : null, remote: null })
+    if (rest === 'records/auto-on' && method === 'POST') { this.historyOn = true; return json({ ok: true }) }
+    if (rest === 'records/auto-off' && method === 'POST') { this.historyOn = false; return json({ ok: true }) }
     if (rest === 'members') return json([{ person: OWNER, name: 'Sev', role: 'owner', devices: [] }])
     if (rest === 'today') return json(fixture('today.json'))
     if (rest === 'board' || rest === 'tickets') return json({ ...fixture('board-page.json'), next_page: null })

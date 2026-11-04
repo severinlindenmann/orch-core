@@ -11,6 +11,9 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 }
 Element.prototype.scrollIntoView ??= () => {}
+// Radix Select (components/pickers/Dropdown) asks the pressed element about pointer capture; jsdom has none.
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.releasePointerCapture ??= () => {}
 
 // Cold first renders (route chunks, jsdom warm-up) can exceed the 1 s default when the machine is loaded.
 configure({ asyncUtilTimeout: 4000 })

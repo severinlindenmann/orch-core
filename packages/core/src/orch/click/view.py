@@ -1,5 +1,5 @@
 """The View the dashboard shows (orch-v2-host §0.8.6 item 5): built by the signer, after every §0.8.1 check, from the
-host's answer only; ``lines`` is the terminal review of ``orch sign``, line for line (same escaping)."""
+host's answer only; ``lines`` is the terminal review of the CLI signer, line for line (same escaping)."""
 
 from __future__ import annotations
 
@@ -26,8 +26,11 @@ from .protocol import (
     RUNNER_LINE,
     RUNNER_OFF_LINE,
     SEALED_OPS,
+    headline,
+    headline_detail,
     op_class,
     refused,
+    risk_lines,
 )
 
 __all__ = [
@@ -155,7 +158,7 @@ def check_prepared(
     except signer.SignerRefused as exc:
         raise refused("check_failed", str(exc)) from None
     if (prepared.get("op") in SEALED_OPS) != sealed_op:  # a hub step is a click only together with its sealed key
-        raise refused("terminal_only", f"{prepared.get('op')} is signed in the terminal (orch sign CODE)")
+        raise refused("terminal_only", f"{prepared.get('op')} is signed in the terminal")
     if deposit:
         deposit_checks(prepared)
         kind = "click"
@@ -165,7 +168,7 @@ def check_prepared(
     else:
         kind = op_class(str(prepared["op"]), events)
         if kind == "terminal" or any(e.get("type") == "grant.issued" for e in events):
-            raise refused("terminal_only", f"{prepared['op']} is signed in the terminal (orch sign CODE)")
+            raise refused("terminal_only", f"{prepared['op']} is signed in the terminal")
     for c in prepared.get("checks") or []:
         if c.get("clean") is not True or c.get("attested_by") != "worker":
             raise refused("check_failed", "a worker check is not clean")
@@ -190,7 +193,10 @@ def build(
     ``reveal_line``, which its ``lines`` end with; ``view_digest`` covers both.
     ``seal_in`` ``(pk, purposes)`` (#1198 C10):
     an op that asks for a typed secret (the hub backup key) carries ``seal`` with the signer's per-request public key
-    and exactly those purposes (sealed-field contract section 7), and ``backup_key_line`` in ``lines``."""
+    and exactly those purposes (sealed-field contract section 7), and ``backup_key_line`` in ``lines``.
+    Contract 4: every View has ``headline`` (the op's title and the ticket key: signer words only), ``headline_detail``
+    (the ticket's title, capped and quoted, or ``None``) and ``risk_lines`` (``[]`` only for
+    :data:`~orch.click.protocol.ONE_PRESS_OPS`, never empty otherwise); ``view_digest`` covers all three."""
     known = workspace(prepared["workspace_id"])
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")
@@ -225,6 +231,71 @@ def build(
         "device": device,
         "artifacts": artifacts,
     }
+    # contract 4 (run 13 C3): the signer marks the risk lines itself, from its closed table and the signed events only;
+    # `risk` stays the generic convenience note of every View. Both new fields are in `view_digest`.
+    # the headline is the signer's words and the (format-checked) ticket key only; the ticket's title, free text, goes
+    # capped and quoted to `headline_detail` (never the plain view's own headline, which embeds that text)
+    ticket = prepared["material"].get("ticket") if isinstance(prepared.get("material"), Mapping) else None
+    ticket = ticket if isinstance(ticket, Mapping) else {}
+    shown_ticket = content.get("ticket") if content is not None else None
+    key = shown_ticket.get("key") if isinstance(shown_ticket, Mapping) else None
+    if key is not None and key != ticket.get("key"):
+        raise refused("check_failed", "the headline ticket differs from the verified content")
+    for event in prepared.get("events") or []:
+        if event.get("type") == "ticket.created":
+            if event.get("key") != ticket.get("key") or (key is not None and event.get("key") != key):
+                raise refused("check_failed", "the headline ticket differs from the signed event")
+            key = event.get("key")
+    view["headline"] = headline(str(prepared["op"]), key)
+    view["headline_detail"] = headline_detail(shown_ticket.get("title") if isinstance(shown_ticket, Mapping) else None)
+    seq = prepared.get("material", {}).get("sequence")
+    risk_prepared = prepared
+    if seq is not None and seq["intent"]["kind"] == "addon_enable":
+        from orch.host import sequence
+
+        risk_prepared = sequence.expand(prepared)
+    view["risk_lines"] = risk_lines(
+        str(prepared["op"]), list(risk_prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
+    )
+    if seq and seq["intent"]["kind"] == "addon_enable":
+        view["headline"] = "Install and turn on add-on" if seq["intent"].get("staged") else "Turn on add-on"
+        view["risk_lines"] = risk_lines("addon.grant", list(risk_prepared["events"]))
+    meta = seq  # (D3 reads it above, with the expanded events)
+    if meta and meta["intent"]["kind"] != "addon_enable":
+        from orch.host import sequence
+
+        intent = sequence.validate_intent(meta["intent"])
+        # V2 payloads are the exact events check_step requires before each signature. The first
+        # prepared request only carries `new`; risk must cover the later signed grant too.
+        events = [
+            sequence.expected_payload(intent, k, prepared["events"][0]["actor"]["id"])
+            for k in range(len(sequence.steps(intent)))
+        ]
+        if intent["kind"] == sequence.GATES:
+            view["headline"] = headline("approve_gates", ticket.get("key"))  # the signer's words and the key only
+        if sequence.has_grant(intent):
+            view["op"] = "grant"
+            view["confirm"]["mode"] = "press"
+            view["headline"] = headline("grant", ticket.get("key"))
+        view["risk_lines"] = list(
+            dict.fromkeys(
+                line
+                for step, event in zip(sequence.steps(intent), events, strict=True)
+                for line in risk_lines(step["op"], [event], deposit=step["op"] == "grant")
+            )
+        )
+        if intent.get("launch"):
+            view["headline"] = "Create ticket and start agent"
+            until = prepared["material"].get("agent_access_until")
+            if until and not intent.get("agent"):
+                from datetime import datetime
+
+                clock = datetime.fromisoformat(until.replace("Z", "+00:00")).astimezone().strftime("%H:%M")
+                view["info_lines"] = [f"Uses your current agent access until {clock}"]
+    if prepared["op"] == "schedule.add":
+        # run 13: the schedule's own risk is a line of the review (FIRST: the review shows `lines` in a short scroll
+        # box and the consequence must be read before the rule's details); `risk` stays the convenience notice
+        view["lines"] = [*view["risk_lines"], "No click or confirmation is required at firing time.", *view["lines"]]
     if deposit:
         deposit_checks(prepared)
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
@@ -248,7 +319,7 @@ def build(
         view["seal"] = {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(purposes)}
         view["backup_key_line"] = BACKUP_KEY_LINE
     if content is not None:
-        view["headline"], view["content"] = content["headline"], content
+        view["content"] = content
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:
         raise refused("terminal_only", "the review is too large for the dashboard; use the terminal")
     return view
@@ -261,12 +332,19 @@ def digest(view: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canon.dumps(stable)).hexdigest()
 
 
+def workspace_label(workspace: Mapping[str, str]) -> str:
+    """The workspace as a review names it: the unsigned name (D6: an owner may change it at any time, nothing signs
+    it) never alone, always with the prefix and the last eight of the id (``Acme (DEMO · 1a2b3c4d)``)."""
+    wid = signer._clean(workspace.get("id") or "")
+    return f"{signer._clean(workspace['name'])} ({signer._clean(workspace.get('prefix') or '')} · {wid[-8:]})"
+
+
 def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> dict[str, Any]:
     """#1198 C13: the review of ``device.rotate`` from the dashboard: what is replaced (this computer's key, old and new
     device id, as the terminal shows them), and the signer's per-offer key for the two typed secrets (the recovery code
     and the passphrase of the new key file). No event exists yet: the new key signs it after the secrets are opened."""
     lines = [
-        f"Replace the signing key of this computer for {signer._clean(workspace['name'])}.",
+        f"Replace the signing key of this computer for {workspace_label(workspace)}.",
         "The old key stops signing everywhere, also while a hub is down. The new key is signed by your recovery code "
         "for this workspace only; nothing is re-shared with a hub.",
         f"old device: {old}",
@@ -279,6 +357,9 @@ def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> di
         "old": old,
         "new": new,
         "lines": lines,
+        "headline": headline(ROTATE_OP),
+        "headline_detail": None,
+        "risk_lines": risk_lines(ROTATE_OP),  # contract 4: replacing the key is marked
         "confirm": {"kind": "click"},
         "seal": {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(ROTATE_PURPOSES)},
         "rotate_line": ROTATE_LINE,
@@ -288,7 +369,7 @@ def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> di
 def runner_switch(*, workspace: Mapping[str, str], on: bool, terminals: bool, text: str) -> dict[str, Any]:
     """#1198 C14: the review of dashboard execution on or off, from core's own words (``enablement.risk_text``: the
     terminal shows the same). The page shows ``lines``; the signer acts only on this View's digest."""
-    name = signer._clean(workspace["name"])
+    name = workspace_label(workspace)
     if on:
         rest = [x.strip() for x in text.splitlines()[1:] if x.strip()]
         lines = [f"Turn on dashboard execution for {name}.", RUNNER_LINE, *rest]

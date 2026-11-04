@@ -17,7 +17,9 @@ errors:
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
   reader.decl_invalid (exit 3): make a new one with the reader's own orch (orch keys reader declare) | fix: orch help
   role.denied (exit 3): ask an owner or maintainer | fix: orch status
+  sign.cancelled (exit 3): run it again to review | fix: orch help
   sign.convenience_readers (exit 3): pass the reader's declaration (orch keys reader declare --enrol, then --reader-decl PATH) | fix: orch help
+  tty.required (exit 3): run it in your terminal | fix: orch help
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.json (exit 6): orch describe member.add
   parse.text (exit 6): orch describe member.add

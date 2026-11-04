@@ -34,7 +34,14 @@ def test_browser_sign_in_sets_http_only_strict_cookie_and_no_token_in_body(w):
     assert c.startswith("__Host-orch_hub_session=") and "HttpOnly" in c and "SameSite=Strict" in c and "Secure" in c
     token = c.split(";")[0].split("=", 1)[1]
     s, me, _ = w.call("GET", "/session", token=token, cookie=True)
-    assert s == 200 and me == {"user_id": w.ann, "name": "ann", "is_admin": False}
+    assert s == 200 and me == {
+        "user_id": w.ann,
+        "name": "ann",
+        "is_admin": False,
+        "needs_sign_in": False,
+        "company_login": False,
+        "recovery": None,
+    }
 
 
 def test_app_sign_in_returns_token_and_bearer_works_without_origin(w):
@@ -194,7 +201,7 @@ def test_needs_you_reports_offline_and_unavailable(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann, status="unbound")
     w.api.d.view = None
     _, o, _ = w.call("GET", "/me/needs-you", token=w.login(w.ann))
-    assert o == {"items": [], "offline": [WS_SEL], "unavailable": [WS]}
+    assert o == {"items": [], "offline": [WS_SEL], "unavailable": [WS], "queued": []}
 
 
 def test_item_detail_full_selective_and_not_a_member(w):
@@ -274,9 +281,9 @@ def test_selective_items_carry_chain_f1_and_are_signable_for_the_owner_alias(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann)
     one, two, none = "11" * 16, "22" * 16, "33" * 16
     w.shares.items[(w.ann, WS_SEL)] = [
-        shared_item(one, "ticket", chain=_CHAIN, f1=_f1()),
-        shared_item(two, "ticket", chain=_CHAIN, f1=_f1(("plan",), ("Q1",))),
-        shared_item(none, "ticket", chain=_CHAIN, f1=_f1(())),
+        shared_item(one, "question", chain=_CHAIN, f1=_f1()),
+        shared_item(two, "question", chain=_CHAIN, f1=_f1(("plan",), ("Q1",))),
+        shared_item(none, "question", chain=_CHAIN, f1=_f1(())),
     ]
     ann = w.login(w.ann)
     _, o, _ = w.call("GET", "/me/needs-you", token=ann)
@@ -291,9 +298,9 @@ def test_selective_items_carry_chain_f1_and_are_signable_for_the_owner_alias(w):
 def test_selective_summary_and_item_without_f1_are_never_signable(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann)
     w.shares.items[(w.ann, WS_SEL)] = [
-        shared_item("11" * 16, "needs_you", chain=_CHAIN, f1=_f1()),  # even a summary carrying f1
-        shared_item("22" * 16, "ticket", chain=_CHAIN),  # no f1: the hub cannot build on it
-        shared_item("33" * 16, "ticket", chain={**_CHAIN, "log": "workspace"}, f1=_f1()),
+        shared_item("11" * 16, "needs_you", "A summary", chain=_CHAIN, f1=_f1()),  # even a summary carrying f1
+        shared_item("22" * 16, "question", chain=_CHAIN),  # no f1: the hub cannot build on it
+        shared_item("33" * 16, "question", chain={**_CHAIN, "log": "workspace"}, f1=_f1()),
     ]
     _, o, _ = w.call("GET", "/me/needs-you", token=w.login(w.ann))
     assert [i["signable"] for i in o["items"]] == [False, False, False]
@@ -302,7 +309,7 @@ def test_selective_summary_and_item_without_f1_are_never_signable(w):
 
 def test_selective_chain_f1_only_for_the_owner_alias(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann)
-    w.shares.items[(w.ann, WS_SEL)] = [shared_item("11" * 16, "ticket", chain=_CHAIN, f1=_f1())]
+    w.shares.items[(w.ann, WS_SEL)] = [shared_item("11" * 16, "question", chain=_CHAIN, f1=_f1())]
     bob = w.login(w.env.user("bob"))
     _, o, _ = w.call("GET", "/me/needs-you", token=bob)
     assert o["items"] == []
@@ -316,3 +323,51 @@ def test_web_server_accept_queue_holds_a_burst():
     from orch_hub.webapi.server import _BoundedServer
 
     assert _BoundedServer.request_queue_size >= 128  # the Admin page opens 7 connections at once
+
+
+def test_sign_in_by_name_or_id_and_wrong_names_are_generic(w):
+    """Run-11 #10/#11: the setup name signs in too; unknown ids and names are bad_credentials, never malformed."""
+    s, o, _ = w.call(
+        "POST", "/session", {**sign_in_body(w, w.ann), "user_id": "Ann"}
+    )  # the name chosen at setup, any case
+    assert s == 200 and o["user_id"] == w.ann
+    for who in ("nobody", "zz" * 16, "abc"):
+        s, o, _ = w.call(
+            "POST", "/session", {"user_id": who, "password": "x" * 12, "totp": "000000", "client": "app"}, origin=None
+        )
+        assert (s, o) == (401, {"error": "bad_credentials"}), who
+
+
+def test_shared_name_signs_in_the_matching_user_and_reveals_nothing(w):
+    other = w.env.user("ann")
+    assert other != w.ann
+    bad = {"user_id": "ann", "password": "x" * 12, "totp": "000000", "client": "app"}
+    s, o, _ = w.call("POST", "/session", bad, origin=None)
+    assert (s, o) == (401, {"error": "bad_credentials"})  # same answer as an unknown name
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app") | {"user_id": "ann"}, origin=None)
+    assert s == 200 and o["user_id"] == w.ann
+
+
+def test_unknown_name_is_charged_to_the_limiter(w):
+    codes = []
+    for i in range(25):
+        s, _o, _ = w.call(
+            "POST",
+            "/session",
+            {"user_id": f"ghost{i}", "password": "x" * 12, "totp": "000000", "client": "app"},
+            origin=None,
+        )
+        codes.append(s)
+    assert 429 in codes  # guessing names cannot bypass the per-source cap
+
+
+def test_unknown_and_shared_names_count_against_the_network_limit(w):
+    """Run-11: 0 or 2+ candidates never get the known-source exemption; many sources in one /24 hit the aggregate."""
+
+    def spray(name, net, n=230):
+        bad = {"user_id": name, "password": "x" * 12, "totp": "000000", "client": "app"}
+        return [w.call("POST", "/session", bad, origin=None, peer=f"10.{net}.1.{i % 250 + 1}")[0] for i in range(n)]
+
+    assert 429 in spray("ghost", 1)  # zero candidates: counted
+    w.env.user("ann")  # now "ann" names two users
+    assert 429 in spray("ann", 2)

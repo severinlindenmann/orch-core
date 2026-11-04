@@ -1,6 +1,7 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
+import * as gesture from '@/components/sign/trustedPress'
 import board from '@/test/fixtures/server-m2/board-page.json'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
 import { DO, READS, show, useFakeHost, workspace } from '@/test/hostHarness'
@@ -22,7 +23,7 @@ const rows = [
   row('DEMO-0014', { parent: 'DEMO-0010', size: 'xs', status: 'closed' }), // won't do: not counted
   row('DEMO-0020', { size: 's' }), // 2, no epic
 ]
-const state = useFakeHost(() => [workspace({ id: ID, features: [...READS, ...DO, 'actions', 'estimate'] })])
+const state = useFakeHost(() => [workspace({ id: ID, features: [...READS, ...DO, 'actions', 'estimate', 'click'], click: { custody: 'convenience', enabled: true, available: true } })])
 const serve = (extra: Record<string, unknown> = {}) => {
   state.host.override = (path, method) => {
     if (method !== 'GET') return undefined
@@ -35,6 +36,7 @@ const serve = (extra: Record<string, unknown> = {}) => {
 }
 afterEach(() => {
   state.host.override = undefined
+  vi.restoreAllMocks()
 })
 
 it('the board shows points on cards, a sum per column and an epic lane that says how many are not estimated', async () => {
@@ -89,10 +91,14 @@ it('the ticket shows its points and picking another one asks for one signed size
   expect(box).toHaveTextContent('Choose a value to review and approve the change.')
   await user.click(within(box).getByRole('button', { name: '5 points' }))
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Estimate DEMO-0001')
   expect(dialog).toHaveTextContent('5 points')
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'details', key: 'DEMO-0001', size: 'l', via: 'estimate' }])
+  expect(state.host.clickPrepares()).toEqual([]) // the synthetic press grants no intent: the outcome button prepares
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) // fireEvent is untrusted: stand in for a real press of the outcome button
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Estimate DEMO-0001' }))
+  await within(dialog).findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'details', key: 'DEMO-0001', size: 'l', via: 'estimate' }])
+  expect(state.host.posts()).toEqual([])
 })
 
 it('G2: the box warns before choosing when approvals exist, and says nothing when none do', async () => {

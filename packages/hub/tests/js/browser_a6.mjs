@@ -38,7 +38,6 @@ try {
   await page.getByRole("heading", { name: "My workspaces" }).waitFor();
   await page.getByRole("heading", { name: "Where you can sign" }).waitFor();
   await page.getByText("CSV or API?").first().waitFor();
-  assert(await page.getByText("Hub can read everything").first().isVisible(), "full workspace plain line");
   assert((await page.getByRole("button", { name: /^Approve/ }).count()) === 0, "no direct Approve on the home");
   assert((await page.getByRole("button", { name: "Review" }).count()) >= 1, "Review button on the needs-you row");
   await shot("home");
@@ -46,13 +45,14 @@ try {
   // admin console
   await page.getByRole("link", { name: "Admin" }).click();
   await page.getByRole("heading", { name: "Admin" }).waitFor();
-  await page.getByText("Groups managed here; external sync not configured").waitFor();
   await page.getByRole("heading", { name: "People & groups" }).waitFor();
   await page.getByText(/^Adding .* to .* gives /).first().waitFor();
   await shot("admin-people");
   for (const [tab, heading] of [["Access", "Access"], ["Workspaces", "Workspaces"], ["Marketplaces", "Marketplaces"], ["Audit", "Audit"]]) {
     await page.getByRole("tab", { name: tab }).click();
     await page.getByRole("heading", { name: heading, exact: true }).waitFor();
+    // the plain "what the hub can read" line lives on the admin Workspaces tab since the P11 home no longer repeats it
+    if (tab === "Workspaces") assert(await page.getByText("Hub can read everything").first().isVisible(), "full workspace plain line");
     await shot("admin-" + tab.toLowerCase());
   }
   // D14: the hub marketplace policy (one draft, one Save; every write is the whole object with its base version)
@@ -108,8 +108,8 @@ try {
   await blockBox.fill("wiki@1.0.0 mine");
   await asB((o) => o.getByLabel("Blocked add-ons").fill("notes wiki@1.0.0"));  // version 4
   await page.getByRole("tab", { name: "People & groups" }).click();
-  await page.getByLabel("Name", { exact: true }).fill("Kim");
-  await page.getByRole("button", { name: "Add person" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("interns");
+  await page.getByRole("button", { name: "Create group" }).click();
   await page.getByText("Saved", { exact: true }).waitFor();
   await page.getByRole("tab", { name: "Marketplaces" }).click();
   await page.getByText(/changed elsewhere \(now version 4\)/).waitFor();
@@ -141,12 +141,11 @@ try {
   await page.getByText("Rules version 8.").waitFor();
   assert((await page.getByRole("article").count()) === 1, "only the official marketplace is left");
   await shot("admin-marketplaces-saved");
-  // add a person, then remove them with the two-step button
+  // invite a person: the admin gets a link to hand over, never a password or a code
   await page.getByRole("tab", { name: "People & groups" }).click();
-  await page.getByLabel("Name", { exact: true }).fill("Jonas");
-  await page.getByRole("button", { name: "Add person" }).click();
-  await page.getByText("Saved", { exact: true }).waitFor();
-  await page.locator("b", { hasText: "Jonas" }).first().waitFor();
+  await page.getByLabel("Their name", { exact: true }).fill("Jonas");
+  await page.getByRole("button", { name: "Invite a person" }).click();
+  await page.getByText(/you will not see them/).waitFor();
 
   assert(problems.length === 0, "CSP/Trusted Types violations: " + problems.join(" | "));
   console.log("A6 browser: ok");

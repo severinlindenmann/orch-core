@@ -39,12 +39,15 @@ export interface Run {
   exit: RunExit | null
   /** M7b, agents: `ended` once the runner grant ended (the host refuses its writes; Stop is offered). Not a run state. */
   grant_state?: 'ok' | 'ended' | null
+  /** W00, agents: has this run's session made any host call yet (absent from an older host: unknown) */
+  contacted?: boolean
   subagent_model?: string | null
   /** Focus mode: the run a person delegated this one from (a child task), else null. The main session has none. */
   parent_run?: string | null
 }
 
 export interface RunnerInfo {
+  now?: string
   connected: boolean
   enabled: boolean
   terminals: boolean

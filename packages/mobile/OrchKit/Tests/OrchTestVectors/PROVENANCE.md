@@ -11,7 +11,7 @@ repository root, so a change to a vector is one commit that every consumer sees 
 | reader known-answer test (`reader_kat_1.json`) | `packages/core/src/orch/identity/` (ships in core's wheel) | core |
 | R2 framing vectors (`r2_framing.json`; also the source of `PhoneRetryTableGenerated.swift`) | `contracts/core/r2_framing.json` | core |
 | Unicode 16 tables (source of `Unicode16Data.swift`) | `packages/core/src/orch/canon/_unicode16.py` | core |
-| `reader_decl_vectors.json` | this folder (a trimmed, derived extract of the relay vectors' `reader_decl` group, H12d) | phone |
+| relay `reader_decl` group (H12d) | `contracts/relay/vectors_v2.json`, suite 2 (read whole; there is no trimmed copy any more) | relay |
 
 Regenerate the generated Swift files from the repository root:
 `python3 packages/mobile/OrchKit/Scripts/gen_retry_table.py` and

@@ -7,7 +7,9 @@ import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { cleanupDoubt, exitText, newIdem, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
+import { queries } from '@/api/queries'
+import { agentFinished } from '@/app/pages/ticket/progress'
+import { cleanupDoubt, exitText, runQueries, runsApi, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
@@ -16,6 +18,8 @@ import { fmtDateTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { PreviewDialog } from '@/app/terminal/real/PreviewDialog'
+import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { useOpenTerminal } from '@/app/terminal/real/useOpenTerminal'
 import { runName } from '@/app/terminal/real/runName'
 import { openDockOn } from '@/app/terminal/dock/request'
 import { useWorkspace } from '@/app/workspace'
@@ -25,15 +29,15 @@ const kindText = (r: Run) => (r.kind === 'agent' ? 'Agent' : 'Terminal')
 /** Who may type right now: the write lease is held by one tab or device; every other viewer reads. */
 const controlText = (r: Run) => (!live(r) ? '' : r.writer ? 'Controlled' : 'Read only')
 
-function Row({ r, onStop, doubt }: { r: Run; onStop: (r: Run) => void; doubt: boolean }) {
+function Row({ r, onStop, doubt, finished }: { r: Run; onStop: (r: Run) => void; doubt: boolean; finished: boolean }) {
   const name = r.label ? <Inline>{r.label}</Inline> : runName(r)
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-[13px]" data-run={r.run} data-state={live(r) ? 'live' : 'ended'}>
-      <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', live(r) ? 'bg-success' : 'bg-text-faint')} />
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-[13px]" data-run={r.run} data-state={live(r) ? 'live' : 'ended'} data-finished={finished ? 'true' : undefined}>
+      <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', live(r) && !finished ? 'bg-success' : 'bg-text-faint')} />
       <span className="min-w-0 flex-1 basis-48">
         <span className="block truncate font-medium">{name}</span>
         <span className="block text-[12px] text-text-muted">
-          {kindText(r)} · started {fmtDateTime(r.started_at)}
+          {kindText(r)} · started {fmtDateTime(r.started_at)}{finished ? ' · Ticket is done' : ''}
           {doubt ? ' · some processes may still be running' : ''}
         </span>
         {!live(r) && exitText(r) && <span className="block text-[12px] text-text-muted" data-testid="run-exit">{exitText(r)}</span>}
@@ -43,15 +47,15 @@ function Row({ r, onStop, doubt }: { r: Run; onStop: (r: Run) => void; doubt: bo
           {r.ticket}
         </Link>
       )}
-      <span className={cn('rounded-full border px-2 py-px text-[11px]', live(r) ? 'border-success/50 text-success' : 'border-border text-text-muted')}>{live(r) ? 'Live' : 'Ended'}</span>
-      <span className="w-24 text-[12px] text-text-muted">{controlText(r)}</span>
+      <span className={cn('rounded-full border px-2 py-px text-[11px]', live(r) && !finished ? 'border-success/50 text-success' : 'border-border text-text-muted')}>{finished ? 'Finished' : live(r) ? 'Live' : 'Ended'}</span>
+      <span className="w-24 text-[12px] text-text-muted">{finished ? '' : controlText(r)}</span>
       <span className="flex gap-1">
         <Button size="sm" variant="outline" className="h-7 text-[12px]" aria-label={`Open ${runName(r)}`} onClick={() => openDockOn(r.run)}>
           Open
         </Button>
         {live(r) && (
-          <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Stop ${runName(r)}`} onClick={() => onStop(r)}>
-            Stop
+          <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`${finished ? 'Close' : 'Stop'} ${runName(r)}`} onClick={() => onStop(r)}>
+            {finished ? 'Close' : 'Stop'}
           </Button>
         )}
       </span>
@@ -60,23 +64,27 @@ function Row({ r, onStop, doubt }: { r: Run; onStop: (r: Run) => void; doubt: bo
 }
 
 export function TerminalsPage() {
-  usePageHeader('Terminals')
+  usePageHeader('Command window')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const qc = useQueryClient()
   const served = !!ws && hasFeature('terminals_page', ws)
   const list = useQuery({ ...runQueries.list(ws ?? ''), enabled: served })
+  // Same tickets list the rest of the dashboard reads; while it loads, a row keeps showing what the process does.
+  const tickets = useQuery({ ...queries.ticketsAll(ws ?? ''), enabled: served })
+  const statusOf = new Map((tickets.data ?? []).map((t) => [t.key, t.status]))
   const [error, setError] = useState('')
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
-  const [preview, setPreview] = useState<{ data: TermPreview | null; error: string; idem: string } | null>(null)
-  const [busy, setBusy] = useState(false)
+  const terminal = useOpenTerminal(ws ?? '')
+  const [starting, setStarting] = useState(false)
   if (!workspace || !ws) return null
+  const agents = hasFeature('agent_start', ws)
   if (!served) {
     return (
       <div className="max-w-2xl space-y-2">
-        <h1 className="text-xl font-semibold tracking-tight">Terminals</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Command window</h1>
         <p data-testid="terminals-unavailable" className="text-[13px] text-text-muted">
-          Terminals are switched off in this workspace, so there is nothing to list here. Switch them on in Settings, under Add-ons.
+          Command window is switched off in this workspace, so there is nothing to list here. Switch it on in Settings, under Add-ons.
         </p>
       </div>
     )
@@ -84,30 +92,7 @@ export function TerminalsPage() {
   if (list.isError) return <LoadFailed what="terminals" onRetry={() => void list.refetch()} />
   const runs = (list.data?.runs ?? []).filter((r) => r.kind === 'shell' || r.kind === 'agent')
   const off = list.data?.runner && (!list.data.runner.enabled || !list.data.runner.terminals)
-  const ask = async () => {
-    setPreview({ data: null, error: '', idem: newIdem() })
-    try {
-      const data = await runsApi.preview(ws, {})
-      setPreview((p) => (p ? { ...p, data } : p))
-    } catch (e) {
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    }
-  }
-  const confirm = async () => {
-    if (!preview?.data || preview.data.blocked) return
-    setBusy(true)
-    try {
-      const { run } = await runsApi.open(ws, {}, preview.data.spec, preview.idem)
-      setPreview(null)
-      void qc.invalidateQueries({ queryKey: ['runs', ws] })
-      openDockOn(run.run)
-    } catch (e) {
-      // The same idem is kept: a retry of this confirmation returns the same run, never a second one.
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const ask = () => terminal.ask({})
   const stop = async (r: Run) => {
     setError('')
     try {
@@ -121,8 +106,14 @@ export function TerminalsPage() {
   return (
     <div className="w-full max-w-4xl space-y-4" data-terminals-page>
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold tracking-tight">Terminals</h1>
-        <Button size="sm" className="ml-auto" onClick={() => void ask()}>
+        <h1 className="text-xl font-semibold tracking-tight">Command window</h1>
+        {/* Run 12a owner feedback: starting an agent is the main thing people come here for; a plain terminal is second. */}
+        {agents && (
+          <Button size="sm" className="ml-auto" data-testid="terminals-start-agent" onClick={() => setStarting(true)}>
+            <Plus /> Start agent
+          </Button>
+        )}
+        <Button size="sm" variant={agents ? 'outline' : 'default'} className={agents ? '' : 'ml-auto'} onClick={() => void ask()}>
           <Plus /> New terminal
         </Button>
       </div>
@@ -131,7 +122,7 @@ export function TerminalsPage() {
       </p>
       {off && (
         <div role="status" className="flex flex-wrap items-center gap-2 text-[13px] text-text-muted">
-          Terminals are switched off for this workspace on this machine.
+          Command window is switched off for this workspace on this machine.
           <RunnerSwitch ws={ws} on initialTerminals testId="terminals-runner" variant="secondary" />
         </div>
       )}
@@ -146,16 +137,29 @@ export function TerminalsPage() {
         </p>
       ) : runs.length === 0 ? (
         <p data-testid="terminals-empty" className="text-[13px] text-text-muted">
-          No terminal is open. Start one with New terminal.
+          {agents ? 'Nothing is running. Start an agent, or open a terminal with New terminal.' : 'No terminal is open. Start one with New terminal.'}
         </p>
       ) : (
-        <ul aria-label="Terminals" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
+        <ul aria-label="Command window" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {runs.map((r) => (
-            <Row key={r.run} r={r} onStop={(x) => void stop(x)} doubt={!!doubt[r.run] || (!!r.exit && cleanupDoubt(r.exit.cleanup))} />
+            <Row key={r.run} r={r} onStop={(x) => void stop(x)} finished={agentFinished(r, r.ticket ? statusOf.get(r.ticket) : null)} doubt={!!doubt[r.run] || (!!r.exit && cleanupDoubt(r.exit.cleanup))} />
           ))}
         </ul>
       )}
-      <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
+      <PreviewDialog {...terminal} />
+      {agents && (
+        <StartAgentDialog
+          ws={ws}
+          open={starting}
+          choose
+          onClose={() => setStarting(false)}
+          onStarted={(run) => {
+            setStarting(false)
+            void qc.invalidateQueries({ queryKey: ['runs', ws] })
+            openDockOn(run.run)
+          }}
+        />
+      )}
     </div>
   )
 }

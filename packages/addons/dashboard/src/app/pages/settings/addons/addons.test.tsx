@@ -144,3 +144,21 @@ describe('Grant dialog says each thing once', () => {
     expect(within(dialog).getByRole('button', { name: 'Copy hash' })).toBeInTheDocument()
   })
 })
+
+describe('Grant dialog reads out the events an addon can wake a follow-up with', () => {
+  const events = [{ kind: 'run.finished', title: 'Run finished', statuses: ['succeeded', 'failed'], ref: 'int', interval_s: 300 }]
+  it('says it runs in the background, can reach the internet and (with a credential) uses the stored key', async () => {
+    const { user } = renderApp('/settings/addons', {
+      setup: (s) => {
+        const est = offerUpdate(s)
+        est.update!.events = events
+        est.update!.capabilities = ['network', 'credential']
+      },
+    })
+    await user.click(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
+    const dialog = await screen.findByRole('dialog')
+    const line = within(dialog).getByRole('list', { name: 'Events' })
+    expect(line).toHaveTextContent('Run finished: runs in the background every 5 min while a follow-up waits for it')
+    expect(line).toHaveTextContent('it can reach the internet (orch does not limit where); it uses your stored key')
+  })
+})

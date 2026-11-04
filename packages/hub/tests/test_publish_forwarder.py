@@ -19,7 +19,9 @@ from publish_helpers import (
 from orch_hub.contract import hub as H
 from orch_hub.contract.canon import b64u
 from orch_hub.contract.hub import Refused
+from orch_hub.link.framing import MAX_FRAME
 from orch_hub.publish import HubPublish, PublishConfig, PublishSyncError
+from orch_hub.publish.forwarder import MAX_REQUEST_BODY
 
 WS = "11" * 16
 
@@ -153,6 +155,22 @@ def test_oversize_body_refused(tmp_path, up):
     with pytest.raises(Refused) as x:
         fw.forward(WS, host_request(new_wsk(), hub.hub_id, WS, method="PUT", body=b"12345"))
     assert x.value.code == "malformed"
+
+
+def test_max_request_body_follows_the_link_frame_cap():
+    # the body arrives hex-encoded inside one link frame: twice the body can never exceed the frame
+    assert MAX_REQUEST_BODY == MAX_FRAME // 2
+    assert MAX_REQUEST_BODY * 2 <= MAX_FRAME
+    assert PublishConfig("http://x", HOST).max_request_body == MAX_REQUEST_BODY
+
+
+def test_body_one_over_the_cap_is_refused_and_the_cap_itself_is_not(env):
+    big = host_request(env.wsk, env.hub.hub_id, WS, method="PUT", body=b"x" * (MAX_REQUEST_BODY + 1))
+    with pytest.raises(Refused) as x:
+        env.fw.forward(WS, big)
+    assert x.value.code == "malformed" and env.up.requests == []
+    ok = host_request(env.wsk, env.hub.hub_id, WS, method="PUT", body=b"x" * MAX_REQUEST_BODY)
+    assert env.fw.forward(WS, ok)["status"] == 200
 
 
 def test_redirects_are_returned_not_followed(env):
@@ -343,3 +361,125 @@ def test_card_goes_to_orch_publish_and_a_refusal_comes_back(env):
     with pytest.raises(Refused) as x:
         env.fw.card(WS, card, "pk")
     assert x.value.code == "unavailable"
+
+
+def test_a_full_mode_workspace_is_forwarded_like_a_selective_one(tmp_path, up):
+    """Run 14 P01: publishing from a workspace bound in FULL mode goes through the same forwarder, adding exactly the
+    same two headers; the listing and the revoke of such links are the Published page's (test_published_*)."""
+    hub = make_hub(tmp_path)
+    wsk = new_wsk()
+    fw = HubPublish(hub, RecordingSync(), PublishConfig(up.url, HOST, timeout_s=2.0))
+    fw.binding(WS, binding(wsk, hub, WS, mode="full"))
+    r = host_request(wsk, hub.hub_id, WS, method="PUT", target=f"/v1/ws/{WS}/files/a", body=b"hello")
+    assert fw.forward(WS, r) == {"status": 200, "body_hex": b'{"ok":true}'.hex()}
+    (seen,) = up.requests
+    got = {k.lower() for k in seen["headers"] if k.lower().startswith("orch-")}
+    assert got == {k.lower() for k in r["headers"]} | {"orch-hub", "orch-hub-signature"}
+
+
+# --- the allowance is re-sent once when orch-publish answers unknown_workspace (run17 P01) ---------------------------
+
+_UNKNOWN = (401, b'{"error":"unknown_workspace"}')
+
+
+def _admitting(tmp_path, up, admission):
+    hub = make_hub(tmp_path)
+    wsk = new_wsk()
+    sync = RecordingSync()
+    fw = HubPublish(hub, sync, PublishConfig(up.url, HOST, timeout_s=2.0), admission=admission)
+    b = binding(wsk, hub, WS)
+    fw.binding(WS, b)
+    return type("E", (), {"hub": hub, "wsk": wsk, "sync": sync, "fw": fw, "b": b, "up": up})()
+
+
+def test_unknown_workspace_sends_the_allowance_again_and_resends_once(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    kinds_before = [c[0] for c in e.sync.calls].count("allow")
+    up.script = [_UNKNOWN, (201, b'{"ok":true}')]
+    out = e.fw.forward(WS, req(e))
+    assert out["status"] == 201
+    assert len(up.requests) == 2
+    assert [c[0] for c in e.sync.calls].count("allow") == kinds_before + 1
+
+
+def test_unknown_workspace_without_admission_is_not_retried(env):
+    env.up.script = [_UNKNOWN]
+    out = env.fw.forward(WS, req(env))
+    assert out["status"] == 401
+    assert len(env.up.requests) == 1
+
+
+def test_unknown_workspace_when_the_hub_does_not_admit_is_not_retried(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: None)
+    up.script = [_UNKNOWN]
+    out = e.fw.forward(WS, req(e))
+    assert out["status"] == 401
+    assert len(up.requests) == 1
+    assert "allow" not in [c[0] for c in e.sync.calls]
+
+
+def test_unknown_workspace_when_the_allowance_is_refused_is_not_retried(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN]
+    orig = e.sync.put_allow
+
+    def refuse(ws, obj):
+        raise PublishSyncError("unknown_hub")
+
+    e.sync.put_allow = refuse
+    out = e.fw.forward(WS, req(e))
+    e.sync.put_allow = orig
+    assert out["status"] == 401
+    assert len(up.requests) == 1
+
+
+def test_the_retry_is_at_most_once(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN, _UNKNOWN, _UNKNOWN]
+    out = e.fw.forward(WS, req(e))
+    assert out["status"] == 401
+    assert len(up.requests) == 2
+
+
+def test_a_second_unknown_workspace_within_30_seconds_is_not_retried_again(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN, _UNKNOWN, _UNKNOWN]
+    assert e.fw.forward(WS, req(e))["status"] == 401
+    assert len(up.requests) == 2
+    assert e.fw.forward(WS, req(e))["status"] == 401
+    assert len(up.requests) == 3  # sent once, no allowance retry, no resend
+
+
+def test_no_retry_when_the_deadline_is_close(tmp_path, up):
+    hub = make_hub(tmp_path)
+    sync = RecordingSync()
+    fw = HubPublish(
+        hub, sync, PublishConfig(up.url, HOST, timeout_s=2.0, deadline_s=1.0), admission=lambda ws: ("aa" * 16, 1)
+    )
+    fw.binding(WS, binding(new_wsk(), hub, WS))
+    wsk = new_wsk()
+    fw.binding(WS, binding(wsk, hub, WS, seq=2))
+    up.script = [_UNKNOWN, (201, b"{}")]
+    out = fw.forward(WS, host_request(wsk, hub.hub_id, WS))
+    assert out["status"] == 401 and len(up.requests) == 1
+
+
+def test_the_error_code_is_read_from_json_not_from_a_substring(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [(401, b'{"error":"bad_signature","detail":"unknown_workspace"}')]
+    assert e.fw.forward(WS, req(e))["status"] == 401
+    assert len(up.requests) == 1
+
+
+def test_a_refusal_during_the_retry_returns_the_original_401(tmp_path, up):
+    e = _admitting(tmp_path, up, lambda ws: ("aa" * 16, 1))
+    up.script = [_UNKNOWN]
+    orig = e.sync.put_binding
+
+    def refuse(ws, obj):
+        raise PublishSyncError("stale_binding")
+
+    e.sync.put_binding = refuse
+    out = e.fw.forward(WS, req(e))
+    e.sync.put_binding = orig
+    assert out["status"] == 401 and len(up.requests) == 1

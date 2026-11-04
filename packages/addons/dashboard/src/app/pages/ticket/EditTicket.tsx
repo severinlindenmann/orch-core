@@ -15,6 +15,7 @@ import { SECTIONS_BY_TYPE, SECTION_ORDER, sectionLabel, type SectionName } from 
 import { branchProblem, MAX_LINK_REPOS, suggestedBranch } from '@/api/links'
 import type { TicketDocument, TicketLinks } from '@/api/types'
 import { SignPopover } from '@/components/sign/SignPopover'
+import { trustedPress } from '@/components/sign/trustedPress'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -25,7 +26,8 @@ import { Section } from '../new-ticket/SectionsEditor'
 import { PeoplePicker, type PeopleValue } from '../new-ticket/PeoplePicker'
 import type { Viewer } from './shared'
 
-export type EditFocus = { kind: 'ac' | 'task'; id: string }
+export type EditFocus = { kind: 'ac' | 'task'; id: string } | { kind: 'title' }
+export const MAX_TITLE = 200
 type TaskDraft = { text: string; verify: string; proves: string[] }
 type TaskDrafts = { edit: Record<string, TaskDraft>; add: TaskDraft[] }
 
@@ -33,10 +35,21 @@ type Edit = NonNullable<Extract<HandoffAction, { action: 'edit_sequence' }>>
 
 /** What the person changed, as the typed action; or what is wrong with it. Pure: tested without the dialog. */
 export function buildEdit(
-  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { artifacts?: { name: string }[] } & { links?: Pick<TicketLinks, 'repos' | 'branches'>; tasks_state?: TicketDocument['tasks_state'] },
-  want: { tasks?: TaskDrafts; sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
+  ticket: { title?: string } & Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { artifacts?: { name: string }[] } & { links?: Pick<TicketLinks, 'repos' | 'branches'>; tasks_state?: TicketDocument['tasks_state'] },
+  want: { title?: string; tasks?: TaskDrafts; sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
   mayEditPeople: boolean,
 ): { action: Edit; steps: number } | { problem: string } | { nothing: true } {
+  // r7-P07: a new title is one line of 1-200 characters; the same as before is no change
+  let title: string | undefined
+  if (want.title !== undefined && ticket.title !== undefined) {
+    const text = want.title.trim()
+    if (text !== ticket.title.trim()) {
+      if (!text) return { problem: 'The title cannot be empty. Write the new title, or leave it as it is.' }
+      if (/[\r\n]/.test(text)) return { problem: 'The title is one line. Take the line break out.' }
+      if ([...text].length > MAX_TITLE) return { problem: `The title is longer than ${MAX_TITLE} characters. Shorten it.` }
+      title = text
+    }
+  }
   const sections: Record<string, string> = {}
   for (const name of SECTION_ORDER) {
     if (SECTIONS_BY_TYPE[ticket.type][name] === 'absent') continue
@@ -118,7 +131,7 @@ export function buildEdit(
   const images = pastedIn(texts).filter((i) => !(ticket.artifacts ?? []).some((a) => a.name === i.name))
   if (images.length > MAX_IMAGES) return { problem: `At most ${MAX_IMAGES} pictures fit in one signing run.` }
   const taskSteps = Object.keys(tasks.edit).length + tasks.add.length
-  const steps = images.length + taskSteps + Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
+  const steps = (title ? 1 : 0) + images.length + taskSteps + Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
   if (steps === 0) return { nothing: true }
   if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Sign some now and the rest after.` }
   return {
@@ -127,6 +140,7 @@ export function buildEdit(
       action: 'edit_sequence',
       key: ticket.key,
       head_seq: ticket.head.seq,
+      ...(title ? { title } : {}),
       ...(Object.keys(sections).length ? { sections } : {}),
       ...(Object.keys(edit).length || add.length ? { acceptance: { edit, add } } : {}),
       ...(taskSteps ? { tasks } : {}),
@@ -145,7 +159,7 @@ const EditContext = createContext<((focus?: EditFocus) => void) | null>(null)
 export const useTicketEdit = () => useContext(EditContext)
 
 export function TicketEditProvider({ ticket, viewer, children }: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'>; children: ReactNode }) {
-  const [open, setOpen] = useState<{ focus?: EditFocus } | null>(null)
+  const [open, setOpen] = useState<{ focus?: EditFocus; full?: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
   const keySeq = useRef(ticket.head.seq)
   if (!busy) keySeq.current = ticket.head.seq
@@ -154,8 +168,73 @@ export function TicketEditProvider({ ticket, viewer, children }: { ticket: Ticke
   const allowed = canEditTicket(ticket, viewer.role, !!ws && handoffMode(ws.id))
   return <EditContext.Provider value={allowed ? (focus) => setOpen({ focus }) : null}>
     {children}
-    {open && <EditDialog key={keySeq.current} ticket={ticket} viewer={viewer} focus={open.focus} onBusy={setBusy} onClose={() => setOpen(null)} />}
+    {open && open.focus?.kind === 'title' && !open.full && <RenameDialog key={`rename-${keySeq.current}`} ticket={ticket} onBusy={setBusy} onClose={() => setOpen(null)} />}
+    {open && !(open.focus?.kind === 'title' && !open.full) && <EditDialog key={keySeq.current} ticket={ticket} viewer={viewer} focus={open.focus} onBusy={setBusy} onClose={() => setOpen(null)} />}
   </EditContext.Provider>
+}
+
+/**
+ * Renaming is one line, not the long form (r10-P09): the new title, Save, then the one signing review (the same
+ * `edit_sequence` with only the title). The review opens by itself (prepare only, never armed): Sign is the person's own press.
+ */
+function RenameDialog({ ticket, onBusy, onClose }: { ticket: TicketDocument; onBusy: (busy: boolean) => void; onClose: () => void }) {
+  const qc = useQueryClient()
+  const workspaces = useQuery(queries.workspaces())
+  const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
+  const [title, setTitle] = useState(ticket.title ?? '')
+  const [problem, setProblem] = useState<string | null>(null)
+  // P07: `trusted` = the opening press was the person's own (read in the handler); only then the review arms (1 s, then signs).
+  const [signing, setSigning] = useState<{ action: Edit; trusted: boolean } | null>(null)
+  useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
+  const changed = title.trim() !== (ticket.title ?? '').trim() && title.trim().length > 0
+  const save = (trusted: boolean) => {
+    if (!changed) return
+    const built = buildEdit(ticket, { title, sections: {}, criteria: {}, added: [], people: { owner: ticket.people.owner, assignees: [...ticket.people.assignees], reviewers: [...ticket.people.reviewers] } }, false)
+    if ('problem' in built) return setProblem(built.problem)
+    if ('nothing' in built) return setProblem('The title is the same as before.')
+    setProblem(null)
+    setSigning({ action: built.action, trusted })
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && !signing && onClose()}>
+      <DialogContent aria-label={`Rename ${ticket.key}`} className="sm:max-w-lg" onOpenAutoFocus={(e) => { e.preventDefault(); const f = document.getElementById('rename-title') as HTMLInputElement | null; if (f) { f.focus(); f.select() } }}>
+        <DialogHeader>
+          <DialogTitle>Rename {ticket.key}</DialogTitle>
+          <DialogDescription>Write the new title.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={(e) => { e.preventDefault(); save(trustedPress(e.nativeEvent)) }} className="space-y-2">
+          <Input id="rename-title" aria-label="Title" onFocus={(e) => e.currentTarget.select()} readOnly={!!signing} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
+          {problem && <p role="alert" className="text-[13px] text-danger">{problem}</p>}
+          {!signing && <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={!changed}>Rename</Button>
+          </DialogFooter>}
+        </form>
+        {signing && ws && (
+          <SignPopover
+            title={`Rename ${ticket.key}`}
+            ws={ws.id}
+            action={signing.action}
+            autoStart={signing.trusted}
+            armOnStart
+            armLine="Renaming in a moment"
+            prepareOnOpen
+            inline
+            confirmLabel="Rename"
+            lead={<p data-testid="rename-diff" className="text-[13px]"><s className="text-text-muted">{ticket.title ?? ''}</s> → <span className="font-medium">{title}</span></p>}
+            onClose={() => setSigning(null)}
+            onSettled={(phase) => {
+              if (phase !== 'done') return
+              void qc.invalidateQueries()
+              toast.success(`${ticket.key} renamed`)
+              setSigning(null)
+              onClose()
+            }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 export function EditTicket(_props: { ticket: TicketDocument; viewer: Pick<Viewer, 'person' | 'role' | 'members'> }) {
@@ -168,6 +247,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
   const mayEditPeople = viewer.role === 'owner' || viewer.role === 'maintainer' || ticket.people.owner === viewer.person
+  const [title, setTitle] = useState(ticket.title ?? '')
   const [sections, setSections] = useState<Partial<Record<SectionName, string>>>(() => ({ ...ticket.body }))
   const [criteria, setCriteria] = useState<Record<string, string>>(() => Object.fromEntries(ticket.acceptance_state.map((a) => [a.id, a.text])))
   const [added, setAdded] = useState<string[]>([])
@@ -180,7 +260,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
   const [problem, setProblem] = useState<string | null>(null)
   useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
   const acId = useId()
-  const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people, links, tasks }, mayEditPeople), [ticket, sections, criteria, added, people, links, tasks, mayEditPeople])
+  const built = useMemo(() => buildEdit(ticket, { title, sections, criteria, added, people, links, tasks }, mayEditPeople), [ticket, title, sections, criteria, added, people, links, tasks, mayEditPeople])
   const shown = SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[ticket.type][n] !== 'absent' && n !== 'current_state')
   // K10: anything changed (even something not signable yet) is asked about before it is thrown away.
   const [asking, setAsking] = useState(false)
@@ -200,14 +280,18 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
   }
   return (
     <Dialog open onOpenChange={(o) => !o && !signing && !asking && requestClose()}>
-      <DialogContent onOpenAutoFocus={(event) => { if (focusInput.current) { event.preventDefault(); focusInput.current.focus(); focusInput.current.scrollIntoView?.({ block: 'center' }) } }} className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" aria-label={`Edit ${ticket.key}`}>
+      <DialogContent onOpenAutoFocus={(event) => { if (focusInput.current) { event.preventDefault(); focusInput.current.focus(); if (focus?.kind === 'title') focusInput.current.select(); focusInput.current.scrollIntoView?.({ block: 'center' }) } }} className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" aria-label={`Edit ${ticket.key}`}>
         <DialogHeader>
           <DialogTitle>Edit {ticket.key}</DialogTitle>
           <DialogDescription>
-            Change the text, acceptance criteria, tasks, repositories and people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
+            Change the title, text, acceptance criteria, tasks, repositories and people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-5">
+        <fieldset disabled={!!signing} data-testid="edit-fields" className="m-0 min-w-0 space-y-5 border-0 p-0">
+          <div className="space-y-1.5">
+            <label htmlFor={`${acId}-title`} className="text-[13px] font-medium">Title</label>
+            <Input id={`${acId}-title`} ref={focus?.kind === 'title' ? focusInput : undefined} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
+          </div>
           {shown.map((n) => (
             <Section key={n} type={ticket.type} name={n} value={sections[n] ?? ''} onChange={(v) => setSections((s) => ({ ...s, [n]: v }))} />
           ))}
@@ -282,7 +366,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
           ) : (
             <p className="text-[12px] text-text-muted">Only the ticket owner, owners and maintainers change who owns, works on or reviews this ticket.</p>
           )}
-        </div>
+        </fieldset>
         {problem && (
           <p role="alert" className="text-[13px] text-danger">
             {problem}
@@ -301,7 +385,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
             <DialogContent aria-label="Discard unsaved changes?">
               <DialogHeader>
                 <DialogTitle>Discard unsaved changes?</DialogTitle>
-                <DialogDescription>You changed this ticket's text, checks, repositories or people. Closing now throws those changes away.</DialogDescription>
+                <DialogDescription>You changed this ticket's title, text, checks, repositories or people. Closing now throws those changes away.</DialogDescription>
               </DialogHeader>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setAsking(false)}>Keep editing</Button>
@@ -315,7 +399,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
             title={`Edit ${ticket.key}`}
             ws={ws.id}
             action={signing}
-            autoStart
+            prepareOnOpen
             onClose={() => setSigning(null)}
             onSettled={(phase) => {
               if (phase !== 'done') return

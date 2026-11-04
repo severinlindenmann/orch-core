@@ -2,8 +2,35 @@ import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
+import { COLD } from '@/test/cold'
+import { markJustCreated } from '@/app/pages/new-ticket/justCreated'
 
 describe('Tickets page', () => {
+  it('shows what others shared through the hub as read-only "Shared by" rows, and nothing without a hub', async () => {
+    const shared = vi.spyOn(api, 'getHubShared').mockResolvedValue({
+      items: [{ workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: 'Export invoices as CSV.' }],
+    })
+    renderApp('/tickets')
+    const box = await screen.findByTestId('shared-with-you', {}, COLD)
+    expect(within(box).getByText('Invoice export for Ben')).toBeInTheDocument()
+    expect(within(box).getByText(/Shared by/)).toHaveTextContent('Shared by Anna')
+    expect(within(box).getByText('Export invoices as CSV.')).toBeInTheDocument()
+    expect(within(box).getAllByRole('button')).toHaveLength(1) // the row only opens the view-only panel; nothing to change
+    shared.mockResolvedValue({ items: [] })
+    vi.restoreAllMocks()
+  })
+
+  it('P03: the shared section sits above the tickets table', async () => {
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({
+      items: [{ workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }],
+    })
+    renderApp('/tickets')
+    const box = await screen.findByTestId('shared-with-you')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    expect(box.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    vi.restoreAllMocks()
+  })
+
   it('lists the workspace tickets in a table', async () => {
     renderApp('/tickets')
     const table = await screen.findByRole('table', { name: 'Tickets' })
@@ -25,6 +52,40 @@ describe('Tickets page', () => {
     const { user } = renderApp('/tickets')
     await user.type(await screen.findByRole('searchbox', { name: 'Search tickets' }), 'zzzz-no-match')
     expect(await screen.findByText(/No tickets match/)).toBeInTheDocument()
+  })
+  it('the empty state shows no terminal command (r10-P07)', async () => {
+    const { user } = renderApp('/tickets')
+    await user.type(await screen.findByRole('searchbox', { name: 'Search tickets' }), 'zzzz-no-match')
+    await screen.findByText(/No tickets match/)
+    expect(document.body.textContent).not.toMatch(/orch list/)
+  })
+  it('with only shared tickets the empty box says so and offers New ticket', async () => {
+    vi.spyOn(api, 'listTickets').mockResolvedValue([])
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ workspace_id: 'a'.repeat(32), key: 'D-1', title: 'One', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }] })
+    renderApp('/tickets')
+    expect(await screen.findByText('You have no tickets of your own yet.')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/No tickets match|orch list/)
+    vi.restoreAllMocks()
+  })
+  it('P17: no "0 tickets" count above a shared ticket when you have none; the count shows with own tickets, in the normal font', async () => {
+    vi.spyOn(api, 'listTickets').mockResolvedValue([])
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ workspace_id: 'a'.repeat(32), key: 'D-1', title: 'One', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }] })
+    renderApp('/tickets')
+    await screen.findByText('You have no tickets of your own yet.')
+    expect(screen.getByRole('heading', { name: 'Tickets' }).parentElement!.textContent).not.toMatch(/\d+ tickets?/)
+    vi.restoreAllMocks()
+    renderApp('/tickets')
+    const count = await screen.findByText(/^\d+ tickets?/)
+    expect(count.className).not.toMatch(/font-mono/)
+  })
+  it('P19: the ticket just created is highlighted with a New tag in the list', async () => {
+    markJustCreated('DEMO-0043')
+    renderApp('/tickets')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    const tag = await within(table).findByTestId('ticket-new-DEMO-0043', {}, COLD)
+    expect(tag).toHaveTextContent('New')
+    expect(tag.closest('tr')).toHaveClass('bg-brand-soft')
+    expect(within(table).queryByTestId('ticket-new-DEMO-0042')).toBeNull()
   })
   it('opens a ticket with Enter on the focused row', async () => {
     const { user } = renderApp('/tickets')

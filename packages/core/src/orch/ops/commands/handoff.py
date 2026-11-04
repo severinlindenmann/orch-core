@@ -21,7 +21,18 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
     plans.check_widgets(c, p, "current_state", text)
     p.add({"type": "handoff.written", "text": text})
     p.add({"type": "claim.released", "session": p.view.claim.session, "reason": "handoff"})
-    return plans.Out({"bytes": len(text.encode("utf-8"))}, [views.claim_hint(c)])
+    # An unfinished gate cannot be approved and raises no need for the person: say so while the agent can still fix it.
+    lines: list[str] = []
+    gate = views.open_gate(p.view)
+    fix = views.fill_hint(p.view, gate) if gate is not None else None
+    missing = p.view.gates[gate].missing if gate is not None else []
+    lacks = ", ".join(m for m in missing if not m.startswith("artifact:"))
+    if fix is not None and lacks:
+        lines.append(
+            f"warning: the {gate} gate is not ready for approval, it still lacks: {lacks}. "
+            f"The person cannot approve it yet; add it first ({fix})."
+        )
+    return plans.Out({"bytes": len(text.encode("utf-8"))}, [views.claim_hint(c)], lines)
 
 
 OP = operation(

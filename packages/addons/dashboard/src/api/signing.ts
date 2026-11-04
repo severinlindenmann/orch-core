@@ -1,5 +1,3 @@
-export type SignMethod = 'terminal' | 'click' | 'phone'
-export interface SignDefault { method: SignMethod; fallback?: SignMethod; is_default: boolean; allowed: SignMethod[] }
 export interface SignContent {
   headline: string
   /** U3: the headline a person reads (no host-key / signed-id qualifier; those are in `ticket`, under Technical details). */
@@ -15,9 +13,9 @@ export interface SignContent {
   acceptance?: { id: string; text: string; checked?: boolean; manual?: string }[]
   tasks?: { n: number; id: string; title: string; verify?: string[] }[]
   fields_title?: string
+  fields_inline?: boolean
   fields_changed?: { field: string; before: string | null; after: string | null; before_note?: string }[]
   note?: string | string[]
   cancels?: { gate: string; people: string[]; complete: boolean }[]
   notes?: string[]
 }
-export const methodLabel: Record<SignMethod, string> = { terminal: 'Sign in a terminal', click: 'One click', phone: 'Approve on your phone' }

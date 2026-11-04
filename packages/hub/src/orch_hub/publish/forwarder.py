@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import json
+import logging
+import os
 import threading
 import time
 import urllib.parse
@@ -20,11 +23,14 @@ from ..contract.canon import b64u, cj
 from ..contract.hub import Refused, hub_path_signed_bytes
 from ..contract.keystore import KeyUseError, OpSigner
 from ..keys.store import HubKeys
+from ..link.framing import MAX_FRAME
 from ..localdial import dialling_locally
 from . import request as R
 from .sync import PublishSync, PublishSyncError
 
-MAX_REQUEST_BODY = 8 * 1024 * 1024
+# The request arrives as one link frame with the body hex-encoded (2 characters per byte), so a body over half the frame
+# cap cannot arrive through a link frame anyway: the frame cap is the one source of this number.
+MAX_REQUEST_BODY = MAX_FRAME // 2
 MAX_RESPONSE_BODY = 16 * 1024 * 1024
 #: orch-publish answers with these when the hub's card or the binding is not (or no longer) held: forget what we synced
 #: refusal codes of contracts/hub/protocol.md §14 / v2 that orch-publish's store can answer a card or binding with; any
@@ -61,6 +67,18 @@ SYNC_CODES = frozenset(
     ]
 )
 _RESYNC_CODES = (b"not_bound", b"unknown_hub")
+RETRY_EVERY_S = 30.0  # one allowance retry per workspace in this time
+RETRY_MIN_LEFT_S = 2.0  # no retry when less than this is left of the forward's deadline
+
+
+def _error_code(body: bytes) -> str | None:
+    """The ``error`` field of an orch-publish JSON answer, or None."""
+    try:
+        o = json.loads(body)
+    except ValueError:
+        return None
+    e = o.get("error") if isinstance(o, dict) else None
+    return e if isinstance(e, str) else None
 
 
 @dataclass(frozen=True)
@@ -106,6 +124,7 @@ class HubPublish:
         sync: PublishSync,
         cfg: PublishConfig,
         revocations: Callable[[], list[dict[str, Any]]] | None = None,
+        admission: Callable[[str], tuple[str, int] | None] | None = None,
     ):
         self._scheme, self._host, self._port = _endpoint(cfg.base_url)
         self._cfg = cfg
@@ -127,6 +146,11 @@ class HubPublish:
         self._card_synced: bytes | None = None
         self._revocations = revocations or (list)
         self._revoked_synced: set[bytes] = set()
+        # P02: ``admission(workspace_id) -> (owner_person_id, binding_seq)`` or None. The hub's own answer, read from its
+        # registry and access store: this workspace is joined to THIS hub, bound now, and its owner is a hub admin, and
+        # the hub setting lets workspaces share files. None (the default) = never send a hub.allow.
+        self._admission = admission
+        self._retried_at: dict[str, float] = {}  # workspace -> monotonic time of its last allowance retry
 
     # --- Downstream (the link server calls these after it accepted the object) -------------------------------------
 
@@ -135,6 +159,7 @@ class HubPublish:
         itself and admits the workspace exactly as its pre-bind, allowlist and never-change rules say (V3-D36: this is
         the only way a workspace reaches publish). A refusal goes back to the workspace as the hub's refusal."""
         with self._ws_lock(workspace_id):
+            self._allow(workspace_id)
             try:
                 self._sync.put_card(workspace_id, card, pk_pub)
             except PublishSyncError as e:
@@ -165,12 +190,34 @@ class HubPublish:
                 if o["binding_seq"] == ho["binding_seq"] and o["kind"] != "hub.unbound":
                     raise Refused("binding_conflict")
             self._bindings[workspace_id] = dict(obj)
+        if o["kind"] == "hub.binding":  # a new binding epoch (join, re-join, mode switch) needs its own allowance
+            with self._ws_lock(workspace_id):
+                self._allow(workspace_id)
         try:
             self._ensure(
                 workspace_id, self._keys()[1], need_bound=False, deadline=time.monotonic() + self._cfg.deadline_s
             )
         except Refused:
             pass  # not reachable now: the next forward syncs again, and refuses if it cannot
+
+    def resync(self, workspace_ids: list[str], *, budget_s: float = 3.0) -> None:
+        """B03: push each workspace's latest binding (and the card) to orch-publish now, before an admin read. A
+        binding whose sync failed earlier (``binding`` swallows it) would otherwise keep orch-publish on the old mode
+        until the next forward. Best effort: a refusal or an unreachable publish is left to the read's own handling."""
+        deadline = time.monotonic() + budget_s
+        card = self._keys()[1]
+        # _ensure skips a binding orch-publish already holds, so this costs only after a failure
+        for ws in workspace_ids:
+            if time.monotonic() > deadline:
+                return
+            try:
+                # _ensure reads the held object and sends it under the workspace's lock, so a newer binding set meanwhile
+                # is sent after this one and wins
+                self._ensure(ws, card, need_bound=False, deadline=deadline)
+            except Refused as e:
+                logging.getLogger("orch_hub.publish").info("binding push for %s skipped: %s", ws, e.code)
+            except Exception:  # one workspace's failure must not stop the others
+                logging.getLogger("orch_hub.publish").warning("binding push for %s failed", ws, exc_info=True)
 
     def restore(self, bindings: Mapping[str, Mapping[str, Any]]) -> None:
         """After a restart: the signed binding / unbound objects the registry persisted (nothing is synced yet)."""
@@ -202,6 +249,32 @@ class HubPublish:
         headers["Orch-Hub"] = hub_id
         headers["Orch-Hub-Signature"] = b64u(hsig)
         status, body = self._send(p, headers, deadline)
+        if status == 401 and self._admission is not None and _error_code(body) == "unknown_workspace":
+            # orch-publish does not know this workspace (the first hub.allow was refused or lost): send the allowance
+            # again ONCE. The admission callback still decides; if it says no or the allowance cannot be sent, the
+            # original answer stands. Never a loop (a second 401 goes back as is), and at most one try per workspace
+            # per RETRY_EVERY_S, and none when the deadline is about to pass.
+            again = False
+            with self._ws_lock(workspace_id):
+                now = time.monotonic()
+                if (
+                    deadline - now >= RETRY_MIN_LEFT_S
+                    and now - self._retried_at.get(workspace_id, -RETRY_EVERY_S) >= RETRY_EVERY_S
+                ):
+                    self._retried_at[workspace_id] = now
+                    outcome, card_pushed = self._allow(workspace_id)
+                    again = outcome == "sent"
+            if again:
+                with self._lock:
+                    self._synced.pop(workspace_id, None)
+                    if card_pushed:
+                        self._card_synced = None
+                        self._revoked_synced.clear()
+                try:
+                    self._ensure(workspace_id, card, need_bound=True, deadline=deadline)
+                    status, body = self._send(p, headers, deadline)
+                except Refused:
+                    pass  # the original 401 stands
         if status in (401, 403) and any(c in body for c in _RESYNC_CODES):
             with self._lock:
                 self._synced.pop(workspace_id, None)
@@ -214,6 +287,48 @@ class HubPublish:
     def _ws_lock(self, workspace_id: str) -> threading.Lock:
         with self._lock:
             return self._ws_locks.setdefault(workspace_id, threading.Lock())
+
+    def _allow(self, workspace_id: str) -> tuple[str, bool]:
+        """Tell orch-publish, signed with HK_op, that this workspace and its owner are this hub's own (``hub.allow``,
+        protocol 11.9). Best effort: a refusal (the operator never pinned this hub, no network) only means the old
+        admission rules still apply and the workspace is told at its first send. The caller holds the workspace lock.
+        Returns ``(outcome, card_pushed)``: outcome is ``sent``, ``no_admission``, ``not_admitted`` or the refusal code."""
+        if self._admission is None:
+            return "no_admission", False
+        card_pushed = False
+        try:
+            got = self._admission(workspace_id)
+            if got is None:
+                return "not_admitted", False
+            owner, seq = got
+            signer, card, hub_id = self._keys()
+            c = cj(card)
+            if self._card_synced != c:
+                self._sync.put_hub_card(card)
+                card_pushed = True
+                with self._lock:
+                    self._card_synced = c
+                    self._revoked_synced.clear()
+            obj = signer.sign_object(
+                {
+                    "v": 2,
+                    "suite": 2,
+                    "kind": "hub.allow",
+                    "hv": 0,
+                    "hub_id": hub_id,
+                    "workspace_id": workspace_id,
+                    "owner_person_id": owner,
+                    "binding_seq": seq,
+                    "ts_ms": int(time.time() * 1000),
+                    "nonce": b64u(os.urandom(32)),
+                }
+            )
+            self._sync.put_allow(workspace_id, obj)
+            return "sent", card_pushed
+        except (PublishSyncError, KeyUseError, Refused, ValueError, KeyError, OSError) as e:
+            code = str(getattr(e, "code", type(e).__name__))
+            logging.getLogger("orch_hub.publish").warning("hub.allow not sent: %s", code)
+            return code, card_pushed
 
     def _ensure(self, workspace_id: str, card: dict[str, Any], *, need_bound: bool, deadline: float) -> None:
         """Push the hub's card and the workspace's latest binding object when orch-publish does not hold them yet.

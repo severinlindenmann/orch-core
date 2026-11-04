@@ -1,45 +1,29 @@
-// The agent line of the New ticket form ("Agent: Claude Code · Do the work · Opus · Change"), the
-// access length when the person has no usable agent access yet, and the "not signed" block of the review.
-import { useState } from 'react'
-import { modelLabel } from '@/api/modelRouting'
-import { AgentPick, harnessName, MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
-import { AgentName } from '@/components/agents/AgentIcon'
+// The notes of the New ticket form about the agent (no agent can start here, too many parts to sign with access), the
+// dialog to choose the agent, and the "not signed" block of the review.
+import { EXECUTION_SHORT } from '@/app/terminal/real/executionLine'
+import { AgentPick, harnessName, ModelPick } from '@/components/agents/AgentChoice'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { StartPlan } from './useStartPlan'
 
-/** "Opus" or "chosen by the agent app". */
-export function modelText(plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>): string {
-  const { model } = plan.shown
-  if (!model) return 'chosen by the agent app'
-  return modelLabel(plan.choices, plan.choice.harness, model)
-}
-
 export function AgentLine({ plan, tooMany }: { plan: StartPlan; tooMany: boolean }) {
-  const [open, setOpen] = useState(false)
   if (!plan.feature) return null
   if (!plan.available) {
     return plan.reason ? <p className="text-[12px] text-text-muted" data-testid="agent-line-off">No agent can start here. {plan.reason} The ticket is created without starting one.</p> : null
   }
-  const { choice } = plan
+  if (!tooMany) return null
   return (
     <div className="space-y-1 text-[12px] text-text-muted" data-testid="agent-line">
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <AgentName harness={choice.harness} className="text-text" />{' '}
-        <span>will {choice.mode === 'refine' ? 'draft a plan for you to approve' : MODE_LABEL[choice.mode].toLowerCase()}.</span>{' '}
-        <button type="button" className="underline underline-offset-4" onClick={() => setOpen(true)}>Change</button>
-      </p>
       {tooMany && (
         <p role="note" className="text-warning" data-testid="agent-too-many">
           This ticket has too many parts to sign together with agent access, so it will be created without starting an agent. Start one from the ticket afterwards, or leave some text or criteria for later.
         </p>
       )}
-      {open && <ChangeDialog plan={plan} onClose={() => setOpen(false)} />}
     </div>
   )
 }
 
-function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () => void }) {
+export function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () => void }) {
   const { choice } = plan
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
@@ -62,11 +46,19 @@ function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () => void 
  * Under the review, outside the signed content: the start is NOT part of what the person signs. It uses their agent
  * access and happens in the dashboard once the ticket exists.
  */
-export function NotSignedBlock({ plan }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean }) {
+export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean; /** The "runs as you" notice is not read yet: its short version (EXECUTION_SHORT) is shown here, and signing counts as reading it. */ notice?: boolean }) {
   const { choice } = plan
   return (
-    <p data-testid="not-signed-start" className="border-t border-border pt-3 text-[13px] text-text-muted">
-      Not part of what you sign: after the ticket exists, {harnessName(choice.harness)} starts ({MODE_LABEL[choice.mode].toLowerCase()}, model {modelText(plan)}). Agent access is checked again first.
-    </p>
+    <>
+      <p data-testid="not-signed-start" className="border-t border-border pt-3 text-[13px] text-text-muted">
+        Then {harnessName(choice.harness)} starts on it.
+      </p>
+      {notice && (
+        <div role="note" data-testid="not-signed-notice" className="mt-1 text-[13px] leading-5 text-text">
+          {/* The short version of the line the Start agent dialog shows in full (and acknowledges as `start_agent`). */}
+          <p data-testid="not-signed-execution-line">{EXECUTION_SHORT} Signing means you know this.</p>
+        </div>
+      )}
+    </>
   )
 }

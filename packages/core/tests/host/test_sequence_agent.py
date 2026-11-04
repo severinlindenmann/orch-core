@@ -12,7 +12,7 @@ from orch.host.sequence import Aborted
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION
 from tests.host.test_sequence import Rig, doc, intent_of
-from tests.host.test_sequence_quick import click_prepare, quick
+from tests.host.test_sequence_quick import _quick_on, click_prepare, quick  # noqa: F401
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 from tests.host.test_click import click  # noqa: E402,F401
@@ -151,11 +151,10 @@ def test_i2_a_grant_asked_for_other_hours_than_the_reviewed_ones_is_never_signed
     assert "grant.issued" not in [e["type"] for _, ev, _ in rig.submitted for e in ev]
 
 
-def test_i3_agent_access_is_a_click_and_a_runner_grant_needs_dashboard_execution(click, served, human):  # noqa: F811
-    """#1198 C1: no typed word. The rule that a grant to the runner needs dashboard execution on this machine stands on
-    its own: at prepare, and again at sign (it may have been switched off in between)."""
+def test_agent_access_requires_a_separate_grant_confirmation(click, served, human):  # noqa: F811
     from tests.host.test_click import refused
 
+    click.signer._execution = lambda entry: True
     intent = sequence.validate_intent(intent_of(agent=AGENT))
     assert sequence.confirm_kind(intent) == "click" and sequence.has_grant(intent)
     plain = sequence.validate_intent(intent_of())
@@ -167,24 +166,43 @@ def test_i3_agent_access_is_a_click_and_a_runner_grant_needs_dashboard_execution
     p = click_prepare(click, intent_of(agent=AGENT))
     assert p["confirm"] == "click"
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"] == {"kind": "click"}
+    assert v["view"]["confirm"] == {"kind": "click", "mode": "press"}
+    assert v["view"]["op"] == "grant" and v["view"]["risk_lines"]
+    assert click.signatures == 0
+    # execution switched off after the review: the sign is refused, nothing is signed
     click.mono.t += 2
-    click.signer._execution = lambda entry: False  # switched off after the review: the click is refused, nothing signed
+    click.signer._execution = lambda entry: False
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
     assert click.signatures == 0
+    # a fresh request signs all five steps, the grant (gr_) last
     click.signer._execution = lambda entry: True
-    p = click_prepare(click, intent_of(agent=AGENT))  # a refused request is spent; a fresh one signs
-    v = click.view(p["request_id"])
+    p2 = click_prepare(click, intent_of(agent=AGENT))
+    v2 = click.view(p2["request_id"])
     click.mono.t += 2
-    out = click.sign(p["request_id"], v["view_digest"])
-    assert click.signatures == 5 and out["grant"].startswith("gr_")  # new, set, two sections, the grant
+    out = click.sign(p2["request_id"], v2["view_digest"])
+    assert click.signatures == 5
+    assert out["grant"].startswith("gr_")
 
 
-def test_i3_the_terminal_word_is_grant(human, tmp_path):
-    rig = Rig(human, tmp_path, intent_of(agent=AGENT))
-    first = rig.first()
-    human.check(first)
-    assert signer.confirm_word(first) == "GRANT"
+def test_a_retained_grant_request_with_an_old_daily_view_is_refused_at_sign(click, served, human, monkeypatch):  # noqa: F811
+    """A request prepared before the press-mode rule, whose View is the old daily one (op new, no risk, arm), must be
+    refused when it is signed."""
+    from orch.click import view as views
+    from orch.click.protocol import ClickError
+
+    click.signer._execution = lambda entry: True
+    p = click_prepare(click, intent_of(agent=AGENT))
+    v = click.view(p["request_id"])
+    real = views.build
+
+    def old_build(*args, **kwargs):  # the View a signer built before the press-mode rule: op new, no risk, arm
+        return {**real(*args, **kwargs), "op": "new", "risk_lines": [], "confirm": {"kind": "click"}}
+
+    monkeypatch.setattr(views, "build", old_build)
+    click.mono.t += 2
+    with pytest.raises(ClickError):
+        click.sign(p["request_id"], v["view_digest"])
+    assert click.signatures == 0
 
 
 def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, tmp_path):
@@ -195,12 +213,16 @@ def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, t
     notes = sequence.build_content(first, verified=True)["notes"]
     joined = "\n".join(notes)
     assert "Not signed: the agent start" in joined
-    assert "Agents may work on any ticket they are allowed to work on" in joined and "GRANT" in joined
+    assert "Agents may work, as you, on any ticket you allow, not only this one, for 8 hours." in joined
+    assert "never to the dashboard" not in joined and "mode:" not in joined  # r7-P10: those are technical details
+    assert "Typed word" not in joined and "GRANT" not in joined
     assert "Nothing here approves the requirements or the plan" in joined
-    assert any("5 steps" in n for n in notes)
+    assert not any("steps" in n for n in notes)
     assert "Create DEMO-" in content["headline"]
     text = signer.render(first, lambda w: ("ws", "ORCH"))
     assert "Not signed: the agent start" in text and "5 signatures, ONE confirmation" in text
+    assert "One confirmation signs all 5 steps." in text  # the technical details carry the note
+    assert "never to the dashboard" in text  # and the full grant sentence (secret route)
     assert not any(
         "Not signed" in n for n in sequence.build_content(Rig(human, tmp_path / "b").first(), verified=True)["notes"]
     )  # a ticket without the agent part says nothing about a start
@@ -212,3 +234,33 @@ def test_i6_the_grant_is_exactly_what_start_agent_uses_today_a_workable_runner_g
     ev = next(e for _, evs, _ in rig.submitted for e in evs if e["type"] == "grant.issued")
     assert (ev["scope"], ev["verbs"], ev["label"], ev["hours"]) == ("workable", "agent", "runner", 3)
     assert out["landed"] == 5
+
+
+def test_review_digest_stable_across_minutes(monkeypatch, click, served, human):  # noqa: F811
+    """J04-01: the review text holds no wall clock, so a View built a minute later has the same digest."""
+    import time
+
+    from tests.host.test_sequence_quick import quick
+
+    t0 = time.time()
+    intents = [
+        sequence.validate_intent(intent_of(agent=AGENT)),
+        sequence.validate_intent(quick(agent=AGENT)),
+    ]
+    for intent in intents:
+        base = sequence.extra_lines(intent)
+        full = sequence.extra_lines(intent, full=True)
+        assert any("from when you sign" in n for n in full)  # r7-P10: the technical details keep the full sentence
+        for dt in (61, 3600):
+            monkeypatch.setattr(time, "time", lambda dt=dt: t0 + dt)
+            assert sequence.extra_lines(intent) == base
+            assert sequence.extra_lines(intent, full=True) == full
+        monkeypatch.undo()
+
+    click.signer._execution = lambda entry: True
+    p = click_prepare(click, quick(agent=AGENT))
+    v = click.view(p["request_id"])
+    monkeypatch.setattr(time, "time", lambda: t0 + 61)
+    click.mono.t += 61
+    out = click.sign(p["request_id"], v["view_digest"])
+    assert out["grant"].startswith("gr_")

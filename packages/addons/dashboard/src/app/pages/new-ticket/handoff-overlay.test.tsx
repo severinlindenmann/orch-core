@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
@@ -35,12 +35,19 @@ async function fill() {
 const gone = () => waitFor(() => expect(screen.queryByRole('dialog', { name: 'New ticket' })).toBeNull(), T)
 
 describe('New ticket with signed hand-off', () => {
-  it('the ticket and its text are ONE signature: closes without a discard prompt and opens the ticket', async () => {
+  it('P19: the ticket and its text are ONE signature: the sheet closes, a named toast with Open (no Undo) says it was created, and the person stays where they were', async () => {
     const r = await fill()
     await r.user.click(await screen.findByRole('button', { name: 'signed' }))
     await gone()
     expect(screen.queryByText('Discard unsaved changes?')).toBeNull()
     expect(screen.queryByText(/not saved yet/)).toBeNull() // no second signature is offered
+    const toast = await screen.findByText(/Created DEMO-0044/, {}, T)
+    const item = toast.closest('[data-sonner-toast]') as HTMLElement
+    expect(within(item).getByText('Export CSV')).toBeInTheDocument()
+    expect(within(item).getByRole('button', { name: 'Open' })).toBeInTheDocument()
+    expect(within(item).queryByRole('button', { name: 'Undo' })).toBeNull()
+    expect(r.router.state.location.pathname).toBe('/board') // no navigation: Open is one click away
+    fireEvent.click(within(item).getByRole('button', { name: 'Open' }))
     await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
   })
 

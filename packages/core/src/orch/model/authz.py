@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from . import breakglass, hubledger, identity, policies, visibility
+from . import breakglass, claims, hubledger, identity, policies, visibility
 from .codes import Code, Refusal
 from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
@@ -25,12 +25,22 @@ ACTOR_RULES: dict[str, str] = {
     "ticket.updated": "PA",
     "status.changed": "PA",
     "ticket.submitted": "PA",
-    "ticket.closed": "P",
+    "ticket.closed": "PA",  # authorize_agent restricts this to a schedule child
     "ticket.reopened": "P",
     "ticket.moved": "P",
     "visibility.changed": "P",
     "people.changed": "P",
     "policy.changed": "P",
+    "schedule.set": "P",
+    "schedule.cancelled": "P",
+    "schedule.fired": "H",
+    "schedule.outcome": "H",
+    "followup.set": "G",
+    "followup.fired": "H",
+    "followup.outcome": "H",
+    "followup.cancelled": "PA",
+    "followup.rescheduled": "P",
+    "followup.restored": "P",
     "claim.taken": "G",
     "claim.released": "PAH",
     "task.started": "G",
@@ -67,12 +77,25 @@ ACTOR_RULES: dict[str, str] = {
     "grant.requested": "P",  # C10: hub-signed only (HUB_ONLY)
     "grant.revoked": "P",
     "device.excluded": "P",  # C10: hub-signed only (HUB_ONLY)
-    "addon.granted": "P",
+    "addon.requested": "P",  # FB15: hub-signed only (HUB_ONLY)
+    "addon.granted": "PH",  # FB15: a host actor only with `request` (hub protocol 8.8b), checked by the type rule
     "addon.disabled": "P",
     "addon.purged": "P",
     "hub.joined": "P",
     "hub.left": "P",
     "hub.pinned": "H",
+    # R2 (#1590): the remote access policy and devices. Only the owner's local act turns it on or adds a device (P,
+    # with the remote owner proof); the host alone records the rest, and none of them can turn anything on.
+    "remote.changed": "P",
+    "remote.device_added": "P",
+    "remote.disabled": "H",
+    "remote.code_issued": "H",
+    "remote.code_burned": "H",
+    "remote.device_removed": "H",
+    "remote.key_rotated": "H",
+    "remote.session_opened": "H",
+    "remote.session_closed": "H",
+    "remote.presence": "H",
 }
 OPERATE = frozenset(
     {
@@ -88,6 +111,8 @@ OPERATE = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
+        "remote.changed",
+        "remote.device_added",
         "restore",
         "invalid.acknowledged",
     }
@@ -99,13 +124,13 @@ HUB_TYPES = frozenset(
         "ticket.created", "ticket.updated", "status.changed", "ticket.submitted", "ticket.closed", "ticket.reopened",
         "claim.released", "log.added", "handoff.written", "question.asked", "question.answered", "gate.approved",
         "gate.changes_requested", "verdict.given", "ticket.moved", "people.changed", "visibility.changed",
-        "addon.disabled", "addon.purged",
+        "addon.disabled", "addon.purged", "addon.requested",
         # phase 5 (hub protocol 8.8, V3-D29)
         "grant.requested", "grant.revoked", "device.excluded", "policy.changed", "settings.changed",
     }
 )  # fmt: skip
 #: C10: types that exist only as hub-signed requests; a device-signed one (no operation writes it) is refused
-HUB_ONLY = frozenset({"grant.requested", "device.excluded"})
+HUB_ONLY = frozenset({"grant.requested", "device.excluded", "addon.requested"})
 DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
 VIEWER_MAY = frozenset(
     {"question.answered", "device.added", "device.removed", "device.revoked", "device.exposed", "device.rotated"}
@@ -152,28 +177,11 @@ def device_valid(dev: Device | None, cert: dict[str, Any], at: int, operate: boo
     return None
 
 
-#: B6: the ``auth`` labels the workspace setting ``sign_methods`` governs, and the method each one is: a convenience
-#: signature is "one click on this computer", the iPhone app's Secure Enclave signature is "the phone". The other labels
-#: (passphrase is the terminal, always allowed; the Mac and cross-platform ones are reserved) are not judged here.
-AUTH_METHOD = {"convenience": "click", "secure-enclave-unlocked": "phone", "hub": "hub"}
-
-
-def method_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
-    """A person event made another way than the workspace's signed ``sign_methods`` allows. Judged by the workspace
-    state at this event's own position (append and replay alike): an event from before the setting, or from before a
-    change of it, stays valid. No setting: every way is allowed, as before."""
-    methods = ws.settings.get("sign_methods")
-    need = AUTH_METHOD.get(str(e.get("auth")))
-    if methods is None or need is None or need in methods:
-        return None
-    return Refusal(Code.SIGN_METHOD, f"auth {e['auth']} ({need}) is not an allowed way to sign in this workspace")
-
-
 def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
 
-def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = True) -> Refusal | None:
+def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws, a, typ, at = core.ws, e["actor"], e["type"], ts(e["at"])
     m = ws.members.get(a["id"])
     if m is None:
@@ -187,12 +195,6 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hu
     else:
         cert = dev.cert
     if (r := device_valid(dev, cert, at, typ in OPERATE)) is not None:
-        return r
-    if (r := method_refusal(ws, e)) is not None:
-        return r
-    if (
-        hub_only and (r := breakglass.local_refusal(ws, e)) is not None
-    ):  # C8/D78: a joined full-mode position signs through the hub
         return r
     if m.role == "viewer" and typ not in VIEWER_MAY:
         return Refusal(Code.ROLE_DENIED, "a viewer cannot write")
@@ -280,8 +282,6 @@ def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: 
     sg = identity.signer(ws, e)
     if isinstance(sg, Refusal):
         return sg
-    if (r := method_refusal(ws, e)) is not None:  # C3b-6: sign_methods without `hub` refuses every hub event
-        return r
     if sg.role is None:  # aliased to a person who is no member now, or no role in the snapshot
         return Refusal(Code.HUB_DENIED, "forbidden_role")
     if sg.role == "viewer" and typ not in VIEWER_MAY:
@@ -302,6 +302,12 @@ def verb_covers(typ: str, verbs: Any, verb_events: Mapping[str, Collection[str]]
     if verbs == "agent":
         return True
     verbs = [v for v in verbs if v not in HUMAN_ONLY]  # a person's own operation is never in a grant (F1 10.1)
+    # V4 introduced these event types: their operation names have no V1 replay verdict to preserve.
+    # Keep judging every pre-existing event with the caller's frozen table.
+    if typ in ("followup.set", "followup.cancelled"):
+        from .emits import EMITS_V4
+
+        return any(typ in EMITS_V4.get(v, ()) for v in verbs)
     if verb_events is None:
         return typ in verbs
     return any(typ in verb_events.get(v, ()) for v in verbs)
@@ -314,9 +320,33 @@ def authorize_agent(
     g = ws.grants.get(a["grant"])
     if g is None:
         return Refusal(Code.GRANT_INVALID, f"unknown grant {a['grant']}")
+    if e["type"] == "ticket.closed":
+        from .schedules_wire import child_run
+
+        if not child_run(core, g):
+            return Refusal(Code.EVENT_BAD_ACTOR, "only a schedule run may close its child")
+    if g.parent is not None:
+        if t is None or t.uid != g.scope:
+            return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one ticket only")
+        session = t.fu_sessions.get(g.id)
+        if session is not None and not claims.in_family(a["session"], session):
+            return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one session family")
+        from .followups import chain_valid
+        from .followups_wire import grant_chain
+        from .schedules_wire import root_valid
+
+        chain = grant_chain(ws, g.id)
+        if chain and not root_valid(core, chain[-1].id, at):
+            return Refusal(Code.GRANT_INVALID, "schedule root is no longer live")
+        if not chain_valid(
+            grant_chain(ws, g.id),
+            at=at,
+            root_person_active=identity.member_role(ws, g.person) in ("owner", "maintainer", "member"),
+        ):
+            return Refusal(Code.GRANT_INVALID, "the follow-up grant chain is revoked")
     if g.person != a["for"]:
         return Refusal(Code.GRANT_INVALID, "an agent's `for` must be the person who issued the grant")
-    if g.revoked or not (ts(g.issued_at) <= at < ts(g.expires_at)):
+    if g.revoked or g.ended or not (ts(g.issued_at) <= at < ts(g.expires_at)):
         return Refusal(Code.GRANT_INVALID, "the grant was revoked or not valid at this position")
     role = identity.member_role(ws, a["for"])  # full mode: capped by the hub role (#1133)
     if role is None or role == "viewer":

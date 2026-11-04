@@ -261,7 +261,7 @@ function view(s: ReposState, c: Ctx) {
         'Uncommitted changes': o?.dirty ?? '—',
         'Last fetch': o?.fetched ?? 'Never',
         'Size on disk': o?.size ?? '—',
-        Worktrees: o?.worktrees ?? 0,
+        'Work copies': o?.worktrees ?? 0,
         'Linked open tickets': count,
         ...(status === 'remote differs' ? { 'Observed remote': o!.remote } : {}),
       }),

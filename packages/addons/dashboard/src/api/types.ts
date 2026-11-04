@@ -68,6 +68,9 @@ export interface Workspace {
   /** Gate policies. `code.applies` says where the code review gate is on (the other gates always apply). */
   gates: Record<GateName, { approvers: string; count: number; not?: string; applies?: CodeReviewApplies }>
   addons: Record<string, WorkspaceAddon>
+  /** A real host: what the server serves for this workspace (`/api/workspaces`). Kept on the data so a feature that turns on
+   *  (an add-on's page) changes it and the shell redraws its menu at once, not at the next unrelated render. */
+  features?: string[]
   counts: Partial<Record<Status, number>>
   needs_you: number
   /** Whether the owner turned the (simulated) relay link on: folded from relay.connected / relay.stopped. */
@@ -82,8 +85,8 @@ export interface Workspace {
   /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
   grant_hours?: number
   /**
-   * The workspace icon, owner-signed (`settings.changed` `set.icon`, core `wsicons`): an icon and a colour of the closed lists.
-   * Absent or null: none signed, the id-derived default is shown. Values outside the lists are ignored by the reader.
+   * The workspace icon, owner-set and unsigned (D6, `PUT workspace/cosmetic`; core `wsicons`): an icon and a colour of the closed lists.
+   * Absent or null: none set, the id-derived default is shown. Values outside the lists are ignored by the reader.
    */
   icon?: { icon: string; colour: string } | null
   /** Whether the host reports the `icon` setting (the picker is offered only then); the mockup always does. */
@@ -239,7 +242,7 @@ export type TaskState = 'todo' | 'doing' | 'done' | 'blocked' | 'skipped'
 export interface TaskStatus extends TaskDef {
   state: TaskState
   lease: { session: string; agent: string; since: string } | null
-  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' | 'unknown' } | null
+  receipt: { exit: number; ms: number; commit?: string; attested_by?: 'agent' | 'host' | 'unknown' } | null
   done_at: string | null
 }
 
@@ -325,6 +328,8 @@ export interface GateStatus {
   /** Real host: what an approval of requirements or plan still lacks (core's completeness rule), e.g. ["plan"]. */
   missing?: string[]
   eligible?: string[]
+  /** Display only: the gate's input binds files or add-on fields, so the combined approval is not offered (the host refuses it anyway). */
+  single_only?: boolean
   note?: string
   /** Hash of the gated content as it is now. */
   hash?: string
@@ -607,6 +612,9 @@ export interface NeedsYouItem {
   text: string
   since: string
   ref?: string // Q2, gate name, ...; for terminal_wait the run id ("Open terminal" opens it)
+  /** terminal_wait only: how the host knows. "wait": the agent is inside `orch wait` (run-10 J04, whatever its terminal
+   *  prints); "hook" / "quiet": its prompt (fallbacks for agents outside orch wait). */
+  source?: 'wait' | 'hook' | 'quiet'
   /** Gate hash an approval item covers (approval items only). */
   hash?: string
   /** Real host only. */
@@ -616,6 +624,8 @@ export interface NeedsYouItem {
   cut?: boolean
   /** The ticket is closed: an open question on it is still listed, but it is not actionable work. */
   closed?: boolean
+  /** Client only (Today, R12 P03): this requirements approval stands for requirements AND plan, signed once (approve_both). */
+  both?: boolean
 }
 
 export interface TodayDocument {
@@ -642,6 +652,11 @@ export interface WorkspaceIdentity {
   /** A real host only: `whoami.runner`, null when the host does not say. */
   runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
 }
+
+/** PUT /api/w/:ws/workspace/cosmetic (D6): the workspace name and icon as they are, unsigned and owner only. */
+export type Cosmetic = { name: string; icon: { icon: string; colour: string } | null }
+/** Only what changes, and `if_current`: the values the page showed (the host refuses a stale one, `cosmetic.conflict`). */
+export type CosmeticBody = { name?: string; icon?: Cosmetic['icon']; if_current: Cosmetic }
 
 // ---------------------------------------------------------------- relay & devices (simulated; orch v2 P2/P3)
 
@@ -815,10 +830,21 @@ export interface AddonDecision {
 
 export type AddonStatus = 'active' | 'disabled' | 'needs_grant'
 
+/** One declared wake event of an addon (addon-api 1.2): what the host polls for while a follow-up waits. */
+export interface AddonEventDecl {
+  kind: string
+  title: string
+  statuses: string[]
+  ref: string
+  interval_s: number
+}
+
 /** The owner's signed addon.granted: what an addon may do at one version, bound to its package hash. */
 export interface AddonGrant {
   version: string
   capabilities: string[]
+  /** addon-api 1.2: the events the addon may wake a waiting follow-up with; signed with the grant. */
+  events?: AddonEventDecl[]
   package_sha256: string
   at: string
   by: string
@@ -888,6 +914,7 @@ export interface AddonUpdate {
   capabilities: string[]
   package_sha256: string
   changelog: string
+  events?: AddonEventDecl[]
   /** The update's action manifest, when it differs from the installed package's (viewer-level actions are part of the grant). */
   actions?: Record<string, ActionMeta>
 }
@@ -902,6 +929,8 @@ export interface AddonPackage {
   capabilities: string[]
   first_party: boolean
   package_sha256: string
+  /** addon-api 1.2: the wake events the published version declares. */
+  events?: AddonEventDecl[]
   /** A newer published version, if any. */
   update: AddonUpdate | null
   /** A preview: core draws a "Preview" chip wherever the title appears (nav, page title, addon manager). Never addon-authored markup. */
@@ -926,7 +955,7 @@ export interface AddonActionResult {
   url?: string
   /** A ticket this action created (e.g. an imported issue): the success toast offers "Open". */
   ticket?: string
-  /** A terminals session this action opened (e.g. Worktrees' "Open terminal here"): core opens the dock on it. */
+  /** A terminals session this action opened (e.g. Work copies' "Open terminal here"): core opens the dock on it. */
   terminal?: string
   /** Reversible: the toast carries "Undo", which posts `undo.action` with `undo.args` (same addon). */
   undo?: { action: string; args?: Record<string, string | number | boolean> }
@@ -967,7 +996,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean; detail?: ErrorDetail }
+  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; ticket?: { key: string; title: string }; commit?: string; message_hidden?: boolean; detail?: ErrorDetail }
 }
 
 /** `Error.detail` (host contract v1.9): the server forwards it only for the click-to-sign refusal codes (H12d-2). */
@@ -990,6 +1019,7 @@ export class ApiError extends Error {
   readonly signed_at?: string | null
   readonly op?: string
   readonly summary?: string
+  readonly ticket?: { key: string; title: string }
   /** A failed records push: the local commit that already landed. */
   readonly commit?: string
   /** The records child's message had characters that are hidden: it is withheld (null) and the code stands. */
@@ -1011,6 +1041,7 @@ export class ApiError extends Error {
     this.signed_at = body.signed_at
     this.op = body.op
     this.summary = body.summary
+    this.ticket = body.ticket
     this.commit = body.commit
     this.message_hidden = body.message_hidden
     this.exit = exit

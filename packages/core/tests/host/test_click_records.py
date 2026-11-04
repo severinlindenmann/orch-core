@@ -263,7 +263,7 @@ def test_a_record_that_cannot_be_written_submits_nothing(click, served, human):
     rid, vd = _ready(click, key)
     root = served.lab.state / "person"
     root.mkdir(exist_ok=True, mode=0o700)
-    os.chmod(root, 0o755)  # not private: the store refuses it
+    os.chmod(root, 0o757)  # writable by others: the store refuses it (a merely readable dir is tightened)
     try:
         refused(lambda: click.sign(rid, vd), "human.click_refused", "record_unavailable")
     finally:

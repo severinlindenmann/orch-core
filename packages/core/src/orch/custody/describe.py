@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from orch import canon
+from orch.addons.manifest import EVENTS_KEY
 from orch.crypto import labels as protocol_labels
 
 from .base import CustodyError
@@ -51,8 +52,14 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "gate.changes_requested": (*_GATE, "text"),
     "verdict.given": ("outcome", "gate_gen", "hash", "policy_hash", "source_sha", "text"),
     "ticket.moved": ("from", "to", "reason"),
+    # a person cancels a follow-up (Schedules, #720): which one and why; `follow_up.cancel` through human.prepare
+    "followup.rescheduled": ("followup", "due", "deadline"),
+    "followup.restored": ("followup",),
+    "schedule.set": ("schedule", "brief", "label", "rule", "starts", "ends", "run_hours", "target", "title"),
+    "schedule.cancelled": ("schedule",),
+    "followup.cancelled": ("followup", "reason"),
     # ticket log, actor A or AU, signed by a person through human.prepare (H5a: person versions of agent ops)
-    "ticket.created": ("key", "ticket_type", "title", "owner"),
+    "ticket.created": ("key", "ticket_type", "title", "owner", "schedule", "via"),
     "ticket.updated": ("base_rev", "set", "sections"),
     "log.added": ("text",),
     # R3: a person marks a task done without a receipt (task.mark_done); the signer allows only {task}
@@ -85,11 +92,29 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
         "sections",
         "artifact_kinds",
         "runtime",
+        EVENTS_KEY,
+        "staged",
     ),
     "addon.disabled": ("name",),
     "addon.purged": ("name",),
     "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"),
     "hub.left": ("hub_id", "binding_seq", "owner_proof"),
+    # R2 (#1590): the owner's remote policy and one confirmed remote device, each with the remote owner proof
+    "remote.changed": ("on", "level", "until_ms", "premises", "agents_risk", "hub_mode", "remote_v", "owner_proof"),
+    "remote.device_added": (
+        "device_id",
+        "name",
+        "person",
+        "presence_kind",
+        "transport_pub",
+        "presence_pub",
+        "level_cap",
+        "expires_ms",
+        "fingerprint",
+        "code_id",
+        "remote_v",
+        "owner_proof",
+    ),
 }
 _WORKSPACE_ONLY = frozenset(
     {
@@ -110,6 +135,8 @@ _WORKSPACE_ONLY = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
+        "remote.changed",
+        "remote.device_added",
     }
 )
 _TICKET_ONLY = frozenset(set(EVENT_FIELDS) - _WORKSPACE_ONLY - {"restore", "invalid.acknowledged", "policy.changed"})
@@ -132,6 +159,16 @@ _SIGNED_OBJECT_FIELDS: dict[str, tuple[str, ...]] = {
     "genesis_pin": ("workspace_id", "wsk_pub", "genesis"),
     # #1198 C9 (hub contract 9.6): the owner proof inside a hub.joined / hub.left, every field shown
     "hub.owner_proof": ("workspace_id", "person_id", "op", "payload", "request_id", "issued_ms", "expires_ms", "dev"),
+    "remote.owner_proof": (
+        "workspace_id",
+        "person_id",
+        "op",
+        "payload",
+        "request_id",
+        "issued_ms",
+        "expires_ms",
+        "dev",
+    ),
 }
 _OBJECT_LABEL_KIND = {
     "sig_device_cert": "device_cert",
@@ -223,6 +260,11 @@ def _event_lines(body: Any) -> list[tuple[str, str]]:
     extra = set(ev) - ENVELOPE - set(EVENT_FIELDS[etype])
     if extra:
         _refuse(f"{etype} carries fields the prompt does not show: {sorted(extra)[:3]}")
+    if etype == "schedule.set":
+        from orch.model.schedules import validate_target
+
+        if error := validate_target(ev):
+            _refuse(error)
     actor = ev.get("actor")
     if not isinstance(actor, dict) or set(actor) != {"kind", "id", "device"} or actor["kind"] != "person":
         _refuse("actor must be exactly {kind: person, id, device}")
@@ -235,11 +277,16 @@ def _event_lines(body: Any) -> list[tuple[str, str]]:
         ("actor.person", _scalar(actor.get("id"))),
         ("actor.device", _scalar(actor.get("device"))),
     ]
+    if etype == "schedule.set" and ev.get("target") == "new":
+        from orch.ops.schedule import describe
+
+        out.append(("schedule", describe(ev["rule"], log, ev["ends"], "new", ev["title"])))
     for field in EVENT_FIELDS[etype]:
         if field not in ev:
             continue
         if field in _EMBEDDED:
-            _object_lines(field, _EMBEDDED[field], ev[field], out)
+            kind = "remote.owner_proof" if field == "owner_proof" and etype.startswith("remote.") else _EMBEDDED[field]
+            _object_lines(field, kind, ev[field], out)
         elif field == "owner" and isinstance(ev[field], dict):
             if set(ev[field]) - {"person", "name", "pk_pub"}:
                 _refuse("owner has unexpected fields")

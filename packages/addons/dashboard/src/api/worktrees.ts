@@ -1,5 +1,5 @@
-// Worktrees of a real host (H11d, host contract section 12.7): one git worktree per ticket and linked repo. Real host
-// only (the mockup keeps its own Worktrees addon page). The routes are the dashboard server's typed ones; nothing here
+// Work copies of a real host (H11d, host contract section 12.7): one git worktree per ticket and linked repo. Real host
+// only (the mockup keeps its own Work copies addon page). The routes are the dashboard server's typed ones; nothing here
 // names a host op. Creating and removing are dashboard-direct writes (no signature): the host decides who may. Every
 // string from the host (branch, folder, title) is untrusted: the page shows it through visible.tsx.
 
@@ -73,7 +73,7 @@ const CODE_TEXT: Record<string, string> = {
   'worktree.in_use': 'An agent run is still attached to this worktree. Stopping agent access does not end a run that already started: open the agents dock at the bottom of the page, press Stop on that run, then remove the worktree.',
   'worktree.branch_in_use': 'That branch is already used by another ticket’s worktree.',
   'worktree.unpinned': 'The folder was made but orch could not take it over safely. Remove it and create it again.',
-  'runner.disabled': 'Running commands from the dashboard is switched off for this workspace on this computer, or the Worktrees add-on is not switched on.',
+  'runner.disabled': 'Running commands from the dashboard is switched off for this workspace on this computer, or the Work copies add-on is not switched on.',
   'runner.stale': 'The helper that runs git is from an older orch version. Restart it in your terminal: orch host enable.',
   'runner.unavailable': 'The helper that runs git is not connected right now. Try again in a moment.',
   'rate.limited': 'Too many worktree changes in a minute. Wait a little and try again.',

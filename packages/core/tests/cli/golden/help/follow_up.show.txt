@@ -1,0 +1,4 @@
+Show a follow-up and its brief.
+usage: orch follow-up show ID
+  ID  follow-up ID
+more: orch describe follow_up.show

@@ -49,6 +49,7 @@ HUB_LABELS = {
     "sig_hub_uk_cert": "orch/v2/hub-uk-cert|",
     "sig_hub_channel_cert": "orch/v2/hub-channel-cert|",
     "sig_hub_snapshot": "orch/v2/hub-snapshot|",
+    "sig_hub_closing": "orch/v2/hub-closing|",  # #1463 (protocol 9.7)
     "sig_hub_route": "orch/v2/hub-route|",
     "sig_hub_publish": "orch/v2/hub-publish|",
     "sig_hub_audit": "orch/v2/hub-audit|",
@@ -233,7 +234,18 @@ FIELDS: dict[str, dict[str, Check]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "ends_ms": lambda x: type(x) is dict,
         "market_policy": lambda x: _wire._policy_ok(x),  # the production validator (orch.hubclient.marketpolicy)
+        "dev": _bool,
+    },
+    "hub.closing": {  # #1463 (protocol 9.7)
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "binding_seq": _int_min(1),
+        "removal_id": _hex16,
+        "issued_ms": _int_min(0),
+        "ends_ms": _int_min(1),
         "dev": _bool,
     },
     "hub.binding": {
@@ -265,10 +277,10 @@ FIELDS: dict[str, dict[str, Check]] = {
     },
     "hub.publish_approval": {
         "workspace_id": _hex16,
-        "hub_id": _hex16,
+        "hub_id": lambda x: x is None or _hex16(x),  # null on the direct 12.1 path (M4)
         "device_id": _hex16,
         "request_hash": _b64u_n(32),
-        "access": _enum("public"),
+        "access": _enum("public", "password", "company", "group"),
     },
 }
 
@@ -279,6 +291,7 @@ LABEL_OF_KIND = {
     "hub.uk_cert": "sig_hub_uk_cert",
     "hub.channel_cert": "sig_hub_channel_cert",
     "hub.snapshot": "sig_hub_snapshot",
+    "hub.closing": "sig_hub_closing",
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
@@ -479,6 +492,31 @@ def verify_channel_cert(
 # --- HK_op: the group snapshot --------------------------------------------------------------------------------------
 
 
+def verify_closing(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    binding_seq: int,
+    now_ms: int,
+    dev_mode: bool,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """#1463 (protocol 9.7): a ``hub.closing`` notice against the host's own workspace and CURRENT binding."""
+    o = _under_card(signed, "hub.closing", held, dev_mode, revoked_op_certs)
+    if now_ms >= held["op_cert"]["expires_ms"]:
+        raise Refused("cert_expired")
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if o["binding_seq"] != binding_seq:
+        raise Refused("stale_binding")
+    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS or not o["issued_ms"] < o["ends_ms"] <= o["issued_ms"] + 7 * 86_400_000:
+        raise Refused("cert_invalid")
+    if now_ms >= o["ends_ms"]:
+        raise Refused("cert_expired")
+    return o
+
+
 def verify_snapshot(
     signed: Any,
     held: Mapping[str, Any],
@@ -495,6 +533,11 @@ def verify_snapshot(
     if any(not _hex16(u) or r not in ROLES or type(r) is not str for u, r in roles.items()):
         raise Refused("malformed")
     if any(not _hex16(c) for c in revoked) or revoked != sorted(set(revoked)):
+        raise Refused("malformed")
+    ends = o["ends_ms"]
+    if any(
+        not _hex16(u) or u not in roles or type(t) is not int or not o["issued_ms"] < t < 2**53 for u, t in ends.items()
+    ):
         raise Refused("malformed")
     if o["workspace_id"] != workspace_id:
         raise Refused("other_workspace")
@@ -778,6 +821,9 @@ def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> di
 #: op -> (direction of the request, mode it exists in or None for both, exact body fields)
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
+    "hub_where": ("w2h", None, {}),
+    "closing_notice": ("h2w", None, {"notice": lambda x: type(x) is dict}),  # #1463 (protocol 9.7, 10.2)
+    "closing_get": ("w2h", None, {}),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),
     "route_in": ("h2w", None, {"envelope": _b64u_any}),
@@ -792,6 +838,7 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "pk_pub": _pub,
             "binding": lambda x: type(x) is dict,
             "owner_proof": lambda x: x is None or type(x) is dict,  # #1198 C9
+            "alias_users": lambda x: type(x) is list and all(type(u) is str for u in x),  # optional (run 12)
         },
     ),
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
@@ -814,8 +861,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "sealed": _b64u_any,
         },
     ),
-    "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
-    "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
+    "share_put": ("w2h", None, {"item_id": _hex16, "sealed": _b64u_any}),
+    "share_revoke": ("w2h", None, {"item_id": _hex16}),
 }
 
 
@@ -823,14 +870,34 @@ def link_label(direction: str) -> bytes:
     return L["sig_hub_link"] if direction == "w2h" else L["sig_hub_route"]
 
 
+def link_signed_bytes(direction: str, exporter: bytes, o: Any) -> bytes:
+    """``label || exporter || cj(o)`` (protocol 10.2, R1)."""
+    if type(exporter) is not bytes or len(exporter) != 32:
+        raise Refused("malformed")
+    return link_label(direction) + exporter + signing_bytes(b"", o)
+
+
 def verify_link(
-    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, mode: str, pub: bytes, now_ms: int
+    signed: Any,
+    *,
+    direction: str,
+    hub_id_: str,
+    workspace_id: str,
+    mode: str,
+    pub: bytes,
+    now_ms: int,
+    exporter: bytes,
 ) -> dict[str, Any]:
     """``pub`` is WSK for w2h (checked by the hub) and the card's HK_op for h2w (checked by the host). Requests are
     messages with ``re: null`` in the op's request direction; a reply has ``re`` = the request's ``seq`` and the other
     direction, and its body is either the op's reply body or ``{"error": code}`` (not validated in H0)."""
     o = _envelope(signed, "hub.link")
-    _signature(signed, link_label(direction), pub)
+    try:
+        sig = unb64u(signed["sig"], SIG_LEN)
+    except CanonError:
+        raise Refused("malformed") from None
+    if not verify_sig(pub, sig, link_signed_bytes(direction, exporter, o)):
+        raise Refused("bad_signature")
     _fields(o, "hub.link")
     if o["dir"] != direction:
         raise Refused("malformed")
@@ -849,7 +916,11 @@ def verify_link(
         raise Refused("other_workspace")
     if abs(now_ms - o["ts_ms"]) > LINK_WINDOW_MS:
         raise Refused("stale_timestamp")
-    if is_request and (set(o["body"]) != set(body) or not all(ok(o["body"][k]) for k, ok in body.items())):
+    optional = {"join": {"alias_users"}}.get(o["op"], set())
+    if is_request and (
+        not set(body) - optional <= set(o["body"]) <= set(body)
+        or not all(ok(o["body"][k]) for k, ok in body.items() if k in o["body"])
+    ):
         raise Refused("malformed")
     return o
 

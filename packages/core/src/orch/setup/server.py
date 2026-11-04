@@ -352,7 +352,8 @@ class SetupServer:
             return status, out
         except SetupError as e:
             return e.status, {"error": {"code": e.code, "message": e.message, **e.extra}}
-        except Exception:  # noqa: BLE001 - never a traceback or a value to the browser
+        except Exception as e:  # noqa: BLE001 - never a traceback or a value to the browser
+            self.notify(f"a setup step failed ({type(e).__name__}); try again on the page")  # the class only, no value
             return 500, {"error": {"code": "internal", "message": "setup failed"}}
 
 

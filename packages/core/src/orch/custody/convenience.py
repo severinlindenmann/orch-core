@@ -30,7 +30,8 @@ import stat
 from pathlib import Path
 from typing import Any, Protocol
 
-from orch import canon, crypto
+from orch import canon, childenv, crypto
+from orch.privdir import others_can_write
 
 from .base import (
     DEVICE_KEY_LABELS,
@@ -112,18 +113,34 @@ def _check_ancestors(path: Path) -> None:
             raise CustodyError(f"{current} is not a directory")
         if st.st_uid not in (0, uid):
             raise CustodyError(f"{current} belongs to another user")
-        if st.st_mode & 0o022 and not st.st_mode & stat.S_ISVTX:
+        if others_can_write(st, uid) and not st.st_mode & stat.S_ISVTX:
             raise CustodyError(f"{current} is writable by others")
 
 
-def _check_private_fd(fd: int, what: str) -> None:
+def _check_private_fd(fd: int, what: str, path: str | None = None) -> None:
     st = os.fstat(fd)
     if not stat.S_ISDIR(st.st_mode):
         raise CustodyError(f"{what} is not a directory")
     if st.st_uid != os.getuid():
         raise CustodyError(f"{what} belongs to another user")
     if st.st_mode & 0o077:
-        raise CustodyError(f"{what} is accessible by others (mode {st.st_mode & 0o777:03o}); it must be 0700")
+        from orch.privdir import healable
+
+        where = path or what
+        if not healable(st.st_mode):  # others could WRITE here (files may have been planted): never heal silently
+            raise CustodyError(
+                f"{where} is writable by others (mode {st.st_mode & 0o777:03o}); check what is in it, "
+                f"then run: chmod 700 {where}"
+            )
+        # only read/execute for others (e.g. launchd made it 0744 for a log): ours, so tighten it
+        # safe to heal: fd is our O_NOFOLLOW directory descriptor, owned by us (checked above); every key file in it is
+        # still opened O_NOFOLLOW + fstat and refused for a foreign uid, any 0o077 bit or st_nlink > 1 (read_private)
+        try:
+            os.fchmod(fd, 0o700)
+        except OSError:
+            raise CustodyError(
+                f"{where} is accessible by others (mode {st.st_mode & 0o777:03o}); run: chmod 700 {where}"
+            ) from None
 
 
 def secure_dir(root: Path, parts: tuple[str, ...], *, create: bool) -> int:
@@ -144,7 +161,8 @@ def secure_dir(root: Path, parts: tuple[str, ...], *, create: bool) -> int:
     except OSError as exc:
         raise CustodyError(f"cannot open {root}: {exc.strerror}") from None
     try:
-        _check_private_fd(fd, str(root))
+        _check_private_fd(fd, str(root), str(root))
+        here = str(root)
         for part in parts:
             if not part or part in (".", "..") or "/" in part:
                 raise CustodyError("bad path component")
@@ -161,7 +179,8 @@ def secure_dir(root: Path, parts: tuple[str, ...], *, create: bool) -> int:
                 raise CustodyError(f"cannot open {part}: {exc.strerror}") from None
             os.close(fd)
             fd = nxt
-            _check_private_fd(fd, part)
+            here = os.path.join(here, part)
+            _check_private_fd(fd, part, here)
         return fd
     except BaseException:
         os.close(fd)
@@ -252,7 +271,11 @@ def _restrict_windows(path: Path, *, directory: bool) -> None:  # pragma: no cov
     user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ['USERNAME']}".lstrip("\\")
     grant = f"{user}:(OI)(CI)F" if directory else f"{user}:F"
     r = subprocess.run(
-        ["icacls", str(path), "/inheritance:r", "/grant:r", grant], capture_output=True, text=True, check=False
+        ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=childenv.sanitize(os.environ),
     )
     if r.returncode != 0:
         raise CustodyError(f"cannot restrict {path.name} to its owner: {r.stdout.strip() or r.stderr.strip()}")

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import calendar
 import collections
 import contextlib
@@ -58,16 +59,34 @@ if TYPE_CHECKING:
 __all__ = ["PUBLISH_CAPS", "PUBLISH_OPS", "WRITE_OPS", "execute", "facts_for", "serve"]
 
 PUBLISH_OPS: dict[str, int] = {
+    "publish.stage_upload": 1,
     "publish.prepare": 1,
     "publish.send": 1,
     "publish.revoke": 1,
     "publish.list": 1,
     "publish.discard": 1,
     "publish.register": 1,
+    "publish.extend": 1,
+    "publish.password": 1,
 }
-WRITE_OPS = frozenset({"publish.prepare", "publish.send", "publish.revoke", "publish.discard", "publish.register"})
+REGISTER_PER_MINUTE = 3
+WRITE_OPS = frozenset(
+    {
+        "publish.stage_upload",
+        "publish.prepare",
+        "publish.send",
+        "publish.revoke",
+        "publish.discard",
+        "publish.register",
+        "publish.extend",
+        "publish.password",
+    }
+)
 #: the ops that talk to the server (their network half runs off the workspace worker, in :func:`execute`)
-NETWORK_OPS = frozenset({"publish.send", "publish.revoke", "publish.register"})
+NETWORK_OPS = frozenset({"publish.send", "publish.revoke", "publish.register", "publish.extend", "publish.password"})
+#: M4 S2 (#1453): the longest a link can be extended to, counted from now (orch-publish enforces the same bound)
+EXTEND_MAX_DAYS = 30
+PASSWORD_WORDS = 5
 PUBLISH_CAPS = ["publish/1"]
 ADDON = "publish"
 PER_MINUTE = 10
@@ -75,6 +94,12 @@ MAX_STAGED = 20
 AGENT_STAGES = 3
 SCAN_CHUNK = 200
 STAGE_BYTES = 200 * 1024 * 1024
+#: P05 (J07-02): a file a person picks from this computer in the dashboard waits (0700, outside any stage) until the
+#: next ``publish.prepare`` takes it into the stage that is hashed and signed. One request carries the whole file
+#: (the host frame is 2 MiB), so a pick is at most this big; the pending room is bounded and the oldest is dropped.
+UPLOAD_BYTES = 1024 * 1024
+MAX_UPLOADS = 20
+_UPLOAD_ID = re.compile(r"pu_[0-9a-f]{32}")
 MAX_RECORDS = 500
 #: a staged copy no one finished with is dropped after this; a signature is good for a shorter time
 STAGE_KEEP = 24 * 3600
@@ -82,7 +107,18 @@ APPROVAL_VALID = 3600
 _REF = {"type": "string", "minLength": 1, "maxLength": 80}
 _STAGED = {"type": "string", "pattern": r"^ps_[0-9a-f]{32}$"}
 _SHARE = {"type": "string", "pattern": r"^[0-9a-f]{32}$"}
+_UPLOAD = {"type": "string", "pattern": r"^pu_[0-9a-f]{32}$"}
 _SCHEMAS = {
+    # a picked file's bytes, base64, in the request itself; the name is checked again by approval.check_name
+    "publish.stage_upload": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "minLength": 1, "maxLength": 128},
+            "b64": {"type": "string", "minLength": 4, "maxLength": (UPLOAD_BYTES + 2) // 3 * 4},
+        },
+        "required": ["name", "b64"],
+        "additionalProperties": False,
+    },
     "publish.prepare": {
         "type": "object",
         "properties": {
@@ -90,7 +126,15 @@ _SCHEMAS = {
             "artifacts": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1, "maxLength": 128},
-                "minItems": 1,
+                "minItems": 0,
+                "maxItems": approval.LIMITS["files"],
+                "uniqueItems": True,
+            },
+            "uploads": {"type": "array", "items": _UPLOAD, "maxItems": approval.LIMITS["files"], "uniqueItems": True},
+            # P03: plain names of files directly in the ticket's own work folder (the host resolves them, never a path)
+            "workfiles": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1, "maxLength": 128},
                 "maxItems": approval.LIMITS["files"],
                 "uniqueItems": True,
             },
@@ -98,7 +142,7 @@ _SCHEMAS = {
             "days": {"enum": list(approval.DAYS)},
             "views": {"enum": list(approval.VIEWS)},
         },
-        "required": ["ref", "artifacts"],
+        "required": ["ref"],
         "additionalProperties": False,
     },
     "publish.send": {
@@ -108,6 +152,21 @@ _SCHEMAS = {
         "additionalProperties": False,
     },
     "publish.revoke": {
+        "type": "object",
+        "properties": {"share_id": _SHARE},
+        "required": ["share_id"],
+        "additionalProperties": False,
+    },
+    # `days` is a JSON integer 1..30 and nothing else (no bool, no float); the server bounds it again
+    "publish.extend": {
+        "type": "object",
+        "properties": {"share_id": _SHARE, "days": {"type": "integer", "minimum": 1, "maximum": EXTEND_MAX_DAYS}},
+        "required": ["share_id", "days"],
+        "additionalProperties": False,
+    },
+    # no `password`, no `record`, no `remove`: the host draws the password and builds the record itself (C5), and
+    # taking a password away would widen access, so there is no such request
+    "publish.password": {
         "type": "object",
         "properties": {"share_id": _SHARE},
         "required": ["share_id"],
@@ -232,17 +291,46 @@ def _person(call: Call) -> str:
     return call.viewer
 
 
-def _rate(call: Call, what: str) -> None:
+def _display(text: Any, limit: int) -> str | None:
+    """One line of display text for the share list: white space collapsed, every character the contract refuses
+    (hidden, bidi, control) dropped, cut to ``limit`` UTF-8 bytes on a character boundary; ``None`` if empty."""
+    from orch.hubclient.sharefmt import text_ok
+
+    if not isinstance(text, str):
+        return None
+    words = ("".join(c for c in word if text_ok(c, 4)) for word in text.split())
+    line = " ".join(w for w in words if w)
+    while line and len(line.encode("utf-8")) > limit:
+        line = line[:-1].rstrip()
+    return line or None
+
+
+def _by_name(call: Call) -> str | None:
+    """The signed-in person's name from the host's own member record (never from the request)."""
+    call.service.store.refresh()
+    member = call.service.store.state.workspace.members.get(call.viewer)
+    return _display(member.name, 60) if member is not None else None
+
+
+def _owner(call: Call) -> None:
+    """Registering sends the workspace's delegation to the signed server: the owner's act (the role as it is now)."""
+    call.service.store.refresh()
+    member = call.service.store.state.workspace.members.get(call.viewer)
+    if member is None or member.role != "owner":
+        raise HostError("role.denied", "only a workspace owner registers this workspace with the publish server")
+
+
+def _rate(call: Call, what: str, limit: int | None = None) -> None:
     key = (call.service.workspace_id, str(call.viewer), what)
     now = time.monotonic()
     with _MU:
         q = _RATE.setdefault(key, collections.deque())
         while q and now - q[0] > 60:
             q.popleft()
-        if len(q) >= PER_MINUTE:
+        if len(q) >= (limit or PER_MINUTE):
             raise HostError(
                 "rate.limited",
-                "at most 10 publish requests per minute",
+                f"at most {limit or PER_MINUTE} publish requests per minute",
                 retry_after_ms=int((60 - (now - q[0])) * 1000) + 1,
             )
         q.append(now)
@@ -378,6 +466,131 @@ def _save_records(service: WorkspaceService, rows: list[dict[str, Any]]) -> None
     _put_json(_base(service) / "shares.json", {"v": 1, "shares": rows[-MAX_RECORDS:]})
 
 
+# -- uploads (a file picked on this computer, P05) ---------------------------------------------------------------------
+
+
+def _upload_dir(service: WorkspaceService, upload_id: str) -> Path:
+    if _UPLOAD_ID.fullmatch(upload_id or "") is None:
+        raise HostError("not_found", "no such picked file")
+    return _base(service) / "upload" / upload_id
+
+
+def _load_upload(service: WorkspaceService, upload_id: str, by: str) -> dict[str, Any]:
+    """A pick's record, only for the person who made it (another person's pick is as good as absent)."""
+    meta = _read_json(service, _upload_dir(service, upload_id) / "meta.json")
+    if (
+        not isinstance(meta, dict)
+        or meta.get("upload_id") != upload_id
+        or meta.get("ws") != service.workspace_id
+        or meta.get("by") != by
+        or not isinstance(meta.get("size"), int)
+        or not isinstance(meta.get("sha256"), str)
+    ):
+        raise HostError("not_found", "a picked file is gone: pick it again")
+    try:
+        approval.check_name(meta["name"])
+    except (ValueError, KeyError, TypeError):
+        raise HostError("not_found", "a picked file is gone: pick it again") from None
+    return meta
+
+
+def _upload_read(service: WorkspaceService, meta: dict[str, Any], room: int) -> bytes:
+    """A picked file, opened without following a link and held to its recorded size and hash (like a stage file)."""
+    try:
+        fd = os.open(
+            _upload_dir(service, meta["upload_id"]) / "data", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+        )
+    except OSError:
+        raise HostError("not_found", "a picked file is gone: pick it again") from None
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_uid != service.host_uid
+            or info.st_size != meta["size"]
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise HostError("not_found", "a picked file changed: pick it again")
+        if info.st_size > room:
+            raise HostError("quota.host", "the staged copies would use too much room: discard some")
+        data = handle.read(meta["size"] + 1)
+    if len(data) != meta["size"] or hashlib.sha256(data).hexdigest() != meta["sha256"]:
+        raise HostError("not_found", "a picked file changed: pick it again")
+    return data
+
+
+def _uploads(service: WorkspaceService) -> list[tuple[float, str]]:
+    root = _base(service) / "upload"
+    out = []
+    with contextlib.suppress(OSError):
+        for name in os.listdir(root):
+            if _UPLOAD_ID.fullmatch(name):
+                with contextlib.suppress(OSError):
+                    out.append((os.lstat(root / name).st_mtime, name))
+    return sorted(out)
+
+
+def _stage_upload(call: Call, args: dict[str, Any]) -> dict[str, Any]:
+    """``publish.stage_upload {name, b64}``: a person's pick from this computer, kept aside (0700, 0600) and hashed.
+    Nothing is shared: the file goes into the share only when ``publish.prepare`` names it, and it is the stage's copy
+    that the person signs. Column P only; an agent never adds bytes of its own to a share."""
+    service = call.service
+    _person(call)
+    _gate(call)
+    try:
+        name = approval.check_name(args["name"])
+    except ValueError as exc:
+        raise HostError("invalid.input", f"{args['name'][:60]!r}: {exc}"[:300]) from None
+    try:
+        data = base64.b64decode(args["b64"], validate=True)
+    except (binascii.Error, ValueError):
+        raise HostError("invalid.input", "the file is not valid base64") from None
+    if not data:
+        raise HostError("invalid.input", f"{name} is empty")
+    if len(data) > UPLOAD_BYTES:
+        raise HostError("quota.host", f"a file picked here is at most {approval.human_size(UPLOAD_BYTES)}")
+    _rate(call, "upload", 30)
+    with _MU:
+        _private(service, "upload")
+        now = service.clock()
+        pending = _uploads(service)
+        for mtime, old in pending:  # stale ones go; at the cap the oldest makes room
+            if now - mtime > STAGE_KEEP:
+                shutil.rmtree(_upload_dir(service, old), ignore_errors=True)
+        mine = []  # the cap is per person: one person's picks never push out another's
+        for mtime, old in _uploads(service):
+            meta = _read_json(service, _upload_dir(service, old) / "meta.json")
+            if isinstance(meta, dict) and meta.get("by") == str(call.viewer):
+                mine.append((mtime, old))
+        for _, old in mine[: max(0, len(mine) - MAX_UPLOADS + 1)]:
+            shutil.rmtree(_upload_dir(service, old), ignore_errors=True)
+        upload_id = "pu_" + secrets.token_hex(16)
+        digest = hashlib.sha256(data).hexdigest()
+        tmp = _base(service) / "upload" / f".new-{secrets.token_hex(8)}"
+        try:
+            os.mkdir(tmp, 0o700)
+            _write(tmp / "data", data)
+            _put_json(
+                tmp / "meta.json",
+                {
+                    "v": 1,
+                    "upload_id": upload_id,
+                    "ws": service.workspace_id,
+                    "name": name,
+                    "size": len(data),
+                    "sha256": digest,
+                    "by": str(call.viewer),
+                },
+            )
+            os.rename(tmp, _upload_dir(service, upload_id))
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+    _audit(call, "publish.stage_upload", upload=upload_id, size=len(data))
+    return {"upload_id": upload_id, "name": name, "size": len(data), "sha256": digest}
+
+
 # -- prepare -----------------------------------------------------------------------------------------------------------
 
 
@@ -387,7 +600,19 @@ def _ticket(call: Call, ref: str) -> Any:
     return Viewer.of(call).ticket(call.service.store, ref)
 
 
-def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes, str]:
+def _hub_too_big(name: str, size: int) -> HostError:
+    """The refusal of a file that does not fit one ``publish_out`` frame: said at prepare, before anything is staged or
+    signed (``publish.send`` keeps its own check). The limit comes from the one number in the hub client."""
+    from orch.hubclient.publish import HUB_FILE_MAX
+
+    return HostError(
+        "quota.host",
+        f"Files over {approval.human_size(HUB_FILE_MAX)} can't go through the hub yet. "
+        f"({name} is {approval.human_size(size)}.)",
+    )
+
+
+def _artifact_bytes(call: Call, view: Any, name: str, room: int, hub_max: int | None = None) -> tuple[bytes, str]:
     """One artifact of the ticket, by the ticket manifest and its digest (as ``artifact.get``): opened without following
     a link, one hard link, a regular file, hashed to the digest the log names."""
     from .visibility import Viewer
@@ -405,6 +630,8 @@ def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes,
         info = os.fstat(handle.fileno())
         if info.st_size > approval.LIMITS["file_bytes"]:
             raise HostError("quota.host", f"{art.name} is over {approval.human_size(approval.LIMITS['file_bytes'])}")
+        if hub_max is not None and info.st_size > hub_max:
+            raise _hub_too_big(art.name, info.st_size)
         if info.st_size > room:  # before a byte is read: the stage cap (workspace) and the share cap
             raise HostError("quota.host", "the staged copies would use too much room: discard some")
         data = handle.read(approval.LIMITS["file_bytes"] + 1)
@@ -412,6 +639,69 @@ def _artifact_bytes(call: Call, view: Any, name: str, room: int) -> tuple[bytes,
     if digest != art.digest:
         raise HostError("not_found", f"the file of artifact {art.name} does not match the digest the ticket records")
     return data, digest.removeprefix("sha256:")
+
+
+def _work_files(
+    call: Call,
+    view: Any,
+    names: list[str],
+    files: list[dict[str, Any]],
+    blobs: list[bytes],
+    used: int,
+    total: int,
+    hub_max: int | None = None,
+) -> None:
+    """P03: files of the ticket's own work folder, by plain name. The host resolves each below
+    ``<project>/.orch-work/<KEY>`` through descriptors (no link followed, no path), checks the name like any share
+    file, and reads and hashes the bytes now; the stage's copy is what the person signs."""
+    from orch.layout import LayoutError, WorkdirTooBig, workdir_read
+    from orch.ops.workdir import has_codebase
+
+    from .visibility import Viewer
+    from .workdirs import may_manage_workdir
+
+    service = call.service
+    if not may_manage_workdir(Viewer.of(call), view):  # exactly who may delete the folder may share what is in it
+        raise HostError(
+            "op.not_allowed", "only an owner, a maintainer, the ticket's owner or an assignee shares its working files"
+        )
+    if has_codebase(service.store, view):
+        raise HostError("invalid.input", f"{view.key} has a codebase: it has no work folder")
+    for name in names:
+        try:
+            approval.check_name(name)
+        except ValueError as exc:
+            raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
+        room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total, approval.LIMITS["file_bytes"])
+        if hub_max is not None:
+            room = min(room, hub_max)
+        try:
+            data = workdir_read(service.store.layout, view.key, name, max(room, 0))
+        except WorkdirTooBig as exc:
+            if exc.size > approval.LIMITS["file_bytes"]:
+                raise HostError(
+                    "quota.host", f"{name} is over {approval.human_size(approval.LIMITS['file_bytes'])}"
+                ) from None
+            if hub_max is not None and exc.size > hub_max:
+                raise _hub_too_big(name, exc.size) from None
+            if (
+                approval.LIMITS["share_bytes"] - total <= STAGE_BYTES - used - total
+            ):  # the share cap binds, not the stage
+                raise HostError(
+                    "quota.host", f"a share holds at most {approval.human_size(approval.LIMITS['share_bytes'])}"
+                ) from None
+            raise HostError("quota.host", "the staged copies would use too much room: discard some") from None
+        except LayoutError as exc:
+            raise HostError("not_found", str(exc)[:300]) from None
+        if not data:
+            raise HostError("invalid.input", f"{name} is empty")
+        total += len(data)
+        if total > approval.LIMITS["share_bytes"]:
+            raise HostError(
+                "quota.host", f"a share holds at most {approval.human_size(approval.LIMITS['share_bytes'])}"
+            )
+        files.append({"name": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
+        blobs.append(data)
 
 
 def _claim_ok(call: Call, view: Any) -> bool:
@@ -427,6 +717,12 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         raise HostError("op.not_allowed", "an agent prepares shares only on the ticket its session claims")
     _gate(call)
     cfg = _config(service)
+    route = _hub_route(service, sending=True)  # a hub that cannot carry the share is said now, before any copy
+    hub_max = None
+    if route is not None:  # a share through the hub travels in one link frame: say the file limit before the review
+        from orch.hubclient.publish import HUB_FILE_MAX
+
+        hub_max = HUB_FILE_MAX
     kind = args.get("kind", "secret")
     days = args.get("days", 7)
     views = args.get("views", 1 if kind == "once" else 0)
@@ -441,24 +737,47 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     if len(stages) >= MAX_STAGED:
         raise HostError("quota.host", f"at most {MAX_STAGED} staged copies wait at once: discard some")
     used = sum(f["size"] for m in stages for f in m.get("files", []))
-    lowered = [n.lower() for n in args["artifacts"]]
+    names = list(args.get("artifacts", []))
+    upload_ids = list(args.get("uploads", []))
+    work_names = list(args.get("workfiles", []))
+    if not names and not upload_ids and not work_names:
+        raise HostError("invalid.input", "publish.prepare: pick at least one file")
+    if work_names and call.column.name != "P":
+        raise HostError("op.not_allowed", "only a person adds a file from the ticket's work folder")
+    if upload_ids and call.column.name != "P":
+        raise HostError("op.not_allowed", "only a person adds a file from this computer")
+    picked = [_load_upload(service, u, str(call.viewer)) for u in upload_ids]
+    lowered = [n.lower() for n in [*names, *work_names, *(m["name"] for m in picked)]]
     if len(set(lowered)) != len(lowered):
         raise HostError(
             "invalid.input", "two file names differ only in upper and lower case: the server would merge them"
         )
-    for name in args["artifacts"]:
+    if len(lowered) > approval.LIMITS["files"]:
+        raise HostError("invalid.input", f"a share holds at most {approval.LIMITS['files']} files")
+    for name in names:
         try:
             approval.check_name(name)
         except ValueError as exc:
             raise HostError("invalid.input", f"{name[:60]!r}: {exc}"[:300]) from None
         room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
-        data, digest = _artifact_bytes(call, view, name, room)
+        data, digest = _artifact_bytes(call, view, name, room, hub_max)
         total += len(data)
         if total > approval.LIMITS["share_bytes"]:
             raise HostError(
                 "quota.host", f"a share holds at most {approval.human_size(approval.LIMITS['share_bytes'])}"
             )
         files.append({"name": name, "size": len(data), "sha256": digest})
+        blobs.append(data)
+    if work_names:
+        _work_files(call, view, work_names, files, blobs, used, total, hub_max)
+        total = sum(f["size"] for f in files)
+    for meta_up in picked:  # the picked files: read and hashed again now; the stage's hash is what is signed
+        if hub_max is not None and meta_up["size"] > hub_max:
+            raise _hub_too_big(meta_up["name"], meta_up["size"])
+        room = min(STAGE_BYTES - used - total, approval.LIMITS["share_bytes"] - total)
+        data = _upload_read(service, meta_up, room)
+        total += len(data)
+        files.append({"name": meta_up["name"], "size": len(data), "sha256": meta_up["sha256"]})
         blobs.append(data)
     _rate(call, "prepare")
     _sweep(service)
@@ -477,6 +796,10 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         "files": files,
         "share_id": secrets.token_hex(16),
         "by": str(call.viewer),
+        # display members of the server's list (#1636): from the host's own records, never from the request
+        "label": _display(view.title, 80) or view.key,
+        "by_kind": origin,
+        "by_name": _by_name(call),
     }
     _private(service, "stage")
     if len(_stages(service)) >= MAX_STAGED:
@@ -493,6 +816,8 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
+    for meta_up in picked:  # taken into the stage: the pending copy is gone
+        shutil.rmtree(_upload_dir(service, meta_up["upload_id"]), ignore_errors=True)
     _audit(call, "publish.prepare", ticket=view.key, staged=staged_id, files=len(files), kind=kind, origin=origin)
     return {
         "staged_id": staged_id,
@@ -524,6 +849,7 @@ def facts_for(service: WorkspaceService, args: dict[str, Any], call: Call) -> ap
     _verify_stage(service, meta)
     view = _ticket(call, meta["ticket"]["uid"])
     _may_share(call, view)
+    _hub_route(service, sending=True)  # refuse BEFORE the person signs when the hub path is not usable
     return approval.ApprovalFacts(meta["staged_id"], view.key, _text(service, meta, cfg))
 
 
@@ -555,6 +881,8 @@ def _signed_approval(call: Call, meta: dict[str, Any], text: str) -> bool:
             if ev.get("type") != "log.added" or ev.get("text") != text:
                 continue
             actor = ev.get("actor") or {}
+            if ev.get("auth") == "hub" or "via" in actor:  # a signature made at this computer only, never over a hub
+                continue
             if (
                 actor.get("kind") == "person"
                 and actor.get("id") == call.viewer
@@ -589,6 +917,8 @@ def serve(call: Call) -> dict[str, Any]:
     if op in WRITE_OPS and service.state == "degraded":
         raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
     service.store.refresh()
+    if op == "publish.stage_upload":
+        return ok_result(_stage_upload(call, args))
     if op == "publish.prepare":
         return ok_result(_prepare(call, args))
     if op == "publish.list":
@@ -601,13 +931,16 @@ def serve(call: Call) -> dict[str, Any]:
 def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     service = call.service
     person = _person(call)
+    if op == "publish.register":
+        _owner(call)
     _gate(call)
     cfg = _config(service)
+    _hub_guard(service, sending=op == "publish.send")  # #1838: settings that came from a hub that is gone or moved
     plan: dict[str, Any] = {"op": op, "cfg": cfg, "person": person}
     if op == "publish.register":
-        _rate(call, "register")
+        _rate(call, "register", REGISTER_PER_MINUTE)
         plan["reg"] = _delegation(call)
-        plan["hub"] = _hub_route(service)
+        plan["hub"] = _hub_route(service, guard=False)  # _hub_guard ran above
         _plan_card(call, plan)
         return plan
     if op == "publish.revoke":
@@ -617,8 +950,10 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         _ticket(call, rec["ticket"])  # a ticket the person may not see is not theirs to act on
         _rate(call, "revoke")
         plan["record"] = rec
-        plan["hub"] = _hub_route(service)
+        plan["hub"] = _hub_route(service, guard=False)
         return plan
+    if op in ("publish.extend", "publish.password"):
+        return _plan_link(call, plan, op, args)
     meta = _load_stage(service, args["staged_id"])
     view = _ticket(call, meta["ticket"]["uid"])
     _may_share(call, view)
@@ -632,11 +967,60 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             "must match this staged copy and this server exactly",
         )
     _rate(call, "send")
-    plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest(), hub=_hub_route(service))
-    if _registered(service, cfg) is None:
+    plan.update(
+        meta=meta,
+        text_hash=hashlib.sha256(text.encode()).hexdigest(),
+        hub=_hub_route(service, sending=True, guard=False),
+    )
+    registered = _registered(service, cfg) is not None
+    try:  # P05: the card is at hand even when registered, so a server that lost the workspace is registered again once
         plan["reg"] = _delegation(call)
         _plan_card(call, plan)
+    except HostError:
+        if not registered:
+            raise
+        plan.pop("reg", None)
+    plan["registered"] = registered
     return plan
+
+
+def _plan_link(call: Call, plan: dict[str, Any], op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """``publish.extend`` / ``publish.password`` on a link the host itself shared (M4 S2, #1453). Column P only (the
+    caller ran :func:`_person`). Extending a link makes it reachable for longer, so it needs what sharing needs: the
+    ticket owner, a workspace owner or a maintainer (:func:`_may_share`). A password replaces the one in use, so
+    it needs the same. Neither op takes a password or a record from the caller."""
+    rec = next((r for r in _records(call.service) if r.get("id") == args["share_id"]), None)
+    if rec is None:
+        raise HostError("not_found", "no such share")
+    view = _ticket(call, rec["ticket"])  # a ticket the person may not see is not theirs to act on
+    if rec.get("state") != "live":
+        raise HostError("publish.changed", "this link is not live: share the files again")
+    _may_share(call, view)  # extend and password alike: seeing the ticket is not enough to change a live link
+    if op == "publish.extend":
+        _rate(call, "extend")
+        plan["days"] = args["days"]
+    else:
+        _rate(call, "password")
+        plan["password"], plan["pw"] = _new_password()  # drawn here, in the host; the plain text never leaves the call
+    plan["record"] = rec
+    plan["hub"] = _hub_route(call.service, guard=False)  # _plan ran _hub_guard before this
+    return plan
+
+
+_CONSONANTS, _VOWELS = "bdfgklmnprstvz", "aeiou"
+
+
+def _new_password() -> tuple[str, dict[str, Any]]:
+    """A generated password (never typed, never chosen by a caller) and its C5 record. Five words of two pronounceable
+    syllables each, about 61 bits; the record is scrypt n=32768 r=8 p=1 with a 16-byte salt (contracts/hub/protocol.md
+    11.4.1). Only the record is sent to orch-publish."""
+    from orch.publishclient import approval as ap
+
+    words = [
+        "".join(secrets.choice(_CONSONANTS) + secrets.choice(_VOWELS) for _ in range(2)) for _ in range(PASSWORD_WORDS)
+    ]
+    password = "-".join(words)
+    return password, ap.password_record(password, secrets.token_bytes(16))
 
 
 def _plan_card(call: Call, plan: dict[str, Any]) -> None:
@@ -650,17 +1034,37 @@ def _plan_card(call: Call, plan: dict[str, Any]) -> None:
     plan["card"] = card
 
 
-def _hub_route(service: WorkspaceService, *, required: bool = True) -> dict[str, Any] | None:
+def _hub_guard(service: WorkspaceService, *, sending: bool = False) -> None:
+    """#1838: publish settings that came from hub X (``hubpublish.from_hub``) are inert while this workspace is not
+    bound to X (``publish.server_refused``, reason ``hub_left``), and, for what sends (``sending``), paused while the
+    hub's verified address has moved off them (reason ``hub_moved``). Settings the person typed or signed for
+    themselves are not touched. Worker thread."""
+    from . import hubpublish
+
+    prov = hubpublish.left(service)
+    if prov is not None:
+        raise hubpublish.hub_left_error(prov)
+    if sending and (new := hubpublish.moved(service)) is not None:
+        raise hubpublish.hub_moved_error(new)
+
+
+def _hub_route(
+    service: WorkspaceService, *, required: bool = True, sending: bool = False, guard: bool = True
+) -> dict[str, Any] | None:
     """The hub this workspace publishes through. A workspace without a hub is local only (D69, V3-D36): there is no
     direct path, so a standalone workspace is refused here (``required``) or gets ``None`` (``required=False``, a read
-    that degrades). Worker thread."""
+    that degrades). Settings that came from a hub this workspace has left are refused first (:func:`_hub_guard`;
+    ``guard=False`` when the caller has just run it with the same ``sending``). Worker thread."""
     from . import hubops
 
+    if guard:
+        _hub_guard(service, sending=sending)
     route = hubops.publish_route(service)
     if route is None and required:
         raise HostError(
             "hub.not_joined",
-            "publishing needs a hub: join a hub first (orch hub join); a workspace alone is local only",
+            "Publishing needs a hub, and this workspace has not joined one. Join a hub in Settings, Hub, then try "
+            "again.",
         )
     return route
 
@@ -691,7 +1095,7 @@ def _discard(call: Call, args: dict[str, Any]) -> dict[str, Any]:
 
 def _row(rec: dict[str, Any]) -> dict[str, Any]:
     keys = ("id", "ticket", "kind", "state", "expires_at", "view_limit", "views", "files", "created_at", "server")
-    return {k: rec.get(k) for k in keys}
+    return {**{k: rec.get(k) for k in keys}, "has_password": rec.get("has_password") is True}
 
 
 def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -710,21 +1114,34 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             continue
         if call.column.name == "G" and not _claim_ok(call, view):
             continue
+        if rec.get("state") == "failed":  # a refused send leaves nothing to show (P02)
+            continue
         shares.append(_row({**rec, "ticket": view.key}))
     staged = []
+    from orch.store.render import thaw
+
+    person = call.column.name == "P" and call.viewer is not None
+    cfg_now = thaw(store.state.workspace.settings.get("publish")) if person else None
     for meta in _stages(service):
         view = store.ticket(meta["ticket"]["uid"])
         if view is None or not viewer.sees(view) or (wanted is not None and view.key != wanted):
             continue
         if call.column.name == "G" and not _claim_ok(call, view):
             continue
-        staged.append(
-            {k: meta[k] for k in ("staged_id", "kind", "days", "views", "origin", "files")}
-            | {"ticket": view.key, "created_at": _iso(meta["created"])}
-        )
+        row = {k: meta[k] for k in ("staged_id", "kind", "days", "views", "origin", "files")} | {
+            "ticket": view.key,
+            "created_at": _iso(meta["created"]),
+        }
+        # W22: this person already signed this exact copy (the same check publish.send makes) and the send failed:
+        # the page offers Send now, never a second signature ("Already done" would leave no way to send). Display
+        # only: publish.send verifies the signature again and never trusts this flag.
+        if person and isinstance(cfg_now, dict):
+            try:
+                row["signed"] = _signed_approval(call, meta, _text(service, meta, cfg_now))
+            except Exception:  # noqa: BLE001 - an odd stage must not break the person's whole list
+                row["signed"] = False
+        staged.append(row)
     ws = store.state.workspace
-    from orch.store.render import thaw
-
     cfg = thaw(ws.settings.get("publish"))
     out: dict[str, Any] = {
         "configured": isinstance(cfg, dict),
@@ -741,10 +1158,16 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         if not out["configured"]:
             # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
             # false) instead of failing, so a page can tell the person what to do next.
-            return ok_result({**out, "live": False})
+            return ok_result({**out, "live": False, "why": "local"})
+        from . import hubpublish
+
+        if hubpublish.left(service) is not None:  # #1838: the settings came from a hub this workspace is not bound to
+            return ok_result({**out, "live": False, "why": "hub_left"})
+        if (new := hubpublish.moved(service)) is not None:  # the hub's verified address moved off the settings
+            return ok_result({**out, "live": False, "why": "hub_moved", "hub_moved": new})
         hub = _hub_route(service, required=False)
         if hub is None:  # local only: there is no server to ask
-            return ok_result({**out, "live": False})
+            return ok_result({**out, "live": False, "why": "local"})
         return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out, "hub": hub}}
     return ok_result(out)
 
@@ -838,8 +1261,7 @@ def _hub_error(exc: Any) -> HostError:
     reasons = {  # hub code -> (closed detail reason, text); the reasons are the same set as a direct refusal's
         "unknown_workspace": (
             "unknown_workspace",
-            "the server only knows this workspace after its admin allowed it: ask its admin, then run "
-            "orch publish register",
+            "the sharing server does not know this workspace yet: ask the person who runs it to allow it",
         ),
         "owner_not_allowed": ("owner_not_allowed", "the server's admin has not allowed this owner"),
         "workspace_blocked": ("blocked", "the server's admin blocked this workspace"),
@@ -883,8 +1305,7 @@ def _refused(exc: Any) -> HostError:
     elif code == "unknown_workspace":
         reason, text = (
             "unknown_workspace",
-            "the server no longer knows this workspace; ask its admin to allow it again, "
-            "then run orch publish register",
+            "the sharing server no longer knows this workspace; ask the person who runs it to allow it again",
         )
     elif code == "workspace_blocked":
         reason, text = "blocked", "the server's admin blocked this workspace"
@@ -917,10 +1338,19 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from .workspace import ok_result
 
     try:
+        if plan["op"] in ("publish.send", "publish.register"):
+            # #1838: the plan may be old by now (a leave or a moved address since): the guard runs again here, so the
+            # reason is hub_left / hub_moved and not whatever the hub says to an unbound workspace. revoke, extend and
+            # password are guarded at plan time only: they act on links already out, and stopping one must stay possible
+            _hub_guard(call.service, sending=plan["op"] == "publish.send")
         if plan["op"] == "publish.register":
             return ok_result(_register(call, plan))
         if plan["op"] == "publish.revoke":
             return ok_result(_revoke(call, plan))
+        if plan["op"] == "publish.extend":
+            return ok_result(_extend(call, plan))
+        if plan["op"] == "publish.password":
+            return ok_result(_set_password(call, plan))
         if plan["op"] == "publish.list":
             return ok_result(_live(call, plan))
         return ok_result(_send(call, plan))
@@ -939,6 +1369,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         )
         raise err from None
     except HubRefused as exc:
+        if exc.code == "unknown_workspace":  # as above: the cached "registered" is stale
+            with contextlib.suppress(OSError):
+                os.unlink(_base(call.service) / "registered.json")
         err = _hub_error(exc)
         _audit(call, "publish.refused", op=plan["op"], code=err.code, reason=exc.code, status=0, via="hub")
         raise err from None
@@ -969,6 +1402,7 @@ def _token() -> str:
 
 
 def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from orch.hubclient import HubRefused
     from orch.publishclient import PublishError, flow
 
     service = call.service
@@ -1000,14 +1434,18 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             _write(token_path, token.encode())
             _put_json(send_path, send)
         client = _client(service, cfg["server"], plan["hub"])
-        body = flow.meta_bytes(
-            ticket=meta["ticket"]["key"],
-            kind=meta["kind"],
-            expires_ms=send["expires_ms"],
-            view_limit=meta["views"],
-            token_hash_hex=send["token_hash"],
-            files=meta["files"],
-        )
+        meta_args = {
+            "ticket": meta["ticket"]["key"],
+            "kind": meta["kind"],
+            "expires_ms": send["expires_ms"],
+            "view_limit": meta["views"],
+            "token_hash_hex": send["token_hash"],
+            "files": meta["files"],
+            "label": meta.get("label"),
+            "by_kind": meta.get("by_kind"),
+            "by_name": meta.get("by_name"),
+        }
+        body = flow.meta_bytes(**meta_args)
         rec = {
             "id": meta["share_id"],
             "ticket": meta["ticket"]["uid"],
@@ -1025,17 +1463,30 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         with _MU:  # a share can go live from here on (a lost commit answer): revoke must find it, with no token in it
             rows = [r for r in _records(service) if r.get("id") != rec["id"]]
             _save_records(service, [*rows, {**rec, "state": "sending"}])
-        if "reg" in plan:
-            _register(call, {**plan, "op": "publish.register"})
-        for attempt in (0, 1):
-            try:
-                flow.put_meta(client, service.workspace_id, meta["share_id"], body)
-                break
-            except PublishError as exc:
-                if exc.code == "unknown_workspace" and attempt == 0 and "reg" in plan:
-                    _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
-                    continue
-                raise
+        try:  # P02: a refusal before anything was stored leaves no "Sending" row behind
+            if "reg" in plan and not plan.get("registered"):
+                _register(call, {**plan, "op": "publish.register"})
+            registered_again = relabelled = False
+            while True:
+                try:
+                    flow.put_meta(client, service.workspace_id, meta["share_id"], body)
+                    break
+                except (PublishError, HubRefused) as exc:
+                    if exc.code == "unknown_workspace" and not registered_again and "reg" in plan:
+                        registered_again = True
+                        _register(call, {**plan, "op": "publish.register"})  # the server lost the binding: once more
+                        continue
+                    if exc.code == "bad_label" and not relabelled:
+                        relabelled = True  # an older server refuses a text the contract allows: the ticket key instead
+                        body = flow.meta_bytes(**{**meta_args, "label": meta["ticket"]["key"]})
+                        continue
+                    raise
+        except Exception as exc:
+            if _refused_outright(exc):
+                with _MU:
+                    rows = [r for r in _records(service) if r.get("id") != rec["id"]]
+                    _save_records(service, _prune_failed([*rows, {**rec, "state": "failed"}], service.clock()))
+            raise
         for entry, data in zip(meta["files"], blobs, strict=True):
             flow.put_file(client, service.workspace_id, meta["share_id"], entry["name"], data)
         flow.commit(client, service.workspace_id, meta["share_id"])
@@ -1068,6 +1519,42 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     finally:
         with _MU:
             _SENDING.discard(key)
+
+
+FAILED_KEEP, FAILED_DAYS = 50, 7  # a failed send is hidden; its record is kept this long / this many, then dropped
+
+
+def _prune_failed(rows: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+    from datetime import datetime
+
+    def fresh(r: dict[str, Any]) -> bool:
+        try:
+            return now - datetime.fromisoformat(str(r.get("created_at"))).timestamp() < FAILED_DAYS * 86400
+        except ValueError:
+            return False
+
+    failed = [r for r in rows if r.get("state") == "failed" and fresh(r)][-FAILED_KEEP:]
+    keep = {id(r) for r in failed}
+    return [r for r in rows if r.get("state") != "failed" or id(r) in keep]
+
+
+def _refused_outright(exc: Exception) -> bool:
+    """The server said no to the first request (the meta) in so many words, so nothing of this share exists there. A
+    timeout, a 5xx or a lost answer proves nothing and keeps the "sending" record (revoke must still find it)."""
+    from orch.hubclient import HubRefused
+    from orch.publishclient import PublishError
+
+    if isinstance(exc, HostError):  # the register step turns the server's refusal into this closed code
+        return exc.code == "publish.server_refused"
+    if isinstance(exc, PublishError):
+        # 408 (timed out), 409 (it may exist already) and 429 (try later) prove nothing about the share: never "failed"
+        return 400 <= exc.status < 500 and exc.status not in (408, 409, 429)
+    return isinstance(exc, HubRefused) and getattr(exc, "code", "") in _REFUSED_CODES
+
+
+_REFUSED_CODES = frozenset(
+    {"unknown_workspace", "owner_not_allowed", "workspace_blocked", "not_bound", "unknown_hub", "other_hub", "revoked"}
+)
 
 
 def _read_token(service: WorkspaceService, path: Path) -> str:
@@ -1104,6 +1591,74 @@ def _revoke(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     return {"share_id": rec["id"], "state": "revoked"}
 
 
+def _extend(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from orch.publishclient import flow
+
+    service = call.service
+    rec = plan["record"]
+    client = _client(service, rec.get("server") or plan["cfg"]["server"], plan["hub"])
+    got = flow.extend(client, service.workspace_id, rec["id"], plan["days"])
+    expires_ms = got.get("expires_ms")
+    if type(expires_ms) is not int or expires_ms <= 0:
+        from orch.publishclient import PublishError
+
+        raise PublishError("bad_reply", 200, method="POST")
+    with _MU:
+        rows = [
+            {**r, "expires_at": _iso(expires_ms / 1000)} if r.get("id") == rec["id"] else r for r in _records(service)
+        ]
+        _save_records(service, rows)
+    _audit(call, "publish.extend", share=rec["id"], ticket=rec.get("ticket"), days=plan["days"])
+    return {"share_id": rec["id"], "expires_at": _iso(expires_ms / 1000)}
+
+
+def _set_password(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    """Send the record; the plain password goes back to this one call and nowhere else (not the log, the audit file,
+    the record store or an error)."""
+    from orch.publishclient import flow
+
+    service = call.service
+    rec = plan["record"]
+    client = _client(service, rec.get("server") or plan["cfg"]["server"], plan["hub"])
+    flow.set_password(client, service.workspace_id, rec["id"], plan["pw"])
+    with _MU:
+        rows = [{**r, "has_password": True} if r.get("id") == rec["id"] else r for r in _records(service)]
+        _save_records(service, rows)
+    _audit(call, "publish.password", share=rec["id"], ticket=rec.get("ticket"))
+    return {"share_id": rec["id"], "password": plan["password"], "shown_once": True}
+
+
+#: refusals that say "answered, and not allowed": the hub is online. Everything else (a timeout, 429, bad_signature,
+#: bad_nonce, a server error, a network error) is "unreachable": the Shares page offers Try again.
+_NOT_ALLOWED_CODES = frozenset(
+    {
+        "unknown_workspace",
+        "owner_not_allowed",
+        "workspace_blocked",
+        "unknown_hub",
+        "other_hub",
+        "hub_id_mismatch",
+        "not_bound",
+        "unbound",
+        "dev_refused",
+    }
+)
+
+
+def _why_not_live(exc: Exception) -> str:
+    """``not_allowed`` for an explicit refusal code (``unknown_workspace``, ``owner_not_allowed``, ...), ``refused`` for
+    any other answer of the publish server (4xx but 429): the hub is online either way. Else ``unreachable``."""
+    code = str(getattr(exc, "code", ""))
+    status = int(getattr(exc, "status", 0) or 0)
+    if status >= 500 or code == "network":
+        return "unreachable"
+    if code in _NOT_ALLOWED_CODES:
+        return "not_allowed"
+    # B09: the publish server answered (a 4xx other than "slow down"): the hub is online, so the page must not say it
+    # cannot be reached. Try again still applies (a nonce or clock hiccup clears on the next read).
+    return "refused" if 400 <= status < 500 and status != 429 else "unreachable"
+
+
 def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     """``publish.list {live}``: the local rows with the server's state and view count. A server that cannot be reached
     leaves the local rows as they are, said plainly."""
@@ -1117,8 +1672,8 @@ def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             r.get("id"): r
             for r in flow.list_shares(_client(service, plan["cfg"]["server"], plan["hub"]), service.workspace_id)
         }
-    except (PublishError, HubRefused):  # a hub that is down is a server that is down: the local rows, said plainly
-        return {**out, "live": False}
+    except (PublishError, HubRefused) as exc:  # the local rows, and why the server's numbers are missing
+        return {**out, "live": False, "why": _why_not_live(exc)}
     for row in out["shares"]:
         got = remote.get(row["id"])
         if got is not None:

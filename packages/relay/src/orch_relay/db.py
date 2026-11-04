@@ -1,5 +1,5 @@
-"""SQLite (WAL) setup and the one fresh schema (V3-D36: no production data, no migrations; a database from an
-older schema is wiped, never upgraded)."""
+"""SQLite (WAL) setup and the one fresh schema (V3-D36: a database from another schema is refused here, never
+upgraded; the data dir's format.json and `orch update` decide what may open it, see dataformat.py)."""
 
 import sqlite3
 import threading
@@ -157,8 +157,8 @@ def init_schema(path: Path) -> bool:
     """Create the schema in a fresh database; True when it was created, False when already current.
 
     One write transaction (BEGIN IMMEDIATE) re-reads the version inside it, so concurrent starters serialise.
-    A database that has tables but not this schema's version is refused: delete it (no data is kept across
-    schema changes)."""
+    A database that has tables but not this schema's version is refused (format.json said the data is
+    at our format, so this is an internal consistency check): `orch update` migrates it."""
     con = connect(path)
     con.isolation_level = None  # explicit transaction control
     try:
@@ -173,9 +173,9 @@ def init_schema(path: Path) -> bool:
                 con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 created = True
             else:
+                # an internal consistency check: format.json let us in, the database disagrees
                 raise RuntimeError(
-                    f"{path}: database is from another schema (user_version {version}); "
-                    "delete it, orch-relay keeps no data across schema changes"
+                    f"{path}: this data does not match this orch-relay version: run `orch update`"
                 )
             con.execute("COMMIT")
         except BaseException:

@@ -85,6 +85,24 @@ class RouteQueue:
         with self._lock, self._db:
             self._db.execute("UPDATE route_queue SET done=1, envelope=X'' WHERE id=?", (qid,))
 
+    def recent(self, ws_ids: frozenset[str] | set[str], limit: int = 100) -> list[dict]:
+        """Hand-offs where one end is in ``ws_ids``, newest first: ids and times only, never bytes. ``waiting`` = the
+        recipient has not acknowledged it yet (it is offline, or busy)."""
+        ids = sorted(ws_ids)
+        if not ids:
+            return []
+        marks = ",".join("?" * len(ids))
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT env_id, from_ws, to_ws, enq_ms, done FROM route_queue WHERE from_ws IN ({marks}) OR to_ws IN ({marks}) "
+                "ORDER BY id DESC LIMIT ?",
+                (*ids, *ids, int(limit)),
+            ).fetchall()
+        return [
+            {"id": e, "from_ws": f, "to_ws": t, "sent_ms": int(ms), "status": "delivered" if d else "waiting"}
+            for e, f, t, ms, d in rows
+        ]
+
     def depth(self, to_ws: str) -> int:
         with self._lock:
             return self._db.execute("SELECT COUNT(*) FROM route_queue WHERE to_ws=? AND done=0", (to_ws,)).fetchone()[0]

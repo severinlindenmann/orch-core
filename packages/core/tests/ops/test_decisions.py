@@ -25,6 +25,7 @@ def test_an_answer_survives_a_status_and_a_show_and_wait_hands_it_over(ws, cli):
     r = cli.j("wait", "--timeout", "1")
     assert r.data["kind"] == "answered" and r.data["option"] == "b" and r.data["text"] == "because of the API"
     assert "UNREAD" not in cli("show").out  # handed over
+    cli("ask", "And then?")  # something open for a person: the wait waits (else wait.incomplete)
     assert cli.j("wait", "--timeout", "1").data["kind"] == "timeout"
 
 
@@ -67,6 +68,7 @@ def test_inbox_lists_and_acknowledges_undelivered_decisions(ws, cli):
         {"key": "DEMO-0001", "seq": 4, "decision": "#4 answered Q1 option=a"}
     ]
     assert cli.j("inbox").data["decisions"] == []  # explicit inbox acknowledged it
+    cli("ask", "And then?")  # something open for a person: the wait waits (else wait.incomplete)
     assert cli.j("wait", "--timeout", "1").data["kind"] == "timeout"
 
 

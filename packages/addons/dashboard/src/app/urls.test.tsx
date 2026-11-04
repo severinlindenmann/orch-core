@@ -102,13 +102,16 @@ describe('permanent URLs in the app', () => {
   })
 
   it('a ticket URL carries its workspace, keeps its key, opens the tab from ?tab= and writes the tab back', async () => {
+    vi.stubGlobal('innerWidth', 1440) // the rail (with the Technical details link) is a column from 1280 px
     const { user, address } = renderApp('/w/DEMO/ticket/DEMO-0043?tab=history', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     expect(screen.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true')
-    await user.click(screen.getByRole('tab', { name: 'Raw' }))
+    expect(screen.queryByRole('tab', { name: 'Raw' })).toBeNull() // Raw is a small "Technical details" link now
+    await user.click(await screen.findByTestId('ticket-technical-link', {}, T))
     await waitFor(() => expect(address()).toBe('/w/DEMO/ticket/DEMO-0043?tab=raw'), T)
     await user.click(screen.getByRole('tab', { name: 'Overview' }))
     await waitFor(() => expect(address()).toBe('/w/DEMO/ticket/DEMO-0043'), T)
+    vi.unstubAllGlobals()
   })
 
   it('an invalid ?tab= opens Overview instead of failing', async () => {

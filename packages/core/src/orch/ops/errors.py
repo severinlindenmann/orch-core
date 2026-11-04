@@ -50,6 +50,87 @@ def _e(code: str, exit_: int, retryable: bool, message: str, hint: str, fix: lis
 
 
 _SPECS = [
+    _e(
+        "tty.required",
+        3,
+        False,
+        "signing requires a controlling terminal",
+        "run it in your terminal",
+        ["orch", "help"],
+        "No controlling terminal; nothing signed.",
+    ),
+    _e(
+        "sign.cancelled",
+        3,
+        False,
+        "nothing was signed",
+        "run it again to review",
+        ["orch", "help"],
+        "The signing review was cancelled.",
+    ),
+    _e(
+        "followup.too_soon",
+        3,
+        False,
+        "follow-up is less than one hour ahead",
+        "wait inside the session",
+        ["orch", "wait"],
+        "follow-up is less than one hour ahead",
+    ),
+    _e(
+        "followup.too_far",
+        3,
+        False,
+        "follow-up exceeds the scheduling horizon",
+        "choose a time within 14 days",
+        ["orch", "follow-up", "--help"],
+        "follow-up exceeds the scheduling horizon",
+    ),
+    _e(
+        "followup.bad_brief",
+        3,
+        False,
+        "brief must be non-empty clean text of at most 4096 bytes",
+        "provide a brief of 1 to 4096 UTF-8 bytes",
+        ["orch", "follow-up", "--help"],
+        "brief must be non-empty clean text of at most 4096 bytes",
+    ),
+    _e(
+        "followup.no_receiver",
+        3,
+        False,
+        "this host does not receive webhooks",
+        "ask an owner to run orch host webhooks on, then orch host restart",
+        ["orch", "follow-up", "--help"],
+        "this host does not receive webhooks",
+    ),
+    _e(
+        "followup.too_many_hooks",
+        3,
+        True,
+        "Too many new webhooks in the last hour. Try again later.",
+        "wait a while, then run orch webhook new again; reuse a webhook you already made",
+        ["orch", "webhook", "new", "--help"],
+        "Too many new webhooks in the last hour. Try again later.",
+    ),
+    _e(
+        "followup.denied",
+        3,
+        False,
+        "the model refused the follow-up",
+        "read the denial code and resolve it before retrying",
+        ["orch", "show"],
+        "the model refused the follow-up",
+    ),
+    _e(
+        "schedule.denied",
+        3,
+        False,
+        "the model refused the schedule",
+        "read the denial and correct the schedule",
+        ["orch", "schedule", "list"],
+        "the model refused the schedule",
+    ),
     # 1 internal
     _e(
         "internal",
@@ -167,17 +248,6 @@ _SPECS = [
         "(orch-v2-host 0.8.6 item 9.9).",
     ),
     _e(
-        "sign.hub_only",
-        3,
-        False,
-        "this workspace is joined to a hub in full mode: approve on your phone or in the hub",
-        "approve in the hub or on your phone; to leave the hub (break-glass): orch hub leave",
-        ["orch", "hub", "status"],
-        "Full hub mode (D78, D81): the hub's role gate decides every human verb and a channel signs it; no local key, "
-        "click signer or relay device does. Only the owner's break-glass leave is signed locally. Verbs the hub cannot "
-        "build yet are not signable here either.",
-    ),
-    _e(
         "sign.key_exposed",
         3,
         False,
@@ -277,14 +347,14 @@ _SPECS = [
         "A grant with a list of verbs names operations, matched exactly (F1 10.1); this operation is not in it.",
     ),
     _e(
-        "quick.off",
+        "addon.off",
         3,
         False,
-        "Quick tasks is switched off in this workspace",
-        "ask an owner to turn Quick tasks on in Settings, Add-ons",
+        "the add-on is off in this workspace",
+        "tell the person; do not work around it",
         ["orch", "addon", "list"],
-        "The built-in quick add-on is not granted or is switched off: no new quick task can be made (dashboard, "
-        "orch quick, agents). Existing quick tasks stay readable.",
+        "The command belongs to an add-on (quick tasks, schedules, ...) that is not granted or is switched off here. "
+        "Nothing was changed. Existing data stays readable; an owner turns the add-on on in Add-ons.",
     ),
     _e(
         "role.denied",
@@ -434,6 +504,26 @@ _SPECS = [
         "The arguments parse but do not match the operation's input schema.",
     ),
     _e(
+        "wait.incomplete",
+        5,
+        False,
+        "the gate still lacks items: nobody can approve it yet",
+        "fill what is missing, then orch wait",
+        ["orch", "show"],
+        "orch wait on a ticket whose open gate (requirements or plan) still lacks items, with nothing else open for a "
+        "person: the wait could never end. The message names each missing item and the command that fills it.",
+    ),
+    _e(
+        "wait.build",
+        5,
+        False,
+        "the plan is approved: build now, nothing waits for a person",
+        "orch task next",
+        ["orch", "task", "next"],
+        "orch wait by the claim holder after the plan is approved, with no gate, question or decision open: the wait "
+        "could never end. The message and hint name the next build step.",
+    ),
+    _e(
         "ac.evidence_missing",
         5,
         False,
@@ -496,6 +586,26 @@ _SPECS = [
         "restore the branch, then retry",
         ["orch", "status"],
         "A verify or code decision while a linked repo ref is missing.",
+    ),
+    _e(
+        "update.unverified",
+        5,
+        False,
+        "the release or catalog could not be verified",
+        "nothing was changed; do not install it",
+        ["orch", "doctor"],
+        "A signed release envelope failed a check (signature, certificate, revocation, format, channel or file "
+        "hash). The reason is in the message (CONTRACT.md section 4).",
+    ),
+    _e(
+        "update.stale",
+        5,
+        False,
+        "the release or catalog is out of date",
+        "nothing was changed; fetch a fresh one later",
+        ["orch", "doctor"],
+        "A correctly signed envelope is expired, older than the newest one seen, or carries an older revocation "
+        "list than the stored one.",
     ),
     # 6 parse
     _e(
@@ -570,11 +680,108 @@ _SPECS = [
         3,
         False,
         "the hub step is not backed by your backup key",
-        "sign it again with your backup key at the terminal: orch sign",
-        ["orch", "sign"],
+        "repeat the hub step and enter your backup key",
+        ["orch", "hub", "status"],
         "A hub step (join, switch to full, leave) needs the owner proof, signed with the person key derived from the "
         "backup key (hub contract 9.6). Detail reason: proof_invalid, proof_expired, proof_missing, dev_mismatch or "
         "dev_refused.",
+    ),
+    _e(
+        "hub.link_inspected",
+        3,
+        False,
+        "something on this network opens encrypted connections, so the hub cannot be trusted from here",
+        "ask your IT team to let the hub's name through without inspection",
+        ["orch", "hub", "status"],
+        "The hub's certificate was not the card's pin on a path through a proxy or WebSocket front (R6, D92). The link "
+        "stays down, no other route is tried, and the next dial of that address waits at least 5 minutes.",
+    ),
+    _e(
+        "hub.proxy_auth",
+        3,
+        False,
+        "the company proxy did not accept the sign-in",
+        "check the proxy user and password: orch hub network",
+        ["orch", "hub", "network"],
+        "The proxy in this computer's network settings answered 407 to the CONNECT (R6). Basic sign-in only.",
+    ),
+    _e(
+        "hub.proxy_refused",
+        3,
+        False,
+        "the company proxy refused the connection to the hub",
+        "ask your IT team to allow the hub's address through the proxy",
+        ["orch", "hub", "network"],
+        "The proxy refused the CONNECT, answered something that is not HTTP, or the network settings cannot be used "
+        "(R6); nothing is dialled direct.",
+    ),
+    _e(
+        "hub.proxy_unreachable",
+        9,
+        True,
+        "the company proxy could not be reached",
+        "check the proxy address: orch hub network",
+        ["orch", "hub", "network"],
+        "The configured proxy did not answer (R6).",
+    ),
+    _e(
+        "remote.proof_invalid",
+        3,
+        False,
+        "the remote access step is not backed by your backup key",
+        "repeat the step and enter your backup key",
+        ["orch", "status"],
+        "A remote access step (turning it on or changing it, adding a device) needs the owner proof, signed with the "
+        "person key derived from the backup key (hub contract 10.2c). Detail reason: proof_invalid, proof_expired, "
+        "proof_missing, dev_mismatch or dev_refused.",
+    ),
+    _e(
+        "remote.agents_risk",
+        3,
+        False,
+        "agents on this computer can act as you",
+        "set up the separate agent user first, or confirm that you accept the risk",
+        ["orch", "status"],
+        "Agents run as the same operating-system user as the owner (tier A), so an agent could use a remote session "
+        "as the owner (#1198 H1). Remote access is turned on only when agents are isolated or the owner says so.",
+    ),
+    _e(
+        "remote.needs_selective",
+        3,
+        False,
+        "remote access needs the hub in selective mode, or no hub",
+        "leave the hub or run it in selective mode, then turn remote access on",
+        ["orch", "hub", "status"],
+        "In full mode the hub reads this workspace and can act for people in it, so a computer at a customer's place "
+        "never offers remote access with it (D93).",
+    ),
+    _e(
+        "remote.no_pending",
+        3,
+        False,
+        "no device is waiting to be added",
+        "make a new code and add the device again",
+        ["orch", "status"],
+        "The pending device is gone: its stream closed, the code ran out or another owner already decided.",
+    ),
+    _e(
+        "remote.full",
+        3,
+        False,
+        "this workspace already has the most remote devices it can hold",
+        "remove a device you no longer use",
+        ["orch", "status"],
+        "At most 64 remote devices, and at most 4 outstanding enrollment codes, per workspace.",
+    ),
+    _e(
+        "switch.refused",
+        3,
+        False,
+        "this workspace cannot be opened from another computer through the hub",
+        "open it on its own computer",
+        ["orch", "status"],
+        "A hub console switch is refused for a workspace that runs at a customer's place or has remote access with a "
+        "selective hub (D93); the switch ticket stays unused.",
     ),
     _e(
         "hub.already_joined",
@@ -745,6 +952,7 @@ _MARKET = (
     ("market.manifest_mismatch", 3, False, "the manifest and the index entry disagree", "the entry is refused"),
     ("market.lock_missing", 5, False, "the lockfile named by the manifest is missing", "fix the package"),
     ("market.lock_invalid", 5, False, "the lockfile breaks the lockfile rules", "fix the package"),
+    ("addon.stage_changed", 3, False, "the staged package changed after review", "stage and review again"),
     ("market.staged_changed", 3, False, "the staged package changed after review", "start again"),
     ("market.env_failed", 5, False, "the dependency environment could not be built", "see the add-on's lockfile"),
     ("market.env_changed", 3, False, "the dependency environment no longer matches its stamp", "reinstall the add-on"),
@@ -759,11 +967,68 @@ _MARKET = (
     ),
     ("market.refresh_running", 9, True, "a refresh of this marketplace is already running", "try again in a moment"),
     ("market.already_added", 3, False, "this marketplace is already added", "orch market refresh"),
+    ("cosmetic.conflict", 3, False, "the workspace name or icon changed meanwhile", "look at it again, then change it"),
     # V3 G3: install, update, remove
     ("market.not_installed", 3, False, "this add-on was not installed from a marketplace", "orch addon install ID"),
     ("market.ambiguous_addon", 3, False, "more than one added marketplace lists this id", "name one with --from URL"),
     ("market.still_enabled", 3, False, "the add-on is still turned on", "orch addon disable NAME, then remove it"),
 )
+# Data across updates (spec: "Data across updates"): the open-time rule, the lock, the journal, the migrate command.
+_MIGRATE = (
+    ("format.older", 3, False, "this data was made by an older orch: run `orch update`", "orch update"),
+    ("format.newer", 3, False, "this data was made by a newer orch: update orch", "update orch, then try again"),
+    ("format.missing", 3, False, "this folder is not orch data", "check the folder"),
+    ("format.exists", 3, False, "this folder already has a format", "nothing to do"),
+    (
+        "update.interrupted",
+        3,
+        False,
+        "an update was interrupted: run `orch update` to finish or roll back",
+        "orch update",
+    ),
+    ("migrate.running", 4, True, "orch is running: stop it first, then try again", "orch stop"),
+    ("migrate.signed_path", 3, False, "a migration may never change signed data", "this is a bug in the migration"),
+    (
+        "migrate.backup_refused",
+        3,
+        False,
+        "the backup cannot be made here",
+        "keep backups on this machine, outside synced folders",
+    ),
+    (
+        "migrate.actor_refused",
+        3,
+        False,
+        "a person migrates data at their own terminal; an agent cannot",
+        "ask the person",
+    ),
+    ("migrate.step_failed", 5, False, "a migration step failed; the data was backed up first", "restore the backup"),
+)
+# `orch update` (orch.update.engine, cli/update.py)
+_UPDATE = (
+    ("update.unreachable", 9, True, "could not reach the release server; nothing was changed", "try again later"),
+    ("update.no_record", 2, False, "orch was not installed with the installer", "install with the one-line installer"),
+    ("update.downgrade", 3, False, "the release is older than the installed version", "nothing to do"),
+    ("update.too_old", 5, False, "this orch is too old to update directly", "run the installer again"),
+    ("update.no_space", 4, False, "not enough free disk space for a safe update", "free some space, then update again"),
+    ("update.agents_running", 4, True, "agent runs are active", "let them finish or run orch stop all"),
+    ("update.rolled_back", 5, False, "the update failed and the old version and data were put back", "see the log"),
+    (
+        "update.after_commit",
+        5,
+        False,
+        "orch was updated but is not healthy; the data stays",
+        "orch update --use VERSION",
+    ),
+)
+_SPECS += [
+    _e(code, exit_, retry, msg, hint, ["orch", "update", "--check"], "Updating orch: " + msg + ".")
+    for code, exit_, retry, msg, hint in _UPDATE
+]
+_SPECS += [
+    _e(code, exit_, retry, msg, hint, ["orch", "migrate", "--check"], "Data across updates: " + msg + ".")
+    for code, exit_, retry, msg, hint in _MIGRATE
+]
 _SPECS += [
     _e(code, exit_, retry, msg, hint, ["orch", "market", "list"], "Marketplace refusal (spec section 13): " + msg + ".")
     for code, exit_, retry, msg, hint in _MARKET
@@ -788,8 +1053,6 @@ GLOBAL_ERRORS = (
     # H12d-2 (§0.8.6 item 9.4): any person op signed with convenience custody (direct mode too) is refused while a
     # reader of the workspace is below level 1
     "sign.convenience_unavailable",
-    # V3 C11 (D78/D81): any person op signed locally is refused while the workspace is in full hub mode
-    "sign.hub_only",
     # #1097: a gated act signed by a device key that was in convenience custody (hub join/leave/mode, keys.rotate)
     "sign.key_exposed",
 )

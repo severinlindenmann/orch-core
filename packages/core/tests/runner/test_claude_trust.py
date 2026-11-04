@@ -65,6 +65,19 @@ def test_without_the_owners_consent_marker_or_a_store_nothing_is_written(ws):
     assert not (home / ".claude.json").exists()
 
 
+def test_consent_given_later_from_the_sign_card_makes_pretrust_work_and_creates_the_config(ws):
+    """P03: a workspace set up before Claude Code existed (no marker, no ~/.claude.json) gets the consent when the
+    person signs a start; the next pretrust then writes the ticket folder's entry (and the missing config file)."""
+    home, root, work = ws
+    os.unlink(root / ".orch" / "claude-trust")
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == []
+    assert not (home / ".claude.json").exists()
+    assert record_consent(root / ".orch")  # what POST claude-trust does after the sign card
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == [str(work)]
+    got = entries(home)
+    assert set(got) == {str(work)} and all(got[str(work)][k] is True for k in TRUST_KEYS)
+
+
 def test_a_marker_that_is_a_link_is_no_consent(ws, tmp_path):
     home, root, work = ws
     os.unlink(root / ".orch" / "claude-trust")
@@ -391,3 +404,22 @@ def test_pretrust_needs_the_isolation_flags_in_the_launch(ws, tmp_path):
     assert not (home / ".claude.json").exists()
     launch(ws, CLAUDE)
     assert set(entries(home)) == {str(work)}
+
+
+def test_a_file_made_meanwhile_is_never_replaced_when_creating(tmp_path, monkeypatch):
+    import json
+    import os
+
+    from orch.runner import claude_trust as ct
+
+    cfg = tmp_path / ".claude.json"
+    real_link = os.link
+
+    def racing_link(src, dst, *a, **k):  # Claude Code writes its own file between our check and our create
+        cfg.write_text('{"theirs": true}')
+        return real_link(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "link", racing_link)
+    assert ct._write(cfg, [str(tmp_path / "w")]) == []
+    assert json.loads(cfg.read_text()) == {"theirs": True}
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".claude-")] == []

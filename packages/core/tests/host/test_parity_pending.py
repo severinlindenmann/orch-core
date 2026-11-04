@@ -44,7 +44,7 @@ def _script(tmp: Path, mode, monkeypatch) -> list[tuple[int, str, str]]:
     ws.store.close()
     ws.store = None
     monkeypatch.setattr(human, "open_backend", ws.backend)
-    monkeypatch.setattr(human, "review_prompt", lambda text, expect: True)
+    monkeypatch.setattr(human, "review_prompt", lambda text: True)
     monkeypatch.chdir(repo)  # task done --run runs the verify command in the linked repo's working copy
     out = []
     with mode(ws) as extra:

@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
+// a switch to the busy day draws the whole app with its large dataset: ~10 s on a loaded CI runner (28 Oct: two timeouts at 10 s)
+const BUSY_DAY_MS = 30_000
+
 // The "Demo data" pill in the top bar: shows the mode and switches between the normal demo and the busy day.
 const pill = () => screen.getByTestId('demo-mode')
 const decisions = async () => {
@@ -60,7 +63,7 @@ describe('demo mode switch', () => {
     expect(mockStore.dataset).toBe('busy')
     expect(pill()).toHaveTextContent('Demo data · Busy day')
     mockStore.sim.stopAll()
-  })
+  }, BUSY_DAY_MS)
 
   it('switches back to the normal demo with the same question', async () => {
     const { user } = renderApp('/')
@@ -74,7 +77,7 @@ describe('demo mode switch', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Switch to normal' }))
     await waitFor(() => expect(pill()).toHaveTextContent(/^Demo data$/))
     expect(mockStore.dataset).toBe('normal')
-  })
+  }, BUSY_DAY_MS)
 })
 
 // The pages still draw with the busy day's data (their density is Phase 3's job; here nothing may break).

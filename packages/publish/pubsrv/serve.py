@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import os
 import re
 import secrets
@@ -21,10 +22,12 @@ import stat
 import threading
 import time
 import unicodedata
-from collections import deque
+from collections import OrderedDict, deque
 from urllib.parse import parse_qs, quote
 
 from . import db
+from . import published as P
+from .forwarded import parse_trusted, rate_key
 
 ID32 = r"[0-9a-f]{32}"
 TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")  # base64url of the host's 32 random bytes
@@ -34,6 +37,8 @@ MAX_POST = 2048
 CHUNK = 64 * 1024
 IP_BURST = 120  # L1: per-IP token bucket for landing GETs and opens, wrong tokens included
 IP_REFILL_PER_S = 5
+IP_EVICT_SCAN = 64  # entries looked at when the table is full
+IP_TABLE_MAX = 10_000  # the per-client bucket table never holds more
 MAX_FILE = 60 * 1024 * 1024
 _ROUTE_SHARE = re.compile(rf"/s/({ID32})")
 _ROUTE_OPEN = re.compile(rf"/s/({ID32})/open")
@@ -118,7 +123,7 @@ _LANDING_BODY = (
     "<h1>Files were shared with you</h1>"
     '<form id="f" method="post" action="@ACTION@" hidden>'
     '<input type="hidden" name="t" value="">'
-    "<p>Nothing has been opened yet.</p>"
+    "<p>Nothing has been opened yet.</p>@PW@"
     '<button type="submit">Open shared files</button>'
     '<p class="s">Opening these files may count as one view. If this link allows only one view, '
     "you may not be able to reopen it.</p></form>"
@@ -126,18 +131,32 @@ _LANDING_BODY = (
     "you were given, including the part after the # sign.</p>"
     f"<script>{_SCRIPT}</script>"
 )
+_PW_FIELD = '<p><label>Password <input type="password" name="p" autocomplete="off" required maxlength="256"></label></p>'
+WRONG_PW = (
+    "Wrong password",
+    "That password did not work. Use your link again and check the password.",
+)
 ASK = " Ask the person who sent it for a new link."
 NOT_FOUND = ("Not found", "Nothing is shared at this address.")
 GONE = {
     "opened": ("Already opened", "This link was already opened and cannot be used again." + ASK),
     "expired": ("Expired", "This link has expired." + ASK),
-    "removed": ("Removed", "This link was removed by the person who shared it." + ASK),
+    # B10: a link is removed by the person who shared it or by their company's hub admin; the page names neither
+    "removed": ("Removed", "This link was removed." + ASK),
     "view": (
         "Ended",
         "This viewing session has ended. Use your link again if it still works." + ASK,
     ),
 }
 TOO_MANY = ("Slow down", "Too many attempts. Wait a minute and try again.")
+
+
+NOT_ALLOWED = ("Not allowed", "This request is not allowed.")
+TOO_LARGE = ("Too large", "That request is too large.")
+BUSY = ("Busy", "Try again in a moment.")
+UNAVAILABLE = ("Unavailable", "This service is not available right now.")
+ERROR = ("Error", "Something went wrong.")
+USE_OPEN = ("Not allowed", "Use the Open shared files button on the link page.")
 
 
 def _now():
@@ -218,6 +237,15 @@ def page(status, title_text, body=None, csp=PAGE_CSP, extra=None):
     return _Resp(status, out.encode(), csp=csp, extra=extra)
 
 
+def landing_page(share_id, password=False):
+    body = _LANDING_BODY.replace("@ACTION@", f"/s/{share_id}/open")
+    if password:  # a second factor on top of the token (M4 C5)
+        body = body.replace("@PW@", _PW_FIELD)
+    else:
+        body = body.replace("@PW@", "")
+    return page(200, ("Open shared files", ""), body=body, csp=LANDING_CSP)
+
+
 def gone(kind):
     return page(410, GONE[kind])
 
@@ -227,14 +255,38 @@ def not_found():
 
 
 class ShareServer:
-    def __init__(self, data_dir, clock=None):
-        self.db_path = db.prepare_dir(data_dir)
-        self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
-        self.clock = clock or _now
-        self._opens = {}  # share_id -> deque of recent open times (ms); per process
-        self._lock = threading.Lock()
-        self._ips = {}  # ip -> (tokens, last monotonic time)
-        db.init(self.db_path)
+    def __init__(self, data_dir, clock=None, share_origin=None, api_host=None, trusted_proxy=None):
+        # addresses / CIDR networks whose forwarded client address is used as the RATE KEY (forwarded.py); default none
+        self._trusted = parse_trusted(
+            trusted_proxy
+            if trusted_proxy is not None
+            else os.environ.get("ORCH_PUBLISH_TRUSTED_PROXY")
+        )
+        # the format rule, then the dir checks; the handle keeps the shared format lock while this lives
+        self.db_path, self.data_handle = db.open_dir(data_dir)
+        try:
+            self.shares_dir = os.path.realpath(os.path.join(data_dir, "shares"))
+            self.clock = clock or _now
+            self._opens = {}  # share_id -> deque of recent open times (ms); per process
+            self._lock = threading.Lock()
+            self._ips = (
+                OrderedDict()
+            )  # key (IPv4 address / IPv6 /64) -> (tokens, last time); bounded LRU, oldest first
+            db.init(self.db_path)
+            from .appserve import AppServer  # late: it imports this module
+
+            # apps are served from the CONFIGURED origin (never a Host header); without one every /a/ answer is a 404
+            self.apps = AppServer(
+                self.db_path,
+                os.path.join(os.path.realpath(data_dir), "apps"),
+                self.clock,
+                share_origin,
+                api_host,
+                self._ip_ok,
+            )
+        except BaseException:
+            self.data_handle.close()  # a failed construction must not keep the lock until the GC runs
+            raise
 
     # -- ASGI -----------------------------------------------------------------------------------
 
@@ -252,26 +304,48 @@ class ShareServer:
         try:
             resp = await self._route(scope, receive, method)
         except (sqlite3.Error, OSError):
-            resp = page(503, ("Unavailable", "This service is not available right now."))
+            resp = self._fallback(scope, 503, UNAVAILABLE)
         except Exception:  # noqa: BLE001 - fail closed, never echo details
-            resp = page(500, ("Error", "Something went wrong."))
+            resp = self._fallback(scope, 500, ERROR)
         await resp.send(send, head=method == "HEAD")
 
+    def _fallback(self, scope, status, text):
+        """An error page; under /a/ it carries the sandbox CSP like every other /a/ response."""
+        path = scope.get("path") or ""
+        if path == "/a" or path.startswith("/a/"):
+            return self.apps.page(status, text)
+        return page(status, text)
+
     def _ip_ok(self, scope):
-        """Cheap bucket before any DB work. Behind a proxy this is the proxy's address, so the
-        real per-IP limit then belongs to Caddy as well (documented)."""
-        ip = (scope.get("client") or ("?", 0))[0]
+        """Cheap bucket before any DB work, keyed by the client (forwarded.py: a rate key only, honoured from the
+        trusted-proxy list, never a trust or locality input). A bounded table; when full, _victim() picks the entry to evict."""
+        key = rate_key(
+            (scope.get("client") or ("?", 0))[0], scope.get("headers") or [], self._trusted
+        )
         now = time.monotonic()
         with self._lock:
-            tokens, last = self._ips.get(ip, (IP_BURST, now))
+            tokens, last = self._ips.pop(key, (IP_BURST, now))
             tokens = min(IP_BURST, tokens + (now - last) * IP_REFILL_PER_S)
-            if len(self._ips) > 10_000:
-                self._ips = {k: v for k, v in self._ips.items() if v[0] < IP_BURST}
-            if tokens < 1:
-                self._ips[ip] = (tokens, now)
-                return False
-            self._ips[ip] = (tokens - 1, now)
-            return True
+            ok = tokens >= 1
+            self._ips[key] = (tokens - 1 if ok else tokens, now)  # most recent at the end
+            while len(self._ips) > IP_TABLE_MAX:
+                del self._ips[self._victim(now)]
+            return ok
+
+    def _victim(self, now):
+        """The key to evict when the table is full (the relay's policy): among the IP_EVICT_SCAN least recently used,
+        the first whose bucket has refilled completely (evicting it loses nothing), else the one closest to full. A
+        depleted bucket is never reset by a flood of fresh keys while fuller entries remain."""
+        best, best_tokens = None, -1.0
+        for n, (key, (tokens, last)) in enumerate(self._ips.items()):
+            if n == IP_EVICT_SCAN:
+                break
+            tokens = min(IP_BURST, tokens + (now - last) * IP_REFILL_PER_S)
+            if tokens >= IP_BURST:
+                return key
+            if tokens > best_tokens:
+                best, best_tokens = key, tokens
+        return best
 
     async def _route(self, scope, receive, method):
         # The raw path is matched as is. Percent-escapes survive into the view-file path, where
@@ -280,10 +354,18 @@ class ShareServer:
             path = scope["raw_path"].decode("ascii").split("?", 1)[0]
         except (KeyError, AttributeError, UnicodeError):
             return not_found()
+        is_app = path == "/a" or path.startswith("/a/")
+        # a service worker script must never be registered from /a/ or /s/ (Opus condition 6)
+        if any(k == b"service-worker" for k, _ in scope.get("headers", ())):
+            if is_app:
+                return self.apps.page(403, NOT_ALLOWED)
+            return page(403, NOT_ALLOWED)
+        if is_app:
+            return await self.apps.route(scope, receive, method, path)
         if method not in ("GET", "HEAD", "POST"):
             return page(
                 405,
-                ("Not allowed", "This request is not allowed."),
+                NOT_ALLOWED,
                 extra={"allow": "GET, HEAD, POST"},
             )
         m = _ROUTE_OPEN.fullmatch(path)
@@ -293,17 +375,15 @@ class ShareServer:
             if method != "POST":
                 return page(
                     405,
-                    ("Not allowed", "Use the Open shared files button on the link page."),
+                    USE_OPEN,
                     extra={"allow": "POST"},
                 )
             raw = await self._body(receive)
             if raw is None:
-                return page(413, ("Too large", "That request is too large."))
+                return page(413, TOO_LARGE)
             return await asyncio.to_thread(self._open, m.group(1), raw)
         if method == "POST":
-            return page(
-                405, ("Not allowed", "This request is not allowed."), extra={"allow": "GET, HEAD"}
-            )
+            return page(405, NOT_ALLOWED, extra={"allow": "GET, HEAD"})
         m = _ROUTE_VIEW.fullmatch(path)
         if m:
             return await asyncio.to_thread(self._view, m.group(1), m.group(2), m.group(3))
@@ -352,8 +432,7 @@ class ShareServer:
         why = self._why_gone(row, self.clock())
         if why:
             return gone(why)
-        body = _LANDING_BODY.replace("@ACTION@", f"/s/{share_id}/open")
-        return page(200, ("Open shared files", ""), body=body, csp=LANDING_CSP)
+        return landing_page(share_id, row["pw"] is not None)
 
     def _rate_ok(self, share_id, now):
         with self._lock:
@@ -389,6 +468,12 @@ class ShareServer:
                 return not_found()
             if not self._rate_ok(share_id, now):
                 return page(429, TOO_MANY, extra={"retry-after": "60"})
+            if (
+                row["pw"] is not None
+            ):  # the password, after the token and BEFORE a view is counted (cond. 8, 9)
+                bad = self._check_password(row, form, now)
+                if bad is not None:
+                    return bad
             view = secrets.token_hex(16)
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -414,6 +499,22 @@ class ShareServer:
         finally:
             conn.close()
         return _Resp(303, b"", extra={"location": f"/s/{share_id}/v/{view}/"})
+
+    def _check_password(self, share_id_row, form, now):
+        """None when the password opens the link, else the refusal page. Rate check and a KDF slot come BEFORE the
+        KDF; a wrong password is not a view (nothing is counted)."""
+        if not self.apps._try_ok("s:" + share_id_row["id"], now):
+            return page(429, TOO_MANY, extra={"retry-after": "60"})
+        given = (form.get("p") or [""])[0]
+        if not given or len(given.encode("utf-8", "replace")) > P.PW_INPUT_MAX:
+            return page(401, WRONG_PW)
+        if not self.apps._kdf.acquire(blocking=False):
+            return page(503, BUSY, extra={"retry-after": "5"})
+        try:
+            ok = P.password_ok(json.loads(share_id_row["pw"]), given)
+        finally:
+            self.apps._kdf.release()
+        return None if ok else page(401, WRONG_PW)
 
     # -- files ----------------------------------------------------------------------------------
 
@@ -463,7 +564,7 @@ class ShareServer:
             os.close(fd)
             return not_found()
         ext = os.path.splitext(rel)[1].lower()
-        extra = {"access-control-allow-origin": "*"}
+        extra = {}  # never an Access-Control-Allow-Origin (not "*", not "null"): files do not answer other origins
         if ext in INLINE_TYPES:
             ctype = INLINE_TYPES[ext]
         else:
@@ -512,5 +613,5 @@ class ShareServer:
         return page(200, ("Shared files", ""), body=f"<h1>Shared files</h1><ul>{items}</ul>")
 
 
-def create_share_app(data_dir, clock=None):
-    return ShareServer(data_dir, clock)
+def create_share_app(data_dir, clock=None, share_origin=None, api_host=None, trusted_proxy=None):
+    return ShareServer(data_dir, clock, share_origin, api_host, trusted_proxy)

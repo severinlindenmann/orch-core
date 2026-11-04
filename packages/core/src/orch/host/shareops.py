@@ -9,12 +9,21 @@ Ops (all column P, owner role; an agent is refused, and no op here is reachable 
   required: the ``plan`` the owner was shown: if the selection is different now, nothing changes (WYSIWYS).
 * ``share.revoke {ref}``: withdraw one item now (a ticket key or a ``logical`` id from ``share.preview``); it stays
   withdrawn while it still matches a rule.
+* ``share.revoke`` and ``share.rule_remove`` only take sharing away (:data:`REDUCE_OPS`): the dashboard sends them with
+  one click as the session's person, like ``workspace.cosmetic.set``; at most 10 a minute, and the security-log line
+  names the person. ``orch hub share rule remove`` still asks its own confirmation at the terminal. Neither ever
+  shares something new: a removal that lets another rule match more sends only what was already confirmed and still
+  matches (the rest waits for ``share.sync {expect}``), and removing a rule that is not in the list is ``not_found``.
+  No rule kind excludes (the selection is the union of the rules), so a removal can only narrow; a removal whose rules
+  would select anything the current rules do not is refused all the same. The owner role is checked when the call is
+  served and again under the lock at the write; a switch or other not-full browser session is the dashboard's to
+  refuse (``full_session``, as for ``workspace.cosmetic.set``): the host sees the link's person only.
 * ``share.sync {expect?}``: make the hub's copy equal the selection (``share_put`` / ``share_revoke``). With ``expect``
   (the ``share.preview`` plan, checked like a rule change) the current selection is confirmed; without it a sync only
   retries what was already confirmed. Also run after every rule change and revoke.
 
-Selective workspaces only: in full mode every op is refused (``hub.refused: wrong_mode``), as the hub refuses the link
-operations there. A rule change is saved before the hub is asked; if the hub cannot be reached the answer says
+Selective and full workspaces: in full mode only ticket items (shared with named people) leave, the hub already
+sees what needs you. A rule change is saved before the hub is asked; if the hub cannot be reached the answer says
 ``synced: false`` and the next ``share.sync`` finishes the job (a removed rule is never forgotten).
 
 The state is ``hub/shares.json`` (0600, host-owned). What goes into ``sealed`` is the hub contract's 10.2b format
@@ -24,10 +33,12 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
+
+from orch.canon.text import clean_line
 
 from . import shareauto
 from .errors import HostError
@@ -38,16 +49,52 @@ if TYPE_CHECKING:
 __all__ = ["NETWORK_OPS", "SHARE_OPS", "SHARE_READS", "execute", "serve", "sync_now", "tickets_for"]
 
 SHARE_READS = frozenset({"share.rules", "share.preview"})
+#: a read that asks the hub (off the worker, like the writes): the hub people and teams the owner may name as readers
+SHARE_NET_READS = frozenset({"share.audience"})
 SHARE_OPS: dict[str, int] = {
     "share.rules": 1, "share.preview": 1, "share.rule_add": 1, "share.rule_remove": 1, "share.revoke": 1,
-    "share.sync": 1,
+    "share.sync": 1, "share.audience": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"share.rule_add", "share.rule_remove", "share.revoke", "share.sync"})
+NETWORK_OPS = frozenset({"share.rule_add", "share.rule_remove", "share.revoke", "share.sync", "share.audience"})
+#: The two ops that only take sharing away. Like ``workspace.cosmetic.set`` (cosmeticops) they are unsigned owner
+#: actions the dashboard may send with one click as the session's person (column P, owner role, never a relay); they
+#: share one rate limit and each writes a security-log line naming the person.
+REDUCE_OPS = frozenset({"share.revoke", "share.rule_remove"})
+#: The rule kinds (``orch.hubclient.shares``): each one SELECTS tickets, questions or needs; none excludes. A new kind
+#: must be added here only if it selects (tests/host/test_share_dashboard pins the set).
+SELECTING_KINDS = frozenset({"needs_you", "questions", "type", "ticket", "tag"})
+REDUCE_RATE = 10  # per minute and workspace, as for the cosmetic settings
+#: The ops that can make something NEW leave the workspace: a rule added, or a sync that confirms a shown plan. They are
+#: the click-only owner ops of the dashboard (and the terminal's); five a minute and workspace, each with a security-log
+#: line (person, op, hub, plan, count). A sync without ``expect`` only retries what was confirmed: not one of them.
+ADD_RATE = 5
+#: What leaves per kind of item, in the review's words (the page builds none of them; it shows this text).
+LEAVES = {
+    "ticket": "the ticket's title, status, labels and deadline, but never its description, comments or files",
+    "summary": "the type, a one-line title and the deadline",
+    "question": "the full question (up to 2000 bytes)",
+}
+#: The body sections that make up a ticket's shared description (only under a rule that says "include the description").
+DESCRIPTION_SECTIONS = ("summary", "context", "requirements")
+LATER_EDITS = "Later edits are shared too, until you stop sharing."
+#: The short forms for the one-ticket dialog (same facts as LEAVES / LATER_EDITS; the long text stays for the CLI and
+#: the Details drawer). The page words none of it.
+LEAVES_SHORT = {
+    "ticket": "the title, status, labels and deadline",
+    "summary": "the type, a one-line title and the deadline",
+    "question": "the full question",
+}
+LEAVES_SHORT_DESCRIPTION = "the title, status, labels, deadline and description"
+LATER_EDITS_SHORT = "Later edits are shared too."
 _MU = threading.Lock()
+_NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}
 _RULE = {
     "type": "object",
     "properties": {"kind": {"enum": ["needs_you", "questions", "type", "ticket", "tag"]}, "type": {"type": "string"},
-                   "ticket": {"type": "string"}, "tag": {"type": "string"}},
+                   "ticket": {"type": "string"}, "tag": {"type": "string"},
+                   "audience": {"type": "object", "required": ["users", "groups"], "additionalProperties": False,
+                                "properties": {"users": _NAMES, "groups": _NAMES}},
+                   "description": {"type": "boolean"}},
     "required": ["kind"],
     "additionalProperties": False,
 }  # fmt: skip
@@ -74,6 +121,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },  # fmt: skip
     "share.sync": {"type": "object", "properties": {"expect": _PLAN}, "additionalProperties": False},
+    "share.audience": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 
@@ -85,13 +133,22 @@ def _dir(service: WorkspaceService) -> Any:
 
 
 def _owner(call: Call) -> None:
-    if call.column.name != "P" or call.viewer is None:
+    """The caller is a person at a direct link (column P, no relay, no grant) who is an OWNER of the workspace now. The
+    dashboard's link is such a peer (its person is the computer user's person); the dashboard itself refuses a switch
+    or any other not-full browser session before it sends (``full_session``, the cosmetic precedent), as the host
+    cannot see the browser session behind the link."""
+    if call.column.name != "P" or call.viewer is None or call.relay is not None:
         raise HostError(
             "op.not_allowed", "a person does this at their own terminal; an agent never changes what is shared"
         )
     member = call.service.store.state.workspace.members.get(call.viewer)
     if member is None or member.role != "owner":
         raise HostError("role.denied", "share rules are for workspace owners")
+
+
+def _owner_fresh(call: Call) -> None:
+    call.service.store.refresh()
+    _owner(call)
 
 
 def _check(call: Call) -> tuple[str, dict[str, Any]]:
@@ -109,30 +166,70 @@ def _check(call: Call) -> tuple[str, dict[str, Any]]:
         raise HostError("workspace.unavailable", f"the workspace cannot be served: {service.cause}")
     if op not in SHARE_READS and service.state == "degraded":
         raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
+    service.store.refresh()  # the role is judged on the log as it is now, not on a state from before a role change
     _owner(call)
-    service.store.refresh()
     return op, args
 
 
-def _selective(service: WorkspaceService) -> Any:
-    """The bound hub, in selective mode only (``wrong_mode`` otherwise: these operations do not exist in full mode)."""
+def _bound_hub(service: WorkspaceService) -> Any:
+    """The bound hub, in selective or full mode, and only if the hub state and the signed log agree on the mode
+    (``hub.state_mismatch`` otherwise: the host refuses to guess)."""
     from . import peerops
 
     state = peerops._hub_state(service, full=False)  # noqa: SLF001
     model = dict(service.store.state.workspace.hub)
-    if state.mode != "selective" or model.get("mode") != "selective":
-        raise HostError("hub.refused", "the hub is refused: wrong_mode: sharing rules exist only in selective mode")
+    if state.mode not in ("selective", "full") or not (state.mode == model.get("mode") == state.binding["o"]["mode"]):
+        raise HostError(
+            "hub.state_mismatch",
+            "This workspace's hub mode is not clear right now. Open Settings, Hub, check the connection and try again.",
+        )
     return state
+
+
+def _is_full(service: WorkspaceService) -> bool:
+    return dict(service.store.state.workspace.hub).get("mode") == "full"
+
+
+def _select(service: WorkspaceService, rules: list[Any], facts: list[Any]) -> list[Any]:
+    """The one selection choke point: in full mode only ticket items leave (the hub already sees what needs you)."""
+    from orch.hubclient import shares as S
+
+    items = S.select(rules, facts)
+    return [i for i in items if i.kind == "ticket"] if _is_full(service) else items
+
+
+FULL_SCOPE = "The hub already holds this workspace. These people will see this ticket in their own workspace: {leaves}."
+FULL_NO_SUMMARY = "In this hub mode the hub already sees what needs you. Share a ticket with people instead."
+
+
+def _full_rules_only(service: WorkspaceService, rule: Any) -> None:
+    if _is_full(service) and rule.get("kind") in ("needs_you", "questions"):
+        raise HostError("invalid.input", FULL_NO_SUMMARY)
 
 
 def serve(call: Call) -> dict[str, Any]:
     """The worker half: shape, who, and that a selective hub is bound. Reads and the rule bookkeeping are answered
     here (no network); the hub work runs off the worker in :func:`execute`."""
     op, args = _check(call)
-    _selective(call.service)
+    _bound_hub(call.service)
     if op in SHARE_READS:
         return _read(call, op, args)
+    if op in REDUCE_OPS:
+        _rate(call.service)
+    elif op == "share.rule_add" or (op == "share.sync" and "expect" in args):
+        _rate(call.service, ADD_RATE, "_share_add_hits")
     return {"plan": {"op": op, "args": args}}
+
+
+def _rate(service: Any, limit: int = REDUCE_RATE, attr: str = "_share_reduce_hits") -> None:
+    """At most ``limit`` calls of one class a minute and workspace (the worker runs one call at a time):
+    :data:`REDUCE_RATE` revokes and rule removals, :data:`ADD_RATE` adding changes."""
+    now = service.clock()
+    hits = [t for t in getattr(service, attr, []) if now - t < 60]
+    if len(hits) >= limit:
+        raise HostError("host.busy", "too many sharing changes: wait a minute", retry_after_ms=60_000)
+    hits.append(now)
+    setattr(service, attr, hits)
 
 
 async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
@@ -171,6 +268,20 @@ def _save(service: WorkspaceService, st: Any) -> None:
         ensure_private_dir(level, service.host_uid)
     write_atomic(d / "shares.json", json.dumps(st.to_json(), sort_keys=True).encode(), mode=0o600)
     shareauto.arm(service)  # the owner has used sharing: ticket changes now trigger a debounced pass
+
+
+def forget_sent(service: WorkspaceService) -> None:
+    """The hub purges every shared item when the workspace unbinds: forget what was sent and confirmed (keep the rules
+    and the withdrawn list), so the next share needs a fresh confirm. Nothing to do when nothing was ever shared."""
+    with _MU:
+        try:
+            st = _load(service)
+        except HostError:
+            return
+        if not (st.sent or st.confirmed or st.refused):
+            return
+        st.sent, st.confirmed, st.refused = {}, None, {}
+        _save(service, st)
 
 
 # --- facts and selection ----------------------------------------------------------------------------------------------
@@ -224,8 +335,24 @@ def ticket_fact(store: Any, state: Any, uid: str, t: Any) -> Any:
     return TicketFact(
         uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
         due if isinstance(due, str) else None, qs, needs, gates, state.workspace.roster_v,
-        (seq, head) if seq and head else None,
+        (seq, head) if seq and head else None, _description_of(store, uid),
     )  # fmt: skip
+
+
+def _description_of(store: Any, uid: str) -> str:
+    """The ticket's person-written text, Summary, Context and Requirements, from ``body.md`` (checked against the log
+    by the store), or ``""``: a body that does not match its log, or cannot be read, is no description at all (fail
+    closed). A ticket made in the dashboard has only Requirements ("What should be true when this is done?"). The
+    plan, decisions, findings, comments and files never leave. Only the rules that say "include the description" use
+    it."""
+    from orch.store.errors import StoreError
+
+    try:
+        texts = store.body_sections(uid)
+    except (StoreError, OSError):
+        return ""
+    parts = (texts.get(k, "") for k in DESCRIPTION_SECTIONS)
+    return "\n\n".join(x.strip() for x in parts if x.strip())
 
 
 def _plan(items: list[Any]) -> str:
@@ -239,10 +366,127 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
     return {"count": len(items), "items": rows, "more": max(0, len(items) - limit), "plan": _plan(items)}
 
 
-def _after(st: Any, facts: list[Any], *, add: Any = None, remove: Any = None) -> tuple[list[Any], list[str], list[Any]]:
+def _leaves(kind: str, items: list[Any]) -> str:
+    if kind == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket"):
+        return "the ticket's title, status, labels, deadline and description, but never its plan, comments or files"
+    return LEAVES[kind]
+
+
+def _leaves_short(kinds: list[str], items: list[Any]) -> str:
+    """One short phrase for what leaves, from the same facts as ``_leaves``."""
+    parts = []
+    for k in kinds:
+        if k not in LEAVES_SHORT:
+            continue
+        described = k == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket")
+        parts.append(LEAVES_SHORT_DESCRIPTION if described else LEAVES_SHORT[k])
+    return "; ".join(parts)
+
+
+def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
+    """Display names for these hub users, from the in-memory cache only. A review is built on the workspace worker where
+    nothing may touch the network, so it never asks the hub: the cache is filled by ``share.audience`` (the share form
+    loads it before a person can pick anybody). Until then, and for anyone never listed, the caller shows
+    "a person on the hub"."""
+    return dict(getattr(service, "_share_names", {}))
+
+
+#: Hard limits of one review. Below them the review lists EVERYONE (the page shows the first names and "and N more", the
+#: full list behind the small "i") and the owner's confirmation (the plan digest over the items, audiences included)
+#: binds all of it; above them there is no review: the host refuses in plain words, nothing is cut silently.
+MAX_REVIEW_PEOPLE, MAX_REVIEW_WIDENED = 500, 200
+#: Distinct teams in one review, and every name the review lists (readers, plus the people and teams added per widened
+#: item). The names bound keeps the answer far below ``frames.MAX_FRAME`` (1.5 MB), so a review never fails as a frame.
+MAX_REVIEW_TEAMS, MAX_REVIEW_NAMES = 200, 5000
+TOO_MANY = "This rule reaches too many people. Narrow it to share."
+
+
+def _readers(service: WorkspaceService, items: list[Any]) -> dict[str, Any]:
+    """Who can read these items at the hub besides the owner, by NAME (from the hub, not signed): the people and teams
+    their audiences name. A person whose name the host does not know is "a person on the hub", never an id alone."""
+    users: set[str] = set()
+    groups: set[str] = set()
+    for i in items:
+        if i.audience:
+            users |= set(i.audience["users"])
+            groups |= set(i.audience["groups"])
+    names = _names_for(service, users)
+    return {
+        "people": sorted(clean_line(names.get(u) or "a person on the hub") for u in users),
+        "teams": sorted(groups),
+        "note": "from the hub, not signed",
+        "info": "Team membership is managed by the hub admin." if groups else None,  # shown behind the small "i"
+    }
+
+
+def _widened(service: WorkspaceService, st: Any, items: list[Any]) -> list[dict[str, Any]]:
+    """Already-shared items that this change would make reach more people or carry their description: each with who is
+    added, in names. An automatic pass never does this; only the owner's confirmation can."""
+    from orch.hubclient import shares as S
+
+    names = _names_for(service, {u for i in items if i.audience for u in i.audience["users"]})
+    known = {lg: dict(S.EMPTY_GRANT) for lg in st.sent} if st.confirmed is None else st.confirmed
+    out = []
+    for i in items:
+        g = known[i.logical]
+        aud = i.audience or {"users": [], "groups": []}
+        out.append({
+            "line": i.line(),
+            "people_added": sorted(
+                clean_line(names.get(u) or "a person on the hub") for u in aud["users"] if u not in g["users"]
+            ),
+            "teams_added": sorted(x for x in aud["groups"] if x not in g["groups"]),
+            "description_added": "description" in i.payload and not g["description"],
+        })  # fmt: skip
+    return out
+
+
+def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any = None) -> dict[str, Any]:
+    """The owner's review of an adding change, all from the host (the page adds no words): the hub, who can read there
+    (the pinned group snapshot, "from the hub, not signed"), ONLY the items that would newly leave (not already
+    confirmed and sent), what leaves per kind of item, and that later edits follow."""
+    state = None
+    try:
+        state = _bound_hub(service)
+    except HostError:
+        pass
+    new = [i for i in want if i.logical not in had]
+    wide = st.widened(want) if st is not None else []
+    leaving = new + wide
+    people = {u for i in leaving if i.audience for u in i.audience["users"]}
+    teams = {g for i in leaving if i.audience for g in i.audience["groups"]}
+    if len(people) > MAX_REVIEW_PEOPLE or len(teams) > MAX_REVIEW_TEAMS or len(wide) > MAX_REVIEW_WIDENED:
+        raise HostError("invalid.input", TOO_MANY)
+    widened = _widened(service, st, wide) if wide else []
+    readers = _readers(service, leaving)
+    names = (
+        len(readers["people"])
+        + len(readers["teams"])
+        + sum(len(w["people_added"]) + len(w["teams_added"]) for w in widened)
+    )
+    if names > MAX_REVIEW_NAMES:
+        raise HostError("invalid.input", TOO_MANY)
+    kinds = sorted({i.kind for i in leaving})
+    full = getattr(state, "mode", None) == "full"
+    return {
+        "hub_id": getattr(state, "hub_id", None),
+        "mode": "full" if full else "selective",
+        **({"scope_short": FULL_SCOPE.format(leaves=_leaves_short(kinds, leaving))} if full else {}),
+        "readers": readers,
+        "widened": widened,
+        "new": _rows(new),
+        "leaves": [{"kind": k, "text": _leaves(k, leaving)} for k in kinds if k in LEAVES],
+        "later_edits": LATER_EDITS,
+        "leaves_short": _leaves_short(kinds, leaving),
+        "later_edits_short": LATER_EDITS_SHORT,
+    }
+
+
+def _after(
+    service: WorkspaceService, st: Any, facts: list[Any], *, add: Any = None, remove: Any = None
+) -> tuple[list[Any], list[str], list[Any]]:
     """The rules and withdrawn list after ``add`` / ``remove`` and the items they would share (withdrawn ones left
     out): what ``share.preview`` shows, what ``expect`` is checked against and what the sync sends."""
-    from orch.hubclient import shares as S
 
     rules = [dict(r) for r in st.rules]
     if remove is not None:
@@ -253,7 +497,7 @@ def _after(st: Any, facts: list[Any], *, add: Any = None, remove: Any = None) ->
     if add is not None and add["kind"] == "ticket":  # naming a ticket again is a fresh, explicit choice
         withdrawn = [w for w in withdrawn if not any(w == f"ticket:{t.uid}" and add["ticket"] in (t.key, t.uid)
                                                       for t in facts)]  # fmt: skip
-    return rules, withdrawn, [i for i in S.select(rules, facts) if i.logical not in withdrawn]
+    return rules, withdrawn, [i for i in _select(service, rules, facts) if i.logical not in withdrawn]
 
 
 def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -266,12 +510,39 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     facts = tickets_for(call.service, call.viewer)
     try:
         if op == "share.rules":
-            rules = [{**r, "count": len(S.select([r], facts)), "describes": S.describe(r)} for r in st.rules]
+            shown = [r for r in st.rules if not _is_full(call.service) or r["kind"] in S.TICKET_KINDS]
+            rules = [{**r, "count": len(_select(call.service, [r], facts)), "describes": S.describe(r)} for r in shown]
+            keys = {f.uid: f.key for f in facts}
+            known = st.sent if st.confirmed is None else st.confirmed
+            states = {}
+            priority = {"refused": 0, "not_sent": 1, "waiting": 2, "sent": 3}
+            selected = _select(call.service, st.rules, facts)
+            for item in selected:
+                if item.ticket_uid not in keys or item.logical in st.withdrawn:
+                    continue
+                # sync stores this same content/f1/audience digest after a successful put.
+                if (st.sent.get(item.logical) or {}).get("digest") == item.digest:
+                    state = "sent"
+                elif item.logical in st.refused:
+                    code = st.refused[item.logical]["code"]
+                    code = code if code in S.ITEM_REFUSALS | {"unknown_user", "other_person"} else "unknown"
+                    state = "refused:" + code
+                elif item.logical not in known:
+                    state = "not_sent"
+                else:
+                    state = "waiting"
+                key = keys[item.ticket_uid]
+                if priority[state.split(":")[0]] < priority[states.get(key, "sent").split(":")[0]] or key not in states:
+                    states[key] = state
             return ok_result({"rules": rules, "shared": len(st.sent), "withdrawn": sorted(st.withdrawn),
-                              "refused_items": st.refused_items()})  # fmt: skip
+                              "refused_items": st.refused_items(), "tickets_state": states,
+                              "not_sent_count": sum(v == "not_sent" for v in states.values())})  # fmt: skip
+        add = S.normalize_rule(args["add"]) if "add" in args else None
+        if add is not None:
+            _full_rules_only(call.service, add)
         rules, _w, want = _after(
-            st, facts,
-            add=S.normalize_rule(args["add"]) if "add" in args else None,
+            call.service, st, facts,
+            add=add,
             remove=S.normalize_rule(args["remove"]) if "remove" in args else None,
         )  # fmt: skip
         had = set(st.sent)
@@ -280,6 +551,7 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         out["new"] = len(now - had)
         out["revoked"] = len(had - now)
         out["rules"] = [S.describe(r) for r in rules]
+        out["review"] = _review(call.service, want, had, st)
         return ok_result(out)
     except HubRefused:
         raise HostError("invalid.input", f"{op}: the rule is not valid") from None
@@ -301,11 +573,9 @@ def _make_builder(service: WorkspaceService) -> Any:
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
 
-    from . import hubops, peerops
+    from . import hubops
 
-    state = peerops._hub_state(service, full=False)  # noqa: SLF001
-    if state.mode != "selective":
-        raise HubRefused("wrong_mode")  # shares exist only in selective mode (full mode: the hub holds the logs)
+    state = _bound_hub(service)
     if state.hxk_pub is None:
         raise HubRefused("malformed")
     _pub, sign = hubops._wsk_sign(service)  # noqa: SLF001
@@ -348,7 +618,7 @@ def _sync_locked(service: WorkspaceService, st: Any, wanted: list[Any]) -> dict[
         closer.close()
 
 
-def _confirm(st: Any, selection: list[Any], expect: str) -> None:
+def _approve(st: Any, selection: list[Any], expect: str) -> None:
     """The one place a selection is confirmed: against the plan the owner was shown (C6fud-1)."""
     from orch.hubclient.errors import HubRefused
 
@@ -360,7 +630,12 @@ def _confirm(st: Any, selection: list[Any], expect: str) -> None:
         ) from None
 
 
-def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str | None = None) -> dict[str, Any]:
+def sync_now(
+    service: WorkspaceService,
+    viewer: str | None = None,
+    expect: str | None = None,
+    recheck: Callable[[], None] | None = None,
+) -> dict[str, Any]:
     """Evaluate and sync (the caller holds no lock). ``{"synced": True, put, revoke, kept}`` or
     ``{"synced": False, "pending": code}``: the rules stay saved and the next sync repeats only what is missing.
     ``refused`` lists items the contract or the hub refused one by one (skipped, the rest was sent).
@@ -368,16 +643,17 @@ def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str |
     C6fu2-3: the owner's confirmation covers what they were shown. With ``expect`` (the ``share.preview`` plan) the
     current selection is checked against it and then confirmed; without it a sync only retries the confirmed set
     (:meth:`ShareState.auto_wanted`) and confirms nothing new."""
-    from orch.hubclient import shares as S
 
     with _MU:
+        if expect is not None and recheck is not None:
+            recheck()  # a confirming sync widens what leaves: the owner role is judged again under the lock
         st = _load(service)
         facts = tickets_for(service, viewer)
         if expect is None:
-            wanted = st.auto_wanted(S.select(st.rules, facts))
+            wanted = st.auto_wanted(_select(service, st.rules, facts))
         else:
-            wanted = _after(st, facts)[2]
-            _confirm(st, wanted, expect)
+            wanted = _after(service, st, facts)[2]
+            _approve(st, wanted, expect)
         return _sync_locked(service, st, wanted)
 
 
@@ -389,15 +665,14 @@ def auto_sync(service: WorkspaceService) -> dict[str, Any] | None:
 
     Raises :class:`HostError` where sharing does not apply (full mode, no bound hub: nothing is sent, ever);
     returns ``None`` where it is not the time (closing, degraded, no store); otherwise the sync answer."""
-    from orch.hubclient import shares as S
 
     if service.closing or service.store is None or service.state != "ok":
         return None
     with _MU:
-        _selective(service)  # inside the lock, from the files as they are now: full mode and no hub never send
+        _bound_hub(service)  # inside the lock, from the files as they are now: no hub never sends
         st = _load(service)
         service.store.refresh()
-        wanted = st.auto_wanted(S.select(st.rules, tickets_for(service)))
+        wanted = st.auto_wanted(_select(service, st.rules, tickets_for(service)))
         before = {lg: v.get("digest") for lg, v in st.sent.items()}
         got = _sync_locked(service, st, wanted)
         _audit_auto(service, before, st)
@@ -432,6 +707,55 @@ def _find(st: Any, ref: str, facts: list[Any]) -> str:
     raise HostError("not_found", "nothing is shared under that name: orch hub share rule list")
 
 
+def _pair(logical: str) -> tuple[str, ...]:
+    """W09 (#1074): the other half of a question shared with the hub. ``question:<uid>:<qid>`` and its needs-you summary
+    ``summary:<uid>:question:<qid>`` are one question: withdrawing one by hand withdraws both."""
+    parts = logical.split(":")
+    if len(parts) == 3 and parts[0] == "question":
+        return (f"summary:{parts[1]}:question:{parts[2]}",)
+    if len(parts) == 4 and parts[0] == "summary" and parts[2] == "question" and parts[3]:
+        return (f"question:{parts[1]}:{parts[3]}",)
+    return ()
+
+
+def _widens(service: WorkspaceService, before: list[Any], after: list[Any], facts: list[Any]) -> bool:
+    """Would the rules ``after`` select an item the rules ``before`` do not (on the same tickets)?"""
+
+    return bool(
+        {i.logical for i in _select(service, after, facts)} - {i.logical for i in _select(service, before, facts)}
+    )
+
+
+def _add_audit(service: WorkspaceService, call: Call, args: dict[str, Any], count: int | None = None) -> dict[str, Any]:
+    """The security-log fields of an adding change: who, which hub, the plan the owner confirmed, how many items."""
+    hub = dict(service.store.state.workspace.hub)
+    out: dict[str, Any] = {"person": call.viewer, "hub_id": hub.get("hub_id"), "plan": str(args.get("expect", ""))[:16]}
+    if count is not None:
+        out["count"] = count
+    return out
+
+
+def _audience(service: WorkspaceService) -> dict[str, Any]:
+    """The hub's people and teams for the share form (``audience_get`` over a short link). Display data, "from the hub,
+    not signed": the names are remembered here only to word the next review; only ids go into a signed audience."""
+    from orch.hubclient.errors import HubRefused
+
+    from . import hubops
+
+    closer = _link(service)
+    try:
+        got = closer.call("audience_get", {})
+    except HubRefused as exc:
+        raise hubops._refused(exc.code) from None  # noqa: SLF001
+    except OSError:
+        raise HostError("hub.unreachable", "the hub cannot be reached; try again when it is back") from None
+    finally:
+        closer.close()
+    people = [p for p in got.get("people", []) if isinstance(p, dict) and isinstance(p.get("user_id"), str)]
+    service._share_names = {p["user_id"]: str(p.get("name", ""))[:80] for p in people}  # noqa: SLF001
+    return {"people": people, "teams": got.get("teams", []), "note": "from the hub, not signed"}
+
+
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
@@ -441,42 +765,67 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
     op, args, service = plan["op"], plan["args"], call.service
     try:
+        if op == "share.audience":
+            return ok_result(_audience(service))
         if op == "share.sync":
-            got = sync_now(service, call.viewer, args.get("expect"))
-            hubops._audit(call, "share.sync", synced=got["synced"], confirmed="expect" in args)  # noqa: SLF001
+            got = sync_now(service, call.viewer, args.get("expect"), lambda: _owner_fresh(call))
+            more = {**_add_audit(service, call, args), "count": got.get("put")} if "expect" in args else {}
+            hubops._audit(call, "share.sync", synced=got["synced"], confirmed="expect" in args, **more)  # noqa: SLF001
             return ok_result(got)
         with _MU:
+            service.store.refresh()
+            _owner(call)  # again off the worker, under the lock: a role change since serve() refuses the write
             st = _load(service)
             facts = tickets_for(service, call.viewer)
             if op == "share.revoke":
                 lg = _find(st, args["ref"], facts)
-                if lg not in st.withdrawn:
-                    st.withdrawn.append(lg)
+                for one in (lg, *_pair(lg)):
+                    if one not in st.withdrawn:
+                        st.withdrawn.append(one)
                 _save(service, st)
                 note = "withdrawn; what the hub already read cannot be taken back"
             else:
                 rule = S.normalize_rule(args["rule"])
-                after, withdrawn, shown = _after(st, facts, add=rule if op == "share.rule_add" else None,
+                if op == "share.rule_add":
+                    _full_rules_only(service, rule)
+                if op == "share.rule_remove" and rule not in st.rules:
+                    raise HostError("not_found", "share: that rule is not in the list; nothing changed")
+                after, withdrawn, shown = _after(service, st, facts, add=rule if op == "share.rule_add" else None,
                                                  remove=rule if op == "share.rule_remove" else None)  # fmt: skip
+                if op == "share.rule_remove" and (
+                    rule["kind"] not in SELECTING_KINDS or _widens(service, st.rules, after, facts)
+                ):
+                    # every rule kind selects (the selection is their union, no kind excludes), so a removal can only
+                    # narrow; should a kind ever exclude, removing it would widen: the reduce path refuses that
+                    raise HostError("invalid.input", "share: removing this rule would share more; nothing changed")
                 changed = after != st.rules
                 if _plan(shown) != args["expect"]:
                     raise HostError(
                         "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
                     )
+                if op == "share.rule_add":  # over the hard limits: refused before anything is saved
+                    _review(service, shown, set(st.sent), st)
                 if changed:
                     st.rules, st.withdrawn = after, withdrawn
                     _save(service, st)
                 note = "changed" if changed else "unchanged"
             # C6-2: the sync sends exactly the selection that was confirmed above, under the same lock (never a
-            # second selection that a ticket change in between could have altered). Only a rule change confirms
-            # (against the shown plan); a revoke narrows and sends nothing the owner has not confirmed (C6fud-1).
-            selected = S.select(st.rules, facts)
-            if op == "share.revoke":
+            # second selection that a ticket change in between could have altered). Only an adding rule change confirms
+            # (against the shown plan). A reducing op (REDUCE_OPS: revoke, rule removal) only narrows: it keeps what was
+            # already confirmed and still matches and sends nothing new, even where a removal lets another rule match
+            # more (C6fud-1; the dashboard sends these unsigned and its review lists only what stops).
+            selected = _select(service, st.rules, facts)
+            if op in REDUCE_OPS:
                 selected = st.auto_wanted(selected)
             else:
-                _confirm(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
+                confirmed = [i for i in selected if i.logical not in st.withdrawn]
+                _review(service, confirmed, set(st.sent), st)  # over the hard limits: refused, never confirmed unseen
+                _approve(st, confirmed, args["expect"])
             got = _sync_locked(service, st, selected)
-        hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item")  # noqa: SLF001
+        more = {"person": call.viewer} if op in REDUCE_OPS else {}
+        if op == "share.rule_add":
+            more = _add_audit(service, call, args, len(selected))
+        hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item", **more)  # noqa: SLF001
         return ok_result({"note": note} | got)
     except HubRefused as exc:
         raise hubops._refused(exc.code) from None  # noqa: SLF001

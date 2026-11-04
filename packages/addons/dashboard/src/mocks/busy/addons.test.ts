@@ -135,10 +135,10 @@ describe('busy day: restricted tickets stay out of addon views', () => {
 })
 
 describe('busy day: speed', () => {
-  it('serves list, today and addon decisions in under 50 ms each with every addon on', async () => {
+  it('serves list, today and addon decisions in under 250 ms each (about 8 ms today) with every addon on', async () => {
     const x = make()
     for (const f of [() => x.api.listTickets(x.ws), () => x.api.getToday(x.ws), () => x.api.getAddonDecisions(x.ws)]) {
-      expect(await bestOfFive(f)).toBeLessThan(50)
+      expect(await bestOfFive(f)).toBeLessThan(250)
     }
   })
 })

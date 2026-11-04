@@ -1,5 +1,5 @@
 // The guide on a real host: fixed pages in the bundle, no host call; the sidebar lists it and `?` opens the page for the route.
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { helpPageFor } from '@/api/guide'
@@ -18,13 +18,18 @@ describe('guide on a real host', () => {
     real()
     const { user } = renderApp('/guide?page=approving', { viewer: 'p_sev' })
     expect(await screen.findByRole('heading', { name: 'Approving things' }, T)).toBeInTheDocument()
-    expect(screen.getByText(/orch sign CODE/)).toBeInTheDocument()
+    // one click is the only way to sign: the guide never sends people to a terminal signing step
+    expect(screen.getByRole('heading', { name: 'One click' })).toBeInTheDocument()
+    expect(screen.getByText(/You approve in the dashboard with one click/)).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent(/orch sign/)
     await user.click(within(screen.getByRole('navigation', { name: 'Guide pages' })).getByRole('link', { name: 'Coming later' }))
     expect(await screen.findByRole('heading', { name: 'Coming later' }, T)).toBeInTheDocument()
   })
   it('the sidebar has a Guide link', async () => {
     real()
     renderApp('/board', { viewer: 'p_sev' })
+    // P67: this entry sits in the side rail's "More" group
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }, T))
     expect(await screen.findByRole('link', { name: 'Guide' }, T)).toBeInTheDocument()
   })
   it('? on the board shows the guide page for it without any add-on, and the link opens the full guide', async () => {
@@ -39,10 +44,10 @@ describe('guide on a real host', () => {
     expect(await screen.findByRole('heading', { name: 'Today, Board and Tickets' }, T)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Guide'), T)
   })
-  it('has pages for Repositories, Worktrees and Shares, and ? on those routes shows them (E-6)', () => {
+  it('has pages for Repositories, Work copies and Shares, and ? on those routes shows them (E-6)', () => {
     const titleOf = (path: string) => GUIDE_PAGES.find((p) => p.slug === helpPageFor(GUIDE_ROUTES, path))?.title
     expect(titleOf('/repos')).toBe('Repositories')
-    expect(titleOf('/worktrees')).toBe('Worktrees')
+    expect(titleOf('/worktrees')).toBe('Work copies')
     expect(titleOf('/shares')).toBe('Shares and Publish')
     for (const r of GUIDE_ROUTES) expect(GUIDE_PAGES.some((p) => p.slug === r.page), r.page).toBe(true)
   })

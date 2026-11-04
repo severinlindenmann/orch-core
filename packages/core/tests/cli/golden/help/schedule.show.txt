@@ -1,0 +1,4 @@
+Show a schedule and its signed brief.
+usage: orch schedule show ID
+  ID  schedule ID
+more: orch describe schedule.show

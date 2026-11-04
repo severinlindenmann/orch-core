@@ -44,16 +44,30 @@ class _Signer:
     def _sig(self, msg: bytes) -> bytes:
         return S.sign(self.__key, msg)
 
+    def sign_link(self, o: Mapping[str, Any], exporter: bytes) -> dict[str, Any]:
+        """Sign one ``hub.link`` message of this key's direction, bound to the connection's TLS exporter (§10.2)."""
+        if self.LINK_DIR is None:
+            raise KeyUseError(f"{type(self).__name__} may not sign kind 'hub.link'")
+        if type(o) is not dict or o.get("kind") != "hub.link":
+            raise KeyUseError("not a link message")
+        if o.get("dir") != self.LINK_DIR:
+            raise KeyUseError(f"this key signs link messages only in direction {self.LINK_DIR}")
+        if o.get("v") != 2 or o.get("suite") != S.SUITE_ID or o.get("hv") != H.HV:
+            raise KeyUseError("header is not v 2, suite 2, hv 0")
+        try:
+            msg = H.link_signed_bytes(self.LINK_DIR, exporter, o)
+        except H.Refused as r:
+            raise KeyUseError(r.code) from None
+        return {"o": o, "sig": b64u(self._sig(msg))}
+
     def sign_object(self, o: Mapping[str, Any]) -> dict[str, Any]:
         """Sign one hub object of a kind this key may sign; returns ``{"o", "sig"}``."""
         if type(o) is not dict:
             raise KeyUseError("not an object")
         kind = o.get("kind")
-        if kind == "hub.link" and self.LINK_DIR is not None:
-            if o.get("dir") != self.LINK_DIR:
-                raise KeyUseError(f"this key signs link messages only in direction {self.LINK_DIR}")
-            label = H.link_label(self.LINK_DIR)
-        elif type(kind) is str and kind in self.KINDS:
+        if kind == "hub.link":
+            raise KeyUseError("a link message is signed with sign_link (it binds the TLS exporter)")
+        if type(kind) is str and kind in self.KINDS:
             label = L[self.KINDS[kind]]
         else:
             raise KeyUseError(f"{type(self).__name__} may not sign kind {kind!r}")
@@ -71,6 +85,20 @@ class RootSigner(_Signer):
 
     KINDS = MappingProxyType({"hub.op_cert": "sig_hub_op_cert", "hub.op_revoked": "sig_hub_op_revoked"})
 
+    def sign_backup_header(self, o: Mapping[str, Any]) -> bytes:
+        """The ``hub.backup`` header signature (protocol §17.1): only this key signs it, under its own label (not in
+        ``HUB_LABELS``, so it is not a ``KINDS`` entry); the caller builds the envelope."""
+        from . import backup as B
+
+        if type(o) is not dict or o.get("kind") != B.KIND:
+            raise KeyUseError("not a hub.backup header")
+        if o.get("v") != 2 or o.get("suite") != S.SUITE_ID or o.get("hv") != H.HV:
+            raise KeyUseError("header is not v 2, suite 2, hv 0")
+        try:
+            return self._sig(B.LABEL + cj(o))
+        except CanonError as e:
+            raise KeyUseError(str(e)) from None
+
 
 class OpSigner(_Signer):
     """``HK_op``: the card, UK and channel certificates, snapshots, hub->host link messages, publish transport."""
@@ -85,6 +113,14 @@ class OpSigner(_Signer):
             "hub.space_wrap": "sig_hub_space_wrap",
             "hub.audit": "sig_hub_audit",
             "hub.space_proposal": "sig_hub_space_proposal",
+            "hub.closing": "sig_hub_closing",
+            "hub.org_skills": "sig_hub_org_skills",
+            "hub.mcp_servers": "sig_hub_mcp_servers",
+            "hub.release_narrow": "sig_hub_release_narrow",
+            "hub.app_pass": "sig_hub_app_pass",
+            "hub.allow": "sig_hub_allow",
+            "hub.publish_where": "sig_hub_publish_where",
+            "hub.org_secrets": "sig_hub_org_secrets",
             "hub.api_origin": "sig_hub_api_origin",
         }
     )

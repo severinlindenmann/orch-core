@@ -45,6 +45,12 @@ def share(w, **kw):
     return w.send(staged), key
 
 
+def prepare_attempt(w, name="report.md", data=REPORT):
+    """The raw ``publish.prepare`` reply: the route is checked at prepare, so a refusal comes here, before any send."""
+    uid, key = w.ticket_with(**{name: data})
+    return w.req("publish.prepare", {"ref": key, "artifacts": [name]})
+
+
 def kinds(server):
     return [(r["method"], r["target"].split("/", 4)[4]) for r in server.requests]
 
@@ -142,8 +148,9 @@ def test_a_hub_refusal_is_hub_refused_not_a_direct_retry(world, human, served):
 def test_joined_but_not_connected_publishes_nothing(world, human, served):
     w = world
     human.run("hub.join", join_args())  # the owner signed; hub.connect never ran
-    assert err(share(w)[0]) == "hub.not_joined"
-    assert w.server.requests == [] and w.hub_server.requests == []
+    res = prepare_attempt(w)  # refused at prepare, in plain words: connect first
+    assert err(res) == "hub.not_joined" and "not connected" in res["error"]["message"]
+    assert w.server.requests == [] and w.hub_server.requests == [] and w.hub.sent == []
 
 
 def test_after_leave_the_workspace_publishes_nothing_and_the_old_binding_is_not_used(world, human, served):
@@ -154,29 +161,40 @@ def test_after_leave_the_workspace_publishes_nothing_and_the_old_binding_is_not_
     human.run("hub.leave", {})
     # the log says left (hub.json still holds the bound binding until `orch hub unbind`): a workspace without a hub
     # is local only (D69): "join a hub", and nothing is sent, neither through the hub nor anywhere else
-    res, _ = share(w, name="after.md")
-    assert err(res) == "hub.not_joined" and "join a hub" in res["error"]["message"]
+    res = prepare_attempt(w, name="after.md")  # refused at prepare, plain words
+    assert err(res) == "hub.not_joined" and "Join a hub" in res["error"]["message"]
     assert len(w.hub_server.requests) == via_hub and w.hub.ops().count("publish_out") == 3
     # a rejoin (binding_seq 2) is a new binding: the old connected state does not carry over
     human.run("hub.join", join_args())
-    assert err(share(w, name="third.md")[0]) == "hub.not_joined"
+    assert err(prepare_attempt(w, name="third.md")) == "hub.not_joined"
     assert len(w.hub_server.requests) == via_hub
 
 
-def test_a_file_over_the_link_frame_says_so_and_sends_nothing(world, human, served):
+def test_a_file_over_the_link_frame_is_said_at_prepare_before_anything_is_signed(world, human, served):
     w = world
     joined(w, human, served)
-    res, _ = share(w, name="big.bin", data=b"\x07" * 600_000)
+    res = prepare_attempt(w, name="big.bin", data=b"\x07" * 600_000)
+    assert err(res) == "quota.host" and "can't go through the hub yet" in res["error"]["message"]
+    assert w.hub_server.requests == []
+
+
+def test_a_file_over_the_link_frame_still_sends_nothing_when_it_reaches_send(world, human, served, monkeypatch):
+    w = world
+    joined(w, human, served)
+    with monkeypatch.context() as m:  # past prepare's early refusal: send keeps its own check
+        m.setattr("orch.hubclient.publish.HUB_FILE_MAX", 10_000_000)
+        staged, _ = staged_share(w, name="big.bin", data=b"\x07" * 600_000)
+    res = w.send(staged)
     assert err(res) == "publish.server_refused"
     assert [r for r in w.hub_server.requests if r["method"] == "PUT" and "/files/" in r["target"]] == []
 
 
 def test_a_standalone_workspace_refuses_publish_with_join_a_hub(world):
     w = world  # never joined: local only (D69, V3-D36). No direct path exists.
-    res, _ = share(w)
-    assert err(res) == "hub.not_joined" and "join a hub" in res["error"]["message"]
+    res = prepare_attempt(w)
+    assert err(res) == "hub.not_joined" and "Join a hub" in res["error"]["message"]
     reg = w.req("publish.register", {})
-    assert err(reg) == "hub.not_joined" and "join a hub" in reg["error"]["message"]
+    assert err(reg) == "hub.not_joined" and "Join a hub" in reg["error"]["message"]
     live = ok(w.req("publish.list", {"live": True}))["data"]  # a read says plainly there is no server to ask
     assert live["live"] is False
     assert w.hub.sent == [] and w.server.requests == []

@@ -268,3 +268,48 @@ def test_restricted_ticket_cannot_be_built_on_by_a_user_not_on_the_list(env):
     env.host.append(LOG, "visibility.changed", visibility={"restricted": ["u_" + env.user]}, roster_v=2)
     env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 3))
     assert env.prepare(a).ctx["event"]["text"] == "probe"
+
+
+def test_addon_requested_is_built_and_signed_by_the_real_engine_and_core_accepts_its_shape(env):
+    """FB15 (8.8b): the hub engine builds exactly the six action fields on the workspace log (core's host-side shape check
+    accepts such an event: the shared vector custodial_event_addon_requested)."""
+    a = {
+        "type": "addon.requested", "log": "workspace", "name": "wiki", "version": "1.2.0",
+        "package_sha256": "sha256:" + "a" * 64, "capabilities": ["network"], "handoff": "hr_01J9ZP0000000000000000HND1",
+        "runtime": {"kind": "node-package-lock", "lock": "package-lock.json", "packages": 4},
+    }  # fmt: skip
+    p, ev = sign(env, a)
+    e = p.ctx["event"]
+    assert p.ctx["log"] == "workspace" and e["based_on"] == env.vs.service.head(WS, "workspace")
+    for k in ("name", "version", "package_sha256", "capabilities", "handoff", "runtime"):
+        assert e[k] == a[k]
+    assert env.delivered[-1][1] == "workspace" and ev["sig"]
+    # a reserved name never reaches the view (the hub refuses it as malformed)
+    assert code(env.prepare, {**a, "name": "ticket"}) == "malformed"
+    assert code(env.prepare, {**a, "fields": {}}) == "malformed"
+
+
+def test_settings_changed_is_built_and_signed_by_the_real_engine(env):
+    """27 Oct (8.8): a settings change from the hub page is built on the workspace log with exactly the `set` it was sent."""
+    a = {"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 24, "claim_ttl_min": 60}}
+    p, ev = sign(env, a)
+    e = p.ctx["event"]
+    assert (
+        p.ctx["log"] == "workspace" and e["set"] == a["set"] and e["based_on"] == env.vs.service.head(WS, "workspace")
+    )
+    assert env.delivered[-1][1] == "workspace" and ev["sig"]
+    assert code(env.prepare, {**a, "set": {"grant_hours": 999}}) == "malformed"
+
+
+@pytest.mark.parametrize("role", ["edit", "read", None])
+def test_settings_changed_below_admin_is_refused_by_the_hub(tmp_path, role):
+    """Opus review of #1481: who may sign is the hub's role table (workspace log, lowest role admin), checked at prepare."""
+    from custodial_helpers import Env as CEnv
+
+    e = CEnv(tmp_path, role=role)
+    try:
+        with pytest.raises(Refused) as r:
+            e.prepare({"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 24}})
+        assert r.value.code == "forbidden_role"
+    finally:
+        e.close()

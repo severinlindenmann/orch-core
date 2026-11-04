@@ -38,9 +38,6 @@ class Code(StrEnum):
     DEVICE_INVALID = "device.invalid"
     DEVICE_SCOPE = "device.scope"
     DEVICE_LOCKOUT = "device.lockout"  # #1198 C15: the last working device of an owner stays
-    SIGN_METHOD = "sign.method"
-    SIGN_HUB_ONLY = "sign.hub_only"  # C8/C11: a local signature in a joined full-mode position (D78, D81)
-    SIGN_KEY_EXPOSED = "sign.key_exposed"  # #1097: a device key with evidence of convenience custody signs a gated act
     DEVICE_CERT = "device.cert"
     GRANT_INVALID = "grant.invalid"
     GRANT_SCOPE = "grant.scope"
@@ -57,6 +54,7 @@ class Code(StrEnum):
     HUB_UNKNOWN_SNAPSHOT = "hub.unknown_snapshot"
     HUB_FOREIGN_USER = "hub.foreign_user"  # 15.6: a u_ id of another hub
     HUB_DENIED = "hub.denied"  # channel revoked, no role / not granted, not custodial, factor too weak
+    REMOTE_INVALID = "remote.invalid"  # R2 (#1590): a remote.* event the model refuses (detail says why)
     ADDON_UNKNOWN = "addon.unknown"
     ADDON_FIELD_UNKNOWN = "addon.field_unknown"
     ADDON_VALUE_INVALID = "addon.value_invalid"
@@ -88,6 +86,8 @@ class Code(StrEnum):
     SOURCE_UNLINKED = "source.unlinked"
     SOURCE_NOT_NEW = "source.not_new"
     # --- claims, tasks, artifacts, questions
+    SCHEDULE_DENIED = "schedule.denied"
+    FOLLOWUP_DENIED = "followup.denied"
     CLAIM_NOT_LIVE = "claim.not_live"
     CLAIM_EXISTS = "claim.exists"
     CLAIM_NOT_HOLDER = "claim.not_holder"
@@ -95,6 +95,7 @@ class Code(StrEnum):
     TASK_LEASED = "task.leased"
     TASK_STATE = "task.state"
     TASK_BAD_RECEIPT = "task.bad_receipt"
+    TASK_PLAN_OPEN = "task.plan_open"
     ARTIFACT_EXISTS = "artifact.exists"
     ARTIFACT_UNKNOWN = "artifact.unknown"
     ARTIFACT_BAD_REPLACES = "artifact.bad_replaces"

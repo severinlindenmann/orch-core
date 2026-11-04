@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Mapping
 from typing import Any
 
 # a stdlib-only leaf (no custody, no I/O): the dashboard side may import it (§0.8.6 "Packaging and versions")
@@ -12,6 +13,7 @@ from orch.model.types import GRANT_MAX_HOURS
 
 __all__ = [
     "CLICK_OPS",
+    "HOLD_OPS",
     "DETAIL_FIELDS",
     "DETAIL_REASONS",
     "DEPOSIT_LINE",
@@ -30,20 +32,39 @@ __all__ = [
     "REVEAL_RISK",
     "REASONS",
     "REFUSALS",
+    "REMOTE_KIND_REFUSED",
+    "REMOTE_NO_STREAM",
+    "REMOTE_PRESENCE_INVALID",
+    "REMOTE_PRESENCE_REQUIRED",
     "CONTRACT",
+    "CONTRACT_MISMATCH",
     "FEATURES",
+    "OP_TITLES",
+    "ONE_PRESS_OPS",
+    "RISK_BUILDERS",
+    "headline",
+    "headline_detail",
+    "risk_lines",
     "ClickError",
     "RISK",
     "click_detail",
     "op_class",
 ]
 
+#: 4 (run 13 C3): the View carries ``headline`` (signer words: the op's title and the ticket key, no free text),
+#: ``headline_detail`` (a ticket's title, capped and quoted, or null) and ``risk_lines`` (the lines the signer marks as
+#: risk: ``[]`` only for :data:`ONE_PRESS_OPS`, never empty for any other op), all in ``view_digest``; a client may
+#: announce the contract it speaks (``contract`` in any request's args) and another one is refused with
+#: :data:`CONTRACT_MISMATCH`.
 #: 3 (#1198 C1, C2): no typed-word class: every op that was a word op is a click, Publish (``settings.set`` publish,
 #: ``addon.grant`` of publish, ``publish.share``) included; ``sign`` reads no ``word`` and the ``word`` refusal is
 #: gone; a client reads ``status.contract`` and sends nothing typed.
 #: 2 (H11c-2): deposit support (``deposit`` on ``prepare``, ``deposit``/``deposit_reason`` on ``sign``); a contract-1
 #: signer answers ``terminal_only`` for every ``grant``, so a client reads ``status.contract`` to tell the two apart
-CONTRACT = 3
+CONTRACT = 4
+#: the refusal of a request whose ``args.contract`` is not :data:`CONTRACT` (exactly that int: ``True``, ``4.0`` and
+#: ``"4"`` are other contracts); a client that announces nothing is not refused (it reads ``status.contract``)
+CONTRACT_MISMATCH = "contract.mismatch"
 #: the closed set of ``sign``'s ``deposit_reason`` (static codes, never host text; anything else is ``other``)
 DEPOSIT_REASONS = frozenset(
     {"grant.forgotten", "grant.not_runner", "grant.verbs", "grant.expiring", "rate.limited", "runner.unavailable",
@@ -53,10 +74,7 @@ RISK = "Convenience signing: agents running as you, or anything that takes over 
 #: v1.6 (D-P2-27, §0.8.6 item 6): the View of a deposit-only grant carries this line (and in ``lines``)
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 #: the owner's plain-language risk of a click-issued runner grant (D-P2-27), the tier-A sentence of its View
-DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 #: #1198 C7: the View of a grant whose secret is shown once in the page (sealed to the page's key) carries this line
 #: (and in ``lines``) and ``seal.purposes == ["grant.secret"]``
 REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
@@ -69,6 +87,10 @@ SEALED_OPS: dict[str, tuple[str, ...]] = {
     "hub.join": ("hub.backup_key",),
     "hub.mode": ("hub.backup_key",),
     "hub.leave": ("hub.backup_key",),
+    # R2 (#1590): the owner's remote policy and device confirmation are clicks only at the loopback dashboard, with the
+    # backup key sealed to the signer (the remote owner proof); a remote session never reaches them (``handle``)
+    "remote.set": ("hub.backup_key",),
+    "remote.device_confirm": ("hub.backup_key",),
 }
 #: #1198 C13: ``device.rotate`` (a new key for this computer) is a click only through the signer's own ``rotate`` op,
 #: never through ``prepare``: the NEW key signs it, so the signer makes that key itself. It takes the recovery code
@@ -96,6 +118,8 @@ OPS = (
     "view",
     "sign",
     "cancel",
+    "cancel_holds",
+    "session_alive",
     "status",
     "custody_on",
     "custody_off",
@@ -154,6 +178,12 @@ REFUSALS = (
     "stopped",
     "resumable",
 )
+#: R3 (#1591): the codes of a call that comes from a remote-device stream (``stream`` in the call, set by the dashboard
+#: adapter, never by the device); each has ONE static text, the reason only in the signer log
+REMOTE_KIND_REFUSED = "remote.kind_refused"  # this kind, level or person is never signed from a stream
+REMOTE_PRESENCE_REQUIRED = "remote.presence_required"  # no live presence batch covers this review
+REMOTE_PRESENCE_INVALID = "remote.presence_invalid"  # the nonce or the assertion is not acceptable (no reason shown)
+REMOTE_NO_STREAM = "remote.no_stream"  # the host knows no open stream with that id
 #: #517: the only codes whose host ``Error.detail`` the signer forwards, each with its closed ``reason`` set (§0.3).
 #: Taken from the host's own closed schema (:data:`orch.host.errors.DETAIL_KEYS`): one source of truth
 DETAIL_REASONS: dict[str, frozenset[str]] = {
@@ -210,9 +240,12 @@ CLICK_OPS = frozenset(
         "hub.join",  # #1198 C10: only with the backup key sealed to the signer (SEALED_OPS); see view.check_prepared
         "hub.mode",
         "hub.leave",
+        "remote.set",  # R2 (#1590): sealed backup key like a hub step; refused when the call is from a remote session
+        "remote.device_confirm",
         "device.remove",  # #1198 C15: refused for the signing device and an owner's last device (device.lockout)
         "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
         "publish.share",  # #1198 C2: the staged copy's own words are the review; the person clicks
+        "app.release",  # #1457: an app goes live (new, update, back, start) only by a person's click on its own words
         # #1198 C1: these were the typed-word class; the person reads the review and clicks, nothing is typed
         "member.add",
         "member.role",
@@ -220,13 +253,358 @@ CLICK_OPS = frozenset(
         "addon.purge",
         "policy.set",
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
+        "schedule.add",  # emits schedule.set
+        "schedule.cancel",  # emits schedule.cancelled
+        "follow_up.reschedule",
+        "follow_up.undo",
+        "follow_up.cancel",  # run 12 (6.4): the Cancel button of a follow-up is one click, like the other daily ops
     }
 )
+#: D5: only log-only operations may wait unsigned. `set` is further restricted to labels/priority/size.
+HOLD_OPS = frozenset({"log", "set", "move", "section.set", "follow_up.reschedule"})
+
 #: every op not in :data:`CLICK_OPS` is terminal-only (fail closed for ops added later)
+
+#: contract 4: the signer-owned words of the View's ``headline`` (see :func:`headline`): one short line per op
+OP_TITLES: dict[str, str] = {
+    "approve": "Approve requirements, plan or code review",
+    "request_changes": "Request changes",
+    "verdict": "Give a verdict",
+    "answer": "Answer a question",
+    "close": "Close a ticket",
+    "reopen": "Reopen a ticket",
+    "new": "Create a ticket",
+    "set": "Change a ticket",
+    "section.set": "Change a ticket section",
+    "ac.add": "Add an acceptance criterion",
+    "ac.edit": "Edit an acceptance criterion",
+    "task.add": "Add a task",
+    "task.edit": "Edit a task",
+    "task.block": "Block a task",
+    "task.done": "Mark a task done",
+    "task.reopen": "Reopen a task",
+    "task.skip": "Skip a task",
+    "task.start": "Start a task",
+    "ac.accept": "Accept a criterion",
+    "ac.unaccept": "Withdraw the acceptance of a criterion",
+    "task.mark_done": "Mark a task done",
+    "log": "Add a note",
+    "ask": "Ask a question",
+    "claim": "Claim a ticket",
+    "release": "Release a ticket",
+    "handoff": "Hand off a ticket",
+    "submit": "Submit for review",
+    "move": "Move a ticket",
+    "artifact.add": "Add a file",
+    "artifact.replace": "Replace a file",
+    "apply": "Apply a change",
+    "grant.revoke": "Stop agent access",
+    "grant": "Give agents access",
+    "addon.disable": "Turn off an add-on",
+    "settings.set": "Change the workspace settings",
+    "hub.join": "Join a hub",
+    "hub.mode": "Change the hub mode",
+    "hub.leave": "Leave a hub",
+    "remote.set": "Turn on remote access",
+    "remote.device_confirm": "Add a remote device",
+    "device.remove": "Remove a device",
+    "addon.grant": "Turn on an add-on",
+    "publish.share": "Share files outside this computer",
+    "app.release": "Let an app go live",
+    "member.add": "Add a member",
+    "member.role": "Change a member's role",
+    "member.remove": "Remove a member",
+    "addon.purge": "Purge an add-on",
+    "policy.set": "Change the approval rules",
+    "people.set": "Change who works on a ticket",
+    "schedule.add": "Schedule an agent run",
+    "schedule.cancel": "Cancel a schedule",
+    "follow_up.reschedule": "Move a follow-up",
+    "follow_up.undo": "Restore a follow-up",
+    "follow_up.cancel": "Cancel a follow-up",
+    ROTATE_OP: "Replace this computer's key",
+}
+
+
+#: a ticket key as the signer checks it (``orch.host.signer._formats``): letters, digits and one dash, never free text
+TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})")
+#: the most characters of free text (a ticket title) ``headline_detail`` shows, before the closing ``…``
+DETAIL_CHARS = 60
+
+
+#: the signer-owned words of the View's ``headline`` for a sequence that has no op of its own (its ops are ordinary
+#: ones): the approval of the requirements and the plan with one signature
+SEQUENCE_TITLES: dict[str, str] = {"approve_gates": "Approve requirements and plan"}
+
+
+def headline(op: str, key: Any = None) -> str:
+    """The View's ``headline``: signer-owned words only, the op's title from :data:`OP_TITLES` and, when the request
+    names a ticket, its key (``Close a ticket: DEMO-0043``). Never any free text: a title a person or a host chose goes
+    to :func:`headline_detail`. A key that is not a well-formed ticket key is left out."""
+    title = OP_TITLES.get(op) or SEQUENCE_TITLES.get(op, "Sign this change")
+    if isinstance(key, str) and TICKET_KEY.fullmatch(key):
+        return f"{title}: {key}"
+    return title
+
+
+def headline_detail(text: Any) -> str | None:
+    """The free text beside the headline (a ticket's title), visually secondary: one line, at most
+    :data:`DETAIL_CHARS` characters (cut with ``…``), always in quotes (``“…”``); ``None`` when there is none."""
+    if not isinstance(text, str):
+        return None
+    flat = " ".join(
+        "".join(c if c.isprintable() else " " for c in text if c not in '"“”‘’').split()
+    )  # no control or line break
+    if not flat:
+        return None
+    if len(flat) > DETAIL_CHARS:
+        flat = flat[:DETAIL_CHARS].rstrip() + "…"
+    return f"“{flat}”"
+
+
+# -- contract 4: the risk lines (run 13 C3) ----------------------------------------------------------------------------
+# The signer's own words only. A value of a signed event reaches a risk line only through a closed table (a capability's
+# words, a role) or as a number (a grant's hours); never as text a client or a host chose.
+GRANT_LENGTH_LINE = "Agents get this authority for {span}, until it ends or you stop it."
+CAPABILITY_LINE = "It may {words}."
+CAPABILITY_UNKNOWN = "It declares a capability orch has no words for; read the details before you turn it on."
+PUBLISH_ADDON_RISK = "Turning on Publish lets files you share leave this computer, for anyone with the link to read."
+PUBLISH_SETTINGS_RISK = "Files you share will be sent to this Publish server; whoever runs it can read them."
+PUBLISH_SHARE_RISK = (
+    "These files leave this computer: anyone with the link can read them, and a copy cannot be taken back."
+)
+APP_RELEASE_RISK = (
+    "The app runs code in the browser of everyone who opens it, and can reach only what the review lists. "
+    "Other people see this version as soon as you sign."
+)
+HUB_SELECTIVE_RISK = "The hub receives what you choose to share; leaving later does not take back what it received."
+HUB_FULL_RISK = (
+    "The hub will be able to read everything in this workspace, restricted tickets too; leaving later cannot take back "
+    "what it read."
+)
+HUB_LEAVE_RISK = (
+    "Leaving does not take back what the hub already read; phones and publishing that go through the hub stop "
+    "reaching this workspace."
+)
+HUB_RISK = "This changes what a hub can read of this workspace."
+REMOTE_RISK = "Devices you add can use this workspace from afar, up to the level you chose, until you turn it off."
+REMOTE_AGENTS_RISK = "Agents on this computer can act as you."
+REMOTE_HUB_FULL_LINE = "The hub can already act for people in this workspace. Remote access does not change that."
+REMOTE_DEVICE_RISK = "Check that the six words match the ones on the device; this device can then reach this workspace."
+DEVICE_REMOVE_RISK = (
+    "That device can no longer sign for this workspace; to use it again, it must be paired again as a new device."
+)
+KEY_REPLACE_RISK = "The old key stops signing everywhere at once; this cannot be undone."
+PURGE_RISK = "Everything this add-on added to tickets is removed from what orch shows (the signed history stays)."
+SCHEDULE_FIRING_LINE = "No click or confirmation is required at firing time."
+#: a role that gives more authority than a member has; the signer cannot read the role it replaces from signed data,
+#: so these targets are always marked
+ROLE_RISKS: dict[str, str] = {
+    "owner": "An owner can do everything in this workspace, change its members and their roles included.",
+    "maintainer": "A maintainer gets more authority over everyone's work in this workspace.",
+}
+ROLE_CHANGE_RISK = "This changes who can do what in this workspace."
+MEMBER_ADD_RISK = "Adds a person to this workspace."
+MEMBER_REMOVE_RISK = "Removes a person from this workspace: their devices can no longer sign for it."
+POLICY_RISK = "Changes who may approve and what is required before an approval counts."
+PEOPLE_RISK = "Changes who works on or reviews this ticket, and so who may act on it."
+TICKET_OWNER_RISK = "A ticket owner decides who works on and reviews this ticket and may change its approval rules."
+#: the fail-closed line of an op outside :data:`ONE_PRESS_OPS` whose builder has nothing to say (or that has none)
+NOT_DAILY_RISK = "This change is not a daily action: read it before you sign."
+
+Events = list[Mapping[str, Any]]
+
+
+def _hours_line(events: Events) -> list[str]:
+    from orch.host.signcontent import span
+
+    hours = next((e.get("hours") for e in events if e.get("type") == "grant.issued"), None)
+    if type(hours) is not int or hours < 1:
+        return []
+    return [GRANT_LENGTH_LINE.format(span=span(hours))]
+
+
+def _grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    # deposit (the runner grant, "agent access" handed to the runner) or reveal (the secret shown once in the page);
+    # any other grant never reaches a View (terminal_only), and is still marked here
+    # r7-P10: a runner grant carries ONE risk line (the length is in the headline and the grant row, and DEPOSIT_RISK
+    # says it is the length you choose, up to 7 days); the shown secret keeps its own risk line and the length
+    if deposit:
+        return [DEPOSIT_RISK]
+    return [REVEAL_RISK, *_hours_line(events)]
+
+
+def _addon_grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    from orch.host.signcontent import _CAPABILITY_WORDS
+
+    out: list[str] = []
+    for ev in events:
+        if ev.get("type") != "addon.granted":
+            continue
+        if ev.get("name") == "publish":
+            out.append(PUBLISH_ADDON_RISK)
+        caps = ev.get("capabilities")
+        for cap in caps if isinstance(caps, list) else ([] if caps is None else [caps]):
+            words = _CAPABILITY_WORDS.get(cap) if isinstance(cap, str) else None
+            out.append(CAPABILITY_LINE.format(words=words) if words is not None else CAPABILITY_UNKNOWN)
+    return list(dict.fromkeys(out))
+
+
+def _roles(events: Events, typ: str) -> list[str]:
+    roles = [ev.get("role") for ev in events if ev.get("type") == typ]
+    return list(dict.fromkeys(ROLE_RISKS[r] for r in roles if isinstance(r, str) and r in ROLE_RISKS))
+
+
+def _role_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    return _roles(events, "role.changed") or [ROLE_CHANGE_RISK]
+
+
+def _member_add_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    return [MEMBER_ADD_RISK, *_roles(events, "member.added")]
+
+
+def _people_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    owner = any(ev.get("type") == "people.changed" and ev.get("role") == "owner" for ev in events)
+    return [TICKET_OWNER_RISK, PEOPLE_RISK] if owner else [PEOPLE_RISK]
+
+
+def _settings_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    for ev in events:
+        changed = ev.get("set")
+        if ev.get("type") == "settings.changed" and isinstance(changed, Mapping):
+            if any(str(k).split(".")[0] == "publish" and v is not None for k, v in changed.items()):
+                return [PUBLISH_SETTINGS_RISK]
+    return []
+
+
+def _hub_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    out: list[str] = []
+    for ev in events:
+        if ev.get("type") == "hub.joined":
+            out.append(HUB_FULL_RISK if ev.get("mode") == "full" else HUB_SELECTIVE_RISK)
+        elif ev.get("type") == "hub.left":
+            out.append(HUB_LEAVE_RISK)
+    return list(dict.fromkeys(out)) or [HUB_RISK]  # a hub step is always marked
+
+
+def _remote_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    out: list[str] = []
+    for ev in events:
+        if ev.get("type") == "remote.changed":
+            out.append(REMOTE_RISK)
+            if ev.get("agents_risk") is True:
+                out.append(REMOTE_AGENTS_RISK)
+            if ev.get("hub_mode") == "full":
+                out.append(REMOTE_HUB_FULL_LINE)
+        elif ev.get("type") == "remote.device_added":
+            out.append(REMOTE_DEVICE_RISK)
+    return list(dict.fromkeys(out)) or [REMOTE_RISK]
+
+
+def _schedule_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    from orch.ops.schedule import describe, risk
+
+    lines = []
+    for event in events:
+        if event.get("type") != "schedule.set":
+            continue
+        target = event.get("target", "existing")
+        if target == "new":
+            lines.append(describe(event["rule"], "", event["ends"], target, event.get("title")))
+        lines.append(risk(target))
+    return [*lines, SCHEDULE_FIRING_LINE]
+
+
+def _fixed(*lines: str) -> Callable[[Events, bool, bool], list[str]]:
+    return lambda events, deposit, reveal: list(lines)
+
+
+#: the closed allowlist of daily, low-risk click ops (the stop, undo and everyday ones): their View has no risk lines
+#: and one press signs. EVERY other op (a click op not listed here, :data:`ROTATE_OP`, any op added later) is risky by
+#: default: its ``risk_lines`` are never empty, so the page asks for the second press.
+ONE_PRESS_OPS = frozenset(
+    {
+        "approve",
+        "request_changes",
+        "verdict",
+        "answer",
+        "close",
+        "reopen",
+        "new",
+        "set",
+        "section.set",
+        "ac.add",
+        "ac.edit",
+        "ac.accept",
+        "ac.unaccept",
+        "task.add",
+        "task.edit",
+        "task.block",
+        "task.done",
+        "task.reopen",
+        "task.skip",
+        "task.start",
+        "task.mark_done",
+        "log",
+        "ask",
+        "claim",
+        "release",
+        "handoff",
+        "submit",
+        "move",
+        "artifact.add",
+        "artifact.replace",
+        "apply",
+        "follow_up.reschedule",
+        "follow_up.undo",
+        "follow_up.cancel",
+        "schedule.cancel",
+        "grant.revoke",
+        "addon.disable",
+    }
+)
+
+#: op -> builder ``(events, deposit, reveal) -> lines``: the signer's specific risk words of an op outside
+#: :data:`ONE_PRESS_OPS`. An op without a builder, or whose builder finds nothing, still gets :data:`NOT_DAILY_RISK`.
+RISK_BUILDERS: dict[str, Callable[[Events, bool, bool], list[str]]] = {
+    "grant": _grant_risk,
+    "addon.grant": _addon_grant_risk,
+    "member.add": _member_add_risk,
+    "member.role": _role_risk,
+    "member.remove": _fixed(MEMBER_REMOVE_RISK),
+    "policy.set": _fixed(POLICY_RISK),
+    "people.set": _people_risk,
+    "settings.set": _settings_risk,
+    "publish.share": _fixed(PUBLISH_SHARE_RISK),
+    "app.release": _fixed(APP_RELEASE_RISK),
+    "hub.join": _hub_risk,
+    "hub.mode": _hub_risk,
+    "hub.leave": _hub_risk,
+    "remote.set": _remote_risk,
+    "remote.device_confirm": _remote_risk,
+    "device.remove": _fixed(DEVICE_REMOVE_RISK),
+    ROTATE_OP: _fixed(KEY_REPLACE_RISK),
+    "addon.purge": _fixed(PURGE_RISK),
+    "schedule.add": _schedule_risk,
+}
+
+
+def risk_lines(op: str, events: Events | None = None, *, deposit: bool = False, reveal: bool = False) -> list[str]:
+    """The View's ``risk_lines`` for ``op`` over its signed ``events``: ``[]`` only for :data:`ONE_PRESS_OPS`; for any
+    other op its builder's lines (:data:`RISK_BUILDERS`), or :data:`NOT_DAILY_RISK` when there is no builder or it
+    finds nothing (fail closed: never empty)."""
+    good = [e for e in events or [] if isinstance(e, Mapping)]
+    # A composite headed by a daily op never hides authority granted by a later event.
+    if op != "grant" and any(e.get("type") == "grant.issued" for e in good):
+        return _grant_risk(good, deposit, reveal)
+    if op in ONE_PRESS_OPS:
+        return []
+    build = RISK_BUILDERS.get(op)
+    lines = [str(line) for line in build(good, deposit, reveal)] if build is not None else []
+    return lines or [NOT_DAILY_RISK]
 
 
 #: ``settings.set`` keys that need more than a click: none (#1198 C2). ``publish`` (where shared files go) is a click
-#: too, because its View lists both servers in words; ``repos``, ``sign_methods`` and ``grant_hours`` lost their typed
 #: word in C1. (``addons``, the values an add-on reads, is a click: owner V3-D38, 24 Oct.) ``icon`` (cosmetic) is a
 #: click as well.
 SETTINGS_TERMINAL_KEYS: frozenset[str] = frozenset()

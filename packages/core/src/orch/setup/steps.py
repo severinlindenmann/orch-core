@@ -24,7 +24,6 @@ import base64
 import contextlib
 import json
 import re
-import secrets as _secrets
 import threading
 import time
 import urllib.parse
@@ -40,7 +39,6 @@ from . import review as review_mod
 from .protocol import SetupError
 
 __all__ = [
-    "CONFIRM_ATTEMPTS",
     "Creator",
     "Genesis",
     "Ports",
@@ -50,26 +48,20 @@ __all__ = [
     "set_no_core_dumps",
 ]
 
-CONFIRM_ATTEMPTS = 5
 CODE_WORDS = 24
 #: what the person types on the setup terminal once the page shows the same three words (R3)
-TTY_WORD = "yes"
 
 
 def tty_confirm_text(words: str) -> str:
-    """The block the setup terminal shows before it asks for :data:`TTY_WORD` (plain words, owner B11)."""
+    """The block the setup terminal shows before it asks for the Enter confirmation (plain words, owner B11)."""
     return (
         "\n========================================================\n"
         "orch setup is asking you to confirm.\n"
         "The setup page in your browser should show these three words:\n\n"
         f"    {words}\n\n"
-        f"Check the page. If they match, type {TTY_WORD} and press Enter.\n"
-        "Anything else (or Enter alone) cancels; nothing is created.\n"
+        "Check the page. If they match, press Enter to sign; any other key cancels and nothing is created.\n"
         "========================================================\n"
     )
-
-
-CHECKS = 3
 
 
 def batch_labels() -> tuple[bytes, ...]:
@@ -98,7 +90,7 @@ def _wipe(buf: bytearray) -> None:
 class Secrets:
     """The device passphrase and the recovery code of ONE session, generated in this process, held in bytearrays and
     wiped when the session ends. ``reveal`` works once (a second call is ``secrets.shown``, 410); ``confirm`` checks
-    three words in core; five wrong tries end the session and the next session draws new secrets.
+    the person's acknowledgement (no word comes back to the server).
 
     Python cannot promise that no copy of a ``str`` survives (the custody API takes ``str``); the copies made by
     :meth:`passphrase` and :meth:`code` are as short-lived as the caller makes them. No secret is ever in a log, an
@@ -112,10 +104,8 @@ class Secrets:
         self.show_passphrase = show_passphrase
         self._pass = bytearray(generate_passphrase().encode("ascii"))
         self._code = bytearray(generate_recovery_code().encode("ascii"))
-        self.positions = sorted(_secrets.SystemRandom().sample(range(1, CODE_WORDS + 1), CHECKS))
         self.shown = False
         self.confirmed = False
-        self.attempts_left = CONFIRM_ATTEMPTS
         self.dead = False
 
     # -- the browser's two calls
@@ -130,32 +120,20 @@ class Secrets:
             return {
                 "passphrase": bytes(self._pass).decode("ascii") if self.show_passphrase else None,
                 "recovery_words": words,
-                "check_positions": list(self.positions),
             }
 
-    def confirm(self, given: Any) -> dict[str, Any]:
+    def confirm(self, acknowledged: Any) -> dict[str, Any]:
+        """The person pressed "I saved my recovery words". No word is sent back or compared (owner decision, run 9):
+        the gate is "shown once, then acknowledged"."""
         with self._lock:
             if self.dead:
                 raise SetupError("secrets.gone", "these secrets are gone; start the setup again", 410)
             if not self.shown:
                 raise SetupError("secrets.not_shown", "show the secrets first", 409)
-            if self.confirmed:
-                return {"ok": True}
-            if not isinstance(given, dict) or set(given) != {str(p) for p in self.positions}:
-                raise SetupError("invalid.input", "words are the three asked positions", field="words")
-            words = bytes(self._code).decode("ascii").split()
-            ok = True
-            for p in self.positions:  # all three are compared, whatever the first said
-                w = given[str(p)]
-                ok &= isinstance(w, str) and w.strip().lower() == words[p - 1]
-            del words
-            if ok:
-                self.confirmed = True
-                return {"ok": True}
-            self.attempts_left -= 1
-            if self.attempts_left <= 0:
-                self._wipe()
-            return {"ok": False, "attempts_left": self.attempts_left}
+            if acknowledged is not True:
+                raise SetupError("invalid.input", "confirm takes acknowledged: true", field="acknowledged")
+            self.confirmed = True
+            return {"ok": True}
 
     # -- the create step's
     def passphrase(self) -> str:
@@ -176,7 +154,7 @@ class Secrets:
             if self.dead:
                 return []
             code = bytes(self._code).decode("ascii")
-            return [bytes(self._pass).decode("ascii"), code, *code.split()]
+            return [bytes(self._pass).decode("ascii"), *held_words(code)]
 
     def _wipe(self) -> None:
         _wipe(self._pass)
@@ -186,10 +164,6 @@ class Secrets:
     def wipe(self) -> None:
         with self._lock:
             self._wipe()
-
-    @property
-    def exhausted(self) -> bool:
-        return self.dead and self.attempts_left <= 0
 
     def __repr__(self) -> str:  # never the secrets
         return "Secrets(<redacted>)"
@@ -236,6 +210,35 @@ def _b64_forms(b: bytes) -> list[str]:
     return out
 
 
+#: A filesystem path in error text ("/home/x/.config/orch/person", "~/.orch/key"): two or more segments after a leading
+#: "/" or "~/". Directory and file names are ordinary words that a 24-word recovery code (or a passphrase word) matches
+#: by chance, about once in fifty setups, so they must not make an error unreadable.
+#: Strict: a non-empty first segment, not after ":" (URLs) or inside a base64 / word run ("a/b/c" glued to a letter).
+_PATH = re.compile(r"(?<![\w/:+=.~-])(?:~|\.{1,2})?/[\w.@%~-]+(?:/[\w.@%~-]+)+/?")
+
+
+def _without_paths(text: str) -> str:
+    return _PATH.sub(" ", text)
+
+
+class _Code(str):
+    """The whole recovery code as held by a session: its single words are checked separately, as :class:`Word`."""
+
+    __slots__ = ()
+
+
+def held_words(code: str) -> list[str]:
+    """The recovery code as the redaction gate wants it: the whole (_Code) and each of its words (Word), always both.
+    Only recovery-code words are path-exempt; a passphrase is passed as a plain str (strict)."""
+    return [_Code(code), *(Word(w) for w in _tokens(code))]
+
+
+class Word(str):
+    """One word of the recovery code: matched like the secret it is, but not inside a filesystem path."""
+
+    __slots__ = ()
+
+
 def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     """True when ``text`` holds a secret. For each secret (the passphrase, the recovery code, each recovery word):
 
@@ -250,23 +253,40 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     forms = [_forms(t) for t in texts]
     toks = [set(_tokens(t)) for t in texts]
     raw_nows = ["".join(t.split()) for t in texts]
+    # The ONLY path exemption: one held recovery word (Word) is not looked for inside a filesystem path. Everything
+    # else (whole code, passphrase, runs of 2+ words, hex / base64 / quoted forms) is checked on the full text.
+    plain_forms = [_forms(_without_paths(t)) for t in texts]
     for sec in secrets:
         if not isinstance(sec, str) or not sec.strip():
             continue
         s_ws, s_an = _forms(sec)
-        for t_ws, t_an in forms:
+        for t_ws, t_an in plain_forms if isinstance(sec, Word) else forms:
             if len(s_ws) >= _MIN_SECRET and s_ws in t_ws:
                 return True
             if len(s_an) >= _MIN_SECRET and s_an in t_an:
                 return True
         words = _tokens(sec)
-        for w in words:
-            if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
+        if not isinstance(sec, _Code | Word):  # a held code's single words are checked as Word secrets (path-exempt)
+            for w in words:
+                if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
+                    return True
+        if isinstance(sec, _Code):  # two different words of the code anywhere, in any order, are a leak
+            # whole tokens (set membership, never a substring) of 6+ letters: the same length the single-word rule
+            # uses. Shorter words ("item", "login") are ordinary English: two of them hid real macOS messages.
+            distinct = {w for w in words if len(w) >= _MIN_SECRET}
+            if sum(1 for w in distinct if any(w in tk for tk in toks)) >= 2:
                 return True
-        for w1, w2 in zip(words, words[1:], strict=False):
-            pair = w1 + w2
-            if len(pair) >= _MIN_SECRET and any(pair in t_an for _, t_an in forms):
+            # 4 different short (3-5 letter) code words anywhere, as whole tokens: ~1 in 100,000 for real text, and it
+            # caps what a message can show at 3 short words (+1 long word) of the code
+            short = {w for w in words if 3 <= len(w) < _MIN_SECRET}
+            if sum(1 for w in short if any(w in tk for tk in toks)) >= 4:
                 return True
+        for i in range(len(words)):  # every run of 2+ consecutive words, joined
+            run = words[i]
+            for w2 in words[i + 1 :]:
+                run += w2
+                if len(run) >= _MIN_SECRET and any(run in t_an for _, t_an in forms):
+                    return True
         raw = sec.encode("utf-8", "replace")
         hexed = {raw.hex(), "".join(sec.split()).encode("utf-8", "replace").hex()}
         if any(h in t_ws for h in hexed for t_ws, _ in forms):
@@ -277,9 +297,15 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
                 if any(e in r for r in raw_nows):
                     return True
             for q in (urllib.parse.quote(variant), urllib.parse.quote_plus(variant)):
+                if isinstance(sec, Word) and q.lower() == s_ws:
+                    continue  # the unchanged word: already checked above, outside paths only
                 if len(q) >= _MIN_SECRET and any(q.lower() in t_ws for t_ws, _ in forms):
                     return True
     return False
+
+
+SERVICE_TEXT = "orch could not start in the background on this computer: its service manager is unavailable."
+TIMEOUT_TEXT = "orch could not start in the background on this computer: its service manager did not answer."
 
 
 #: The fixed sentences (and pieces) this flow's own code writes into reasons. A secret word that occurs only inside one
@@ -289,6 +315,11 @@ KNOWN_WORDING = tuple(
     sorted(
         (
             HIDDEN_REASON,
+            SERVICE_TEXT,
+            TIMEOUT_TEXT,
+            "The records history is not on:",
+            "Next: orch records init",
+            "it could not be set up",
             "macOS did not let orch use the keychain (it is locked); unlock it and run orch setup again",
             "macOS did not let orch use the keychain",
             "one-click could not be set up because",
@@ -358,11 +389,24 @@ class Ports(Protocol):
     def identity(self, wid: str) -> Identity: ...
     def install_addon(self, root: Path, name: str, raw: bytes) -> None: ...
     def git_init(self, root: Path) -> None: ...
+    def privatize(self, root: Path) -> None: ...  # remove group/other write from our own folders (P08)
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None: ...
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
+    def runner_refresh(self) -> None: ...
     def records_setup(self, wid: str, root: Path) -> None: ...
+    def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool | None: ...
+
+    def trust_why(self, root: Path, *, allow_parent: bool = False) -> str: ...
+    def background_blocked(self) -> list[str]: ...  # io.orch labels macOS turned off (Login Items & Extensions)
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
-    def unlock(self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]) -> Any: ...
+    def unlock(
+        self,
+        wid: str,
+        passphrase: str | None,
+        digest: str,
+        fields: tuple[tuple[str, str], ...],
+        one_click: bool = False,
+    ) -> Any: ...
     def convenience_on(self, wid: str) -> None: ...
     def stage(self, wid: str, prefix: str, passphrase: str) -> Any: ...
     def finish_conversion(self, wid: str, staged: Any) -> None: ...
@@ -380,6 +424,8 @@ class Run:
         self.error: dict[str, Any] | None = None
         self.retry: list[str] = []
         self.reasons: dict[str, str] = {}
+        self.details: dict[str, str] = {}
+        self.reason_codes: dict[str, str] = {}  # fixed codes next to the words (the page decides its advice from these)
         self.workspace: dict[str, str] | None = None
         self.waiting_tty = False
         #: called with one plain line when a step ends (the setup terminal prints it; B11 finding 25)
@@ -423,6 +469,7 @@ class Run:
                 "error": self.error,
                 "retry": list(self.retry),
                 "reasons": dict(self.reasons),
+                "reason_codes": dict(self.reason_codes),
                 "workspace": self.workspace,
                 "waiting": "waiting for terminal" if self.waiting_tty else None,
             }
@@ -430,18 +477,41 @@ class Run:
 
 ECHO = {"done": "done:", "failed": "FAILED:", "skipped": "skipped:"}
 STEP_LABELS = {
+    "perms": "Folders made private",
     "keys": "Creating your key",
     "genesis": "Saving your approval",
     "register": "Starting orch in the background",
-    "git": "Making the folder a git repository",
+    "git": "Preparing work copies",
     "runner": "Letting the dashboard run agents",
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",
     "runner_grant": "Letting agents start on this computer",
     "custody": "Storing your key for one-click approval",
     "records": "Setting up the records history on this computer",
+    "trust": "Letting Claude Code trust this folder",
 }
 HELLO_SECONDS = 30.0
+
+
+BLOCKED_TEXT = (
+    "macOS has turned off orch in the background. Allow orch in System Settings > General > "
+    "Login Items & Extensions, then press Try again."
+)
+
+
+def _service_reason(exc: BaseException) -> str | None:
+    import subprocess
+
+    text = str(exc)
+    if text.startswith("macOS has turned off orch in the background."):
+        return None  # the service manager supplied background_off_message, not a generic failure
+    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)) or "TimeoutExpired" in text:
+        return TIMEOUT_TEXT
+    if isinstance(exc, OSError) or any(
+        word in text for word in ("OSError", "service manager", "launchctl", "systemctl")
+    ):
+        return SERVICE_TEXT
+    return None
 
 
 def _runner_failure(exc: BaseException, safe: Callable[[str, int | None], str]) -> str:
@@ -494,7 +564,7 @@ class Creator:
         self._genesis_started = False  # ports.genesis was called: its outcome may be unknown, the key may land
 
     def _held_secrets(self) -> list[str]:
-        out: list[str] = [self._passphrase] if self._passphrase else []
+        out: list[str] = [self._passphrase] if self._passphrase else []  # plain: strict, every word on the full text
         if self.secrets is not None:
             out += self.secrets.held()
         return out
@@ -514,6 +584,7 @@ class Creator:
             self._tty_confirm()
             self._stop_point()
             self._say("orch setup: working on it; the page shows the same steps")
+            self._perms()
             if self.mode == "new":
                 self._genesis()
                 post_genesis = True
@@ -525,21 +596,65 @@ class Creator:
             self._custody()  # the key moves into click custody FIRST ...
             self._flags()  # ... and the convenience flag is set LAST: never "flag on, key not held"
             self._records()
-            self.run.done = True
+            self._trust()
+            self._conclude()
         except KeyboardInterrupt:
             self._fail(SetupError("stop", "setup was stopped from the terminal", 409), post_genesis)
         except SetupError as e:
             self._fail(e, post_genesis)
         except CustodyError as e:
-            self._fail(SetupError("custody.error", f"the key custody refused ({type(e).__name__})", 409), post_genesis)
+            why = self._safe(str(e), 300) or type(e).__name__  # B2/5: the reason and the fix, in words
+            self._fail(SetupError("custody.error", f"the key custody refused: {why}", 409), post_genesis)
         except BaseException as e:  # noqa: BLE001 - the thread must report, never die silently
-            self._fail(SetupError("internal", f"setup failed ({type(e).__name__})", 500), post_genesis)
+            why = self._safe(str(e), 300)
+            tail = f": {why}" if why else ""
+            self._fail(SetupError("internal", f"setup failed ({type(e).__name__}){tail}", 500), post_genesis)
         finally:
             if self.run.error is not None:
                 self._rescue_passphrase()  # before the wipe: never leave a one-click key under an unseen passphrase
             self._passphrase = None
             if self.secrets is not None:
                 self.secrets.wipe()
+
+    def _conclude(self) -> None:
+        """ "Ready" only when no row failed. macOS turning orch off in the background is named in plain words."""
+        bad = [s["label"] for s in self.run.steps if s["status"] == "failed"]
+        if not bad:
+            self.run.error = None
+            self.run.done = True
+            return
+        blocked: list[str] = []
+        with contextlib.suppress(Exception):
+            blocked = list(self.ports.background_blocked())
+        # W01: Login Items advice only when no step failed for a service-manager reason (it would blame the wrong thing)
+        service_failed = any(code.startswith("service.") for code in self.run.reason_codes.values())
+        if blocked and not service_failed:
+            self._fail(SetupError("background.blocked", BLOCKED_TEXT, 409), True)
+        else:
+            first_service = next((k for k, code in self.run.reason_codes.items() if code.startswith("service.")), None)
+            message = self.run.reasons.get(first_service) if first_service else None
+            self._fail(
+                SetupError("steps.failed", message or "Some steps did not work: " + ", ".join(bad) + ".", 409), True
+            )
+        if self.run.error is not None and self.run.details:
+            self.run.error["details"] = "\n".join(self.run.details.values())
+
+    def retry(self) -> None:
+        """ "Try again" after the person allowed orch in System Settings: the failed background steps run once more."""
+        self.run.error = None
+        self.run.done = False
+        self.run.retry = []
+        for s in self.run.steps:
+            if s["status"] == "failed":
+                self.run.set(s["id"], "todo")
+        try:
+            self._runner()
+            self._records()
+            self._conclude()
+        except SetupError as e:
+            self._fail(e, True)
+        except Exception as e:  # noqa: BLE001
+            self._fail(SetupError("internal", f"setup failed ({type(e).__name__})", 500), True)
 
     def _rescue_passphrase(self) -> None:
         """HIGH-1: in one-click mode the passphrase is never shown up front. Any failure after the genesis and before
@@ -586,24 +701,23 @@ class Creator:
 
     # -- R3
     def _tty_confirm(self) -> None:
-        """R3, in plain words (B11): the terminal shows the words the page must show, and the person types the
-        confirm word. Written straight to ``/dev/tty`` (unbuffered ``os.write``), from the run thread, right after
-        the page's Create; the page says so before that click, so nobody waits for the terminal before it."""
+        """Compare the page's three-word channel binding, then authorize on the controlling tty."""
         if not self.plan.tty_confirm:
             return
         words = " ".join(self.plan.fingerprint or [])
         self.run.waiting_tty = True
         try:
-            self.ports.terminal.show(tty_confirm_text(words))
-            typed = self.ports.terminal.ask(f"If they match, type {TTY_WORD}: ")
+            from orch.ops.human import review_prompt
+
+            confirmed = review_prompt(tty_confirm_text(words))
         except SetupError:
             raise
         except Exception:  # noqa: BLE001 - no terminal: nothing is created
-            raise SetupError("tty.unavailable", "no terminal to confirm on; nothing was created", 409) from None
+            raise SetupError("tty.required", "no terminal to confirm on; nothing was created", 409) from None
         finally:
             self.run.waiting_tty = False
-        if typed.strip().lower() != TTY_WORD:
-            raise SetupError("tty.declined", "the terminal did not confirm; nothing was created", 409)
+        if not confirmed:
+            raise SetupError("sign.cancelled", "the terminal did not confirm; nothing was created", 409)
 
     # -- keys, genesis, register (B5)
     def _genesis(self) -> None:
@@ -622,6 +736,15 @@ class Creator:
         self.wid = g.wid
         self.run.workspace = {"id": g.wid, "prefix": self.profile["prefix"]}
 
+    def _perms(self) -> None:
+        """P08/P14 (new and Finish): the review said "Folders made private": remove group/other write from ours."""
+        if not any(f["id"] == "perms" for f in self.plan.flags):
+            return
+        self.run.set("perms", "doing")
+        with contextlib.suppress(Exception):  # the strict custody check still refuses what stays loose
+            self.ports.privatize(self.root)
+        self.run.set("perms", "done")
+
     def _git(self) -> None:
         """``git init`` of the project folder when the review said so (before the settings that declare it)."""
         if not any(f["id"] == "git" for f in self.plan.flags):
@@ -637,6 +760,31 @@ class Creator:
             raise SetupError("git.init_failed", f"git init failed ({type(exc).__name__})", 500) from None
         self.run.set("git", "done")
 
+    def _trust(self) -> None:
+        """Claude Code's folder trust for the new folder (run-12a FB16). Best effort: a failure never stops setup."""
+        if not any(f["id"] == "trust" for f in self.plan.flags):
+            return
+        self.run.set("trust", "doing")
+        try:
+            ok = self.ports.trust_folder(self.root, allow_parent=bool(self.profile.get("trust_parent")))
+        except Exception:  # noqa: BLE001 - Claude Code simply asks itself, as before
+            ok = False
+        if ok is False:
+            why = ""
+            with contextlib.suppress(Exception):
+                why = self.ports.trust_why(self.root, allow_parent=bool(self.profile.get("trust_parent")))
+            if why:
+                self.run.explain("trust", why)
+            code = "other"
+            with contextlib.suppress(Exception):
+                code = str(
+                    getattr(self.ports, "trust_code", lambda *_a, **_k: "other")(
+                        self.root, allow_parent=bool(self.profile.get("trust_parent"))
+                    )
+                )
+            self.run.reason_codes["trust"] = code
+        self.run.set("trust", "skipped" if ok is False else "done")
+
     def _records(self) -> None:
         """The records step (run 8, owner 1.8): the same code as ``orch records init``, then local auto-commit on (never
         push). The person consented in the review (the ``records`` flag, part of the review digest). A failure is a
@@ -645,15 +793,24 @@ class Creator:
             return
         assert self.wid is not None
         self.run.set("records", "doing")
+        self.run.details.pop("records", None)
+        self.run.reason_codes.pop("records", None)
         try:
             self.ports.records_setup(self.wid, self.root)
         except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup is done
             self.run.set("records", "failed")
             self.run.add_retry("records")
+            service = _service_reason(exc)
+            if service:  # W01: a missing or silent service manager is said in plain words, the raw text in Details
+                self.run.details["records"] = self._safe(f"{type(exc).__name__}: {exc}", 2000)
+                code = "service.timeout" if service == TIMEOUT_TEXT else "service.unavailable"
+                self.run.reason_codes["records"] = code
+                self.run.explain("records", f"The records history is not on: {service} Next: orch records init")
+                return
             why = " ".join("".join(c if c.isprintable() else " " for c in self._safe(str(exc), None)).split())[:300]
-            self.run.explain(
-                "records", f"The records history is not on: {why or type(exc).__name__}. Next: orch records init"
-            )
+            if not why or why == type(exc).__name__ or why.startswith(type(exc).__name__ + ":"):
+                why = "it could not be set up"  # never a bare exception class name for the person
+            self.run.explain("records", f"The records history is not on: {why}. Next: orch records init")
             return
         self.run.set("records", "done")
 
@@ -669,6 +826,8 @@ class Creator:
     # -- runner flags, hello (R4)
     def _runner(self) -> None:
         assert self.wid is not None
+        with contextlib.suppress(Exception):
+            self.ports.runner_refresh()  # an older install's runner would answer runner.stale to every start
         wants = any(f["id"] == "runner" for f in self.plan.flags)
         grant = next((i for i in self.items if i.id == "runner_grant"), None)
         if not wants:  # nothing to switch on (already on, Finish setup): a grant still waits for the runner's hello
@@ -676,13 +835,19 @@ class Creator:
                 self._skip_grant()
             return
         self.run.set("runner", "doing")
+        self.run.details.pop("runner", None)
+        self.run.reason_codes.pop("runner", None)
         terminals = any(f["id"] == "terminals" for f in self.plan.flags)
         try:
             self.ports.runner_enable(self.wid, self.profile["prefix"], terminals)
         except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup goes on
             self.run.set("runner", "failed")
             self.run.add_retry("runner")
-            self.run.explain("runner", _runner_failure(exc, self._safe))
+            reason = _service_reason(exc)
+            if reason:
+                self.run.details["runner"] = self._safe(f"{type(exc).__name__}: {exc}", 2000)
+                self.run.reason_codes["runner"] = "service.timeout" if reason == TIMEOUT_TEXT else "service.unavailable"
+            self.run.explain("runner", reason or _runner_failure(exc, self._safe))
             if grant is not None:
                 self._skip_grant()
             return
@@ -742,7 +907,9 @@ class Creator:
                 raise
             fields = (("workspace", wid), ("requests", str(len(self.items))), ("review", self.plan.digest[:23]))
             done: list[str] = []
-            with self.ports.unlock(wid, self._passphrase, self.plan.digest, fields) as backend:
+            with self.ports.unlock(
+                wid, self._passphrase, self.plan.digest, fields, one_click=self.profile["method"] == "click"
+            ) as backend:
                 for it in self.items:
                     try:
                         if it.id in deferred:
@@ -919,6 +1086,14 @@ def _as_setup_error(e: Exception) -> SetupError:
     )  # no cut here: `_fail` redacts first, then cuts
 
 
+def sign_line(requests: str, one_click: bool) -> str:
+    """The terminal's line before the signature: no item count (the page and the terminal can no longer disagree) and
+    "with one passphrase" only when the person chose a passphrase (a one-click setup names none)."""
+    if one_click:
+        return "\norch setup is creating your workspace.\n"
+    return "\norch setup is creating your workspace. It signs what you read on the setup page, with one passphrase.\n"
+
+
 class RealPorts:
     """:class:`Ports` over the real host, custody and runner. Only this class touches them."""
 
@@ -984,7 +1159,7 @@ class RealPorts:
 
     def identity(self, wid: str) -> Identity:
         from orch.custody.select import device_backend
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
         from orch.identity import device_ref
 
         entry = next(iter(_own_workspaces(self.state, self.uid, wid)), None)
@@ -1006,6 +1181,53 @@ class RealPorts:
     # -- the runner (D-P2-31)
     def git_init(self, root: Path) -> None:
         init_repository(root)
+
+    def privatize(self, root: Path) -> None:
+        """P08: exactly the paths the review named (see orch.privdir.setup_paths / privatize)."""
+        from orch import layout as layout_mod
+        from orch import privdir
+
+        home = Path(self.env.get("HOME") or Path.home())
+        privdir.privatize(privdir.setup_paths(root, layout_mod.store_of(root), self.state, home), self.uid)
+
+    def privatize_orch(self) -> None:
+        """P14: at launch, only orch's own folders (the project folder and its store wait for the review)."""
+        from orch import privdir
+
+        home = Path(self.env.get("HOME") or Path.home())
+        privdir.privatize(privdir.orch_paths(self.state, home), self.uid)
+
+    def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
+        from .claude_folder import trust_folder
+
+        return trust_folder(self.env, root, allow_parent=allow_parent)
+
+    def background_blocked(self) -> list[str]:
+        import sys
+
+        from orch.lifecycle.units import Env, blocked_orch_labels
+
+        return blocked_orch_labels(Env(env=self.env, out=sys.stdout, err=sys.stderr))
+
+    def trust_why(self, root: Path, *, allow_parent: bool = False) -> str:
+        """Why the trust step was skipped, in plain words (shown on the page and in the setup log)."""
+        from .claude_folder import claude_installed, refusal
+
+        if not claude_installed(self.env):  # J01-06: the sign card of the first Claude Code start asks again
+            return "Claude Code is not installed on this computer yet. Once it is, it asks once to trust this folder."
+        from .claude_folder import config_state
+
+        return refusal(self.env, root, allow_parent=allow_parent) or (
+            "Claude Code has not been started on this computer yet, so orch could not answer for you."
+            if config_state(self.env, root) == "missing"
+            else "Claude Code's settings file could not be changed safely, so orch could not answer for you."
+        )
+
+    def trust_code(self, root: Path, *, allow_parent: bool = False) -> str:
+        """Why it was skipped, as a fixed code: only not_installed / not_started mean "Claude Code asks once"."""
+        from .claude_folder import refusal_code
+
+        return refusal_code(self.env, root, allow_parent=allow_parent)
 
     def records_setup(self, wid: str, root: Path) -> None:
         """``orch records init`` and ``orch records auto on`` (no ``--push``): the records tool's own code, with the
@@ -1035,6 +1257,12 @@ class RealPorts:
         if not res.get("ok"):
             raise SetupError("runner.unavailable", str((res.get("error") or {}).get("message", "runner")), 500)
 
+    def runner_refresh(self) -> None:
+        """A runner left over from an older orch is restarted onto this release (B3: "runner.stale")."""
+        from orch.host.cli import refresh_stale_runner
+
+        refresh_stale_runner(self.state, self.env)
+
     def runner_hello(self, wid: str, timeout: float) -> bool:
         from orch.runner import enablement
 
@@ -1052,7 +1280,7 @@ class RealPorts:
     def workspace(self, wid: str) -> Any:
         from orch import hostclient
         from orch.host.client import Connection, Pin
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
 
         entry = next(iter(_own_workspaces(self.state, self.uid, wid)), None)
         if entry is None:
@@ -1069,7 +1297,12 @@ class RealPorts:
 
     @contextlib.contextmanager
     def unlock(
-        self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]
+        self,
+        wid: str,
+        passphrase: str | None,
+        digest: str,
+        fields: tuple[tuple[str, str], ...],
+        one_click: bool = False,
     ) -> Iterator[Any]:
         from orch.custody import select
 
@@ -1084,11 +1317,9 @@ class RealPorts:
             yield backend
             return
         # B11 finding 24: the plan was read on the setup page; the terminal says so in a line and keeps the technical
-        # block behind `d` (shared with `orch sign`, see custody.passphrase.note_plain_review).
+        # block behind `d` (shared with the CLI signer, see custody.passphrase.note_plain_review).
         requests = dict(fields).get("requests", "")
-        self.terminal.show(
-            f"\norch setup will sign {requests or 'the'} item(s) you read on the setup page, with one passphrase.\n"
-        )
+        self.terminal.show(sign_line(requests, one_click))
         from orch.custody import passphrase as _pp
 
         _pp.note_plain_review()

@@ -5,7 +5,9 @@ names an op. What each route does:
 
 * `GET  /shares`          `publish.list {live}`: the settings, the shares and the staged copies. **Never a link**: the
                           host keeps no link, and this projection has no field that could carry one.
-* `POST /shares/prepare`  `publish.prepare`: copy named artifacts aside. Nothing leaves the computer.
+* `POST /shares/upload`   `publish.stage_upload`: a file the person picked on this computer (P05), kept aside by the
+                          host; one file per call, at most 1 MiB. Nothing is shared; `prepare` may name it.
+* `POST /shares/prepare`  `publish.prepare`: copy named artifacts (and picked files) aside. Nothing leaves the computer.
 * `POST /shares/send`     `publish.send`: after a person's signature (the `publish_share` hand-off in handoff.py), the
                           host uploads and answers the link ONCE. This is the only route whose answer holds a link.
 * `POST /shares/revoke`, `/shares/discard`, `/shares/register`.
@@ -24,17 +26,21 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import reads
 from .adapters.addons import display
+from .cosmetic_routes import full_session, refused
 from .errors import HostError, fail
 from .gateway import Gateway
 from .terminals import Idem
 
 #: core `orch.publishclient.approval.NAME`: the alphabet the server takes for a file name
 FileName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,99}$")]
+UploadId = Annotated[str, StringConstraints(pattern=r"^pu_[0-9a-f]{32}$")]
+#: core `publishing.UPLOAD_BYTES` (1 MiB) as base64; the host holds the exact limit
+UPLOAD_B64_MAX = (1024 * 1024 + 2) // 3 * 4
 StagedId = Annotated[str, StringConstraints(pattern=r"^ps_[0-9a-f]{32}$")]
 ShareId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 KINDS = ("secret", "once")
@@ -60,10 +66,23 @@ class ListQuery(BaseModel):
     ticket: reads.Key | None = None
 
 
+class UploadBody(BaseModel):
+    """One picked file: its plain name and its bytes as base64. One file per call; the host checks the size, the name
+    and the bytes again."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: FileName
+    data: Annotated[str, StringConstraints(min_length=4, max_length=UPLOAD_B64_MAX, pattern=r"^[A-Za-z0-9+/]+={0,2}$")]
+    idem: Idem
+
+
 class PrepareBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     ticket: reads.Key
-    artifacts: Annotated[list[FileName], Field(min_length=1, max_length=20)]
+    artifacts: Annotated[list[FileName], Field(max_length=20)] = []
+    uploads: Annotated[list[UploadId], Field(max_length=20)] = []
+    #: P03: plain names of files in the ticket's own work folder; the host finds them there, no path is ever sent
+    workfiles: Annotated[list[FileName], Field(max_length=20)] = []
     kind: Literal["secret", "once"] = "secret"
     days: Literal[1, 3, 7, 30] = 7
     views: Literal[1, 3, 10] | None = None
@@ -71,14 +90,27 @@ class PrepareBody(BaseModel):
 
     @model_validator(mode="after")
     def shape(self):
-        if len({a.lower() for a in self.artifacts}) != len(self.artifacts):
+        if not self.artifacts and not self.uploads and not self.workfiles:
+            raise ValueError("no files")
+        if len({a.lower() for a in (*self.artifacts, *self.workfiles)}) != len(self.artifacts) + len(self.workfiles):
+            raise ValueError("different files")
+        if (
+            len(set(self.uploads)) != len(self.uploads)
+            or len(self.artifacts) + len(self.uploads) + len(self.workfiles) > 20
+        ):
             raise ValueError("different files")
         if (self.kind == "once") != (self.views is not None):
             raise ValueError("views belong to a show-once link only")
         return self
 
     def host_args(self) -> dict:
-        args = {"ref": self.ticket, "artifacts": self.artifacts, "kind": self.kind, "days": self.days}
+        args = {"ref": self.ticket, "kind": self.kind, "days": self.days}
+        if self.artifacts:
+            args["artifacts"] = self.artifacts
+        if self.uploads:
+            args["uploads"] = self.uploads
+        if self.workfiles:
+            args["workfiles"] = self.workfiles
         if self.views is not None:
             args["views"] = self.views
         return args
@@ -146,6 +178,17 @@ def share_row(data, titles: dict | None = None) -> dict | None:
     }
 
 
+def upload_row(data) -> dict | None:
+    """`publish.stage_upload`'s answer: the id to name in `prepare`, and the plain name, size and hash."""
+    if not isinstance(data, dict):
+        return None
+    ident = data.get("upload_id")
+    if not isinstance(ident, str) or not re.fullmatch(r"pu_[0-9a-f]{32}", ident):
+        return None
+    row = file_row(data)
+    return {"upload_id": ident, **row} if row else None
+
+
 def staged_row(data) -> dict | None:
     if not isinstance(data, dict):
         return None
@@ -162,6 +205,7 @@ def staged_row(data) -> dict | None:
         "days": data.get("days") if data.get("days") in DAYS else None,
         "views": data.get("views") if data.get("views") in VIEWS else None,
         "origin": data.get("origin") if data.get("origin") in ("agent", "person") else None,
+        "signed": data.get("signed") is True,  # W22: signed by this person, the send has not gone through yet
         "files": files,
         "created_at": _time(data.get("created_at")),
     }
@@ -240,6 +284,15 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 row["title"] = display(names.get(row["ticket"]))
         return got
 
+    @app.post("/api/w/{ws}/shares/upload")
+    def upload(body: UploadBody, ws: str = Depends(reads.workspace)):
+        link = gateway.enabled(ws)
+        data = link.call("publish.stage_upload", {"name": body.name, "b64": body.data}, write=True, idem=body.idem)
+        row = upload_row(data)
+        if row is None:
+            raise fail("internal", exit=1)
+        return row
+
     @app.post("/api/w/{ws}/shares/prepare")
     def prepare(body: PrepareBody, ws: str = Depends(reads.workspace)):
         link = gateway.enabled(ws)
@@ -257,12 +310,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     def send(body: StagedBody, ws: str = Depends(reads.workspace)):
         # The host checks that a person's signature over exactly this staged copy is in the ticket's log. This
         # process adds nothing to that and keeps nothing of the answer.
-        data = gateway.enabled(ws).call("publish.send", {"staged_id": body.staged_id}, write=True, idem=body.idem)
+        data = gateway.call_own(ws, "publish.send", {"staged_id": body.staged_id}, write=True, idem=body.idem)
         return sent(data)
 
     @app.post("/api/w/{ws}/shares/revoke")
     def revoke(body: RevokeBody, ws: str = Depends(reads.workspace)):
-        data = gateway.enabled(ws).call("publish.revoke", {"share_id": body.share_id}, write=True, idem=body.idem)
+        data = gateway.call_own(ws, "publish.revoke", {"share_id": body.share_id}, write=True, idem=body.idem)
         ok = isinstance(data, dict) and data.get("state") == "revoked"
         return {"revoked": ok}
 
@@ -272,7 +325,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         return {"discarded": isinstance(data, dict) and data.get("discarded") is True}
 
     @app.post("/api/w/{ws}/shares/register")
-    def register_server(body: RegisterBody, ws: str = Depends(reads.workspace)):
-        data = gateway.enabled(ws).call("publish.register", {}, write=True, idem=body.idem)
+    def register_server(body: RegisterBody, request: Request, ws: str = Depends(reads.workspace)):
+        # Registering sends the workspace's delegation to the signed server: a full LOCAL session only (the host
+        # checks the owner role, agents, the rate of three a minute and takes no address from this request).
+        token = request.state.token
+        if not (full_session(app.state.auth, token) and app.state.auth.login_kind(token) == "local"):
+            raise refused("Sign in on this computer to connect this workspace to the publish server.")
+        data = gateway.call_own(ws, "publish.register", {}, write=True, idem=body.idem)
         result = data.get("result") if isinstance(data, dict) else None
         return {"registered": True, "result": result if result in ("registered", "unchanged") else "registered"}

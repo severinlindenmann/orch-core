@@ -11,17 +11,17 @@ import os
 import re
 import shutil
 import subprocess
-import time
 import uuid
 from pathlib import Path
 
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
-from realhost_kit import Workspace, short_run_root
+from realhost_kit import Workspace, click_sign, short_run_root
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
+from orch_dashboard.click_signer import Signer
 from orch_dashboard.gateway import Gateway
 
 pytestmark = [
@@ -33,6 +33,7 @@ SHA = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
 
 def seeding(ws: Workspace) -> dict:
+    ws.human("addon", "grant", "quick")  # Quick tasks are an add-on, off until an owner turns them on
     ws.agent("quick", "add", "Fix the typo in README")
     ws.agent("quick", "add", "Remove the dead import")
     ws.agent("new", "A normal ticket, not a quick task", "--type", "feature")
@@ -62,6 +63,7 @@ def world(tmp_path_factory):
     ws = Workspace(root / "w")
     try:
         ws.bring_up(seeding)
+        ws.convenience_on()  # one click is the dashboard's only way to sign
     except (RuntimeError, TimeoutError, OSError) as exc:
         ws.stop_host()
         shutil.rmtree(root, ignore_errors=True)
@@ -70,9 +72,11 @@ def world(tmp_path_factory):
     (static / "assets").mkdir()
     (static / "index.html").write_text('<html><script src="/assets/main-hash.js"></script></html>')
     (static / "assets/main-hash.js").write_text("console.log(1)")
-    gateway = Gateway(ws.state)
+    gateway = Gateway(ws.state, click=Signer(ws.state, start=ws.click_start()))
     auth = Auth()
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         yield type("World", (), {"ws": ws, "gateway": gateway, "auth": auth, "client": client, "root": root})
     gateway.close()
     ws.stop_host()
@@ -93,6 +97,7 @@ def api(world, token, monkeypatch):
     monkeypatch.setenv("HOME", str(world.ws.home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(world.ws.home / ".config"))
     monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    monkeypatch.delenv("ORCH_DASHBOARD_CLICK", raising=False)  # the suite's default is "no signer child"
     headers = {"Authorization": f"Bearer {token}"}
 
     class Api:
@@ -106,18 +111,10 @@ def api(world, token, monkeypatch):
                 return world.client.post(self.base + path, headers={**headers, "Origin": ORIGIN})
             return world.client.post(self.base + path, json=body, headers={**headers, "Origin": ORIGIN})
 
-        def handoff(self, body, timeout=60):
-            res = self.post("/handoff", {**body, "retry": next(RETRIES)})
-            assert res.status_code == 200, res.text
-            prepared = res.json()
-            world.ws.sign(prepared["code"])
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                final = self.get(f"/handoff/{prepared['id']}").json()
-                if final["state"] not in ("prepared", "bound"):
-                    return prepared, final
-                time.sleep(0.3)
-            raise AssertionError("the request never reached a final state")
+        def sign(self, body):
+            """One click through the dashboard's click routes. Returns (prepared, signed)."""
+            body = {**body, "retry": next(RETRIES)}
+            return click_sign(world.client, self.base, {**headers, "Origin": ORIGIN}, body)
 
     return Api()
 
@@ -148,12 +145,12 @@ def test_quick_list_takes_the_flat_limits_and_the_status_filter(api):
 
 
 def test_adding_a_quick_task_as_a_person_is_two_signatures(api):
-    prepared, final = api.handoff({"action": "new", "title": "Add a newline at the end of seeds", "type": "chore"})
+    _, final = api.sign({"action": "new", "title": "Add a newline at the end of seeds", "type": "chore"})
     assert final["state"] == "submitted", final
     rows = api.get("/quick").json()["rows"]
     assert "Add a newline at the end of seeds" not in [r["title"] for r in rows]  # created, not yet labelled
     key = api.get("/tickets", params={"q": "Add a newline at the end of seeds"}).json()["rows"][0]["key"]
-    _, final = api.handoff({"action": "details", "key": key, "labels": ["quick"]})
+    _, final = api.sign({"action": "details", "key": key, "labels": ["quick"]})
     assert final["state"] == "submitted", final
     rows = api.get("/quick").json()["rows"]
     assert key in [r["key"] for r in rows] and len(rows) == 3

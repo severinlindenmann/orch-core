@@ -33,6 +33,8 @@ import {
   type Workspace,
   type WorkspaceIdentity,
   type SettingsRequest,
+  type Cosmetic,
+  type CosmeticBody,
   type ArtifactPage,
   type ArtifactQuery,
   type RelayRequest,
@@ -40,10 +42,10 @@ import {
   type RelayState,
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
-import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { HandoffAction } from './handoff'
 import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
-import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
+import type { ClaudeTrust, QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 import type { AddonSettingsData } from './addOnSwitches'
@@ -125,13 +127,8 @@ export function createApi(transport: Transport) {
     getTicket: (key: string, _ws?: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
     getEvents: (key: string, since = 0, _ws?: string) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
-    /**
-     * The terminal hand-off (M3, real host only): `idem` is one id per click, reused on a retry. The server prepares the
-     * sign request; the person signs in a terminal. Nothing here signs.
-     */
+    /** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
     checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>('POST', `/api/w/${ws}/repos/check`, action),
-    prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, ...(retry ? { retry } : {}) }),
-    getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     /** Click-to-sign (H5c, real host only; the mock never offers it): the signer's View is shown as it is. */
     prepareClick: async (ws: string, action: ClickAction, retry = 0) => {
       await uploadFor(action as { images?: PastedRef[] }, (b) => call('POST', `/api/w/${ws}/click/images`, b)) // R3 part B
@@ -140,17 +137,54 @@ export function createApi(transport: Transport) {
     /** R3 part B: the bytes of a picture file of a ticket (the page hashes them before showing them). */
     getArtifactImage: (ws: string, key: string, name: string) => call<{ image: ArtifactImage | null }>('GET', `/api/w/${ws}/tickets/${key}/artifacts/${encodeURIComponent(name)}`),
     viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
-    signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>) =>
-      call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
+    signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>, delayS?: number) =>
+      call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(delayS ? { delay_s: delayS } : {}), ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
-    /** V3 A7: the hub pages' reads and the terminal command of a change (the server signs nothing and sends no hub write). */
+    /** FB15: an add-on grant prepared for the hub (nothing is signed here), and where it is now. */
+    prepareHubApproval: (ws: string, action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' | 'market_update' }>) => call<import('./hubsign').HubApproval>('POST', `/api/w/${ws}/hub/approve/prepare`, action),
+    getHubApproval: (ws: string, id: string) => call<import('./hubsign').HubApprovalState>('GET', `/api/w/${ws}/hub/approve/${id}`),
+    /** V3 A7: the hub pages' reads (the server signs nothing here). */
     getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),
     getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
+    getHubShared: (ws: string) => call<{ items: import('./hub').HubSharedTicket[] }>('GET', `/api/w/${ws}/hub/shared`),
+    getSpaces: (ws: string) => call<{ spaces: import('./hub').HubSpace[]; note: string }>('GET', `/api/w/${ws}/spaces`),
+    getSpaceItems: (ws: string, id: string) => call<import('./hub').HubSpaceItems>('GET', `/api/w/${ws}/spaces/${id}`),
+    getHubAudience: (ws: string) => call<import('./hub').HubAudienceList>('GET', `/api/w/${ws}/hub/share/audience`),
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
       call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),
-    getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>('POST', `/api/w/${ws}/hub/command`, body),
+    revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>('POST', `/api/w/${ws}/hub/share/revoke`, { ref }),
+    removeHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
+      call<import('./hub').HubReduced>('POST', `/api/w/${ws}/hub/share/rule-remove`, { rule, expect }),
+    addHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
+      call<import('./hub').HubAdded>('POST', `/api/w/${ws}/hub/share/rule-add`, { rule, expect }),
+    syncHubShare: (ws: string, expect: string) => call<import('./hub').HubAdded>('POST', `/api/w/${ws}/hub/share/sync`, { expect }),
     getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
+    /** M3 H-5: company skills and tools offered by the hub (the owner's Company tab). */
+    getOrgOffers: (ws: string) => call<import('./org').OrgOffers>('GET', `/api/w/${ws}/org`),
+    getOrgSecrets: (ws: string) => call<import('./org').OrgSecrets>('GET', `/api/w/${ws}/org/secrets`),
+    getOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+      call<import('./org').OrgShown>('GET', `/api/w/${ws}/org/item?kind=${kind}&name=${encodeURIComponent(name)}`),
+    acceptOrgItem: (ws: string, kind: import('./org').OrgKind, name: string, digest: string) =>
+      call<{ kind: import('./org').OrgKind; name: string; status: import('./org').OrgStatus }>('POST', `/api/w/${ws}/org/accept`, { kind, name, digest }),
+    declineOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+      call<{ kind: import('./org').OrgKind; name: string; status: 'off' }>('POST', `/api/w/${ws}/org/decline`, { kind, name }),
+    syncOrg: (ws: string) => call<{ result: Record<string, string> }>('POST', `/api/w/${ws}/org/sync`, {}),
+    setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
+      call<{ server: string; tool: string; on: boolean }>('POST', `/api/w/${ws}/org/tool`, { server, tool, on, ...(on ? { pin } : {}) }),
+    setOrgTools: (ws: string, server: string, tools: { tool: string; pin: string }[]) =>
+      call<{ server: string; tools: string[]; on: boolean }>('POST', `/api/w/${ws}/org/tools`, { server, tools }),
+    /** R2 T4: remote access (loopback only): the view, a plain turn-off, a one-time device code, removing a device. */
+    getRemote: (ws: string) => call<import('./remote').RemoteView>('GET', `/api/w/${ws}/remote`),
+    remoteOff: (ws: string) => call<{ changed: boolean }>('POST', `/api/w/${ws}/remote/off`, {}),
+    remoteCode: (ws: string) => call<import('./remote').RemoteCode>('POST', `/api/w/${ws}/remote/code`, {}),
+    endRemoteSession: (ws: string, streamId: string) => call<{ ended: boolean }>('POST', `/api/w/${ws}/remote/sessions/${streamId}/end`, {}),
+    removeRemoteDevice: (ws: string, id: string) => call<{ removed: boolean }>('POST', `/api/w/${ws}/remote/devices/${id}/remove`, {}),
+    getHubNetwork: (ws: string) => call<import('./network').NetworkSettings>('GET', `/api/w/${ws}/hub/network`),
+    putHubNetwork: (ws: string, body: import('./network').NetworkChange) => call<import('./network').NetworkSettings>('PUT', `/api/w/${ws}/hub/network`, body),
+    getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>('GET', `/api/w/${ws}/hub/profile`),
+    putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>('PUT', `/api/w/${ws}/hub/profile`, profile),
+    refreshHub: (ws: string) => call<import('./hub').HubRefreshed>('POST', `/api/w/${ws}/hub/refresh`, {}),
     connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),
@@ -164,14 +198,11 @@ export function createApi(transport: Transport) {
     githubRemove: (ws: string) => call<{ credential: 'missing' }>('POST', `/api/w/${ws}/click/github/remove`, {}),
     rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
       call<{ done: true } & ClickCard>('POST', `/api/w/${ws}/click/rotate`, body),
-    cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
     phoneAvailable: (ws: string) => call<{ phones: number }>('GET', `/api/w/${ws}/phone/available`),
     phoneRequest: (ws: string, body: import('./phone').PhoneRequest & { idem: string }) => call<import('./phone').PhoneHint & { phones: number }>('POST', `/api/w/${ws}/phone/request`, body),
     phoneCancel: (ws: string, id: string) => call<{ id: string; state: import('./phone').PhoneHint['state'] }>('POST', `/api/w/${ws}/phone/cancel`, { id }),
     phoneStatus: (ws: string, id: string) => call<{ hints: import('./phone').PhoneHint[] }>('GET', `/api/w/${ws}/phone/status/${id}`),
-    getSignDefault: (ws: string) => call<import('./signing').SignDefault>('GET', `/api/w/${ws}/me/sign_default`),
-    putSignDefault: (ws: string, body: { method: import('./signing').SignMethod; fallback?: import('./signing').SignMethod }) => call<import('./signing').SignDefault>('PUT', `/api/w/${ws}/me/sign_default`, body),
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
     addonSettings: (ws: string, name: string) => call<AddonSettingsData>('GET', `/api/w/${ws}/add-ons/${name}/settings`),
@@ -197,6 +228,11 @@ export function createApi(transport: Transport) {
     getRecords: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records`),
     recordsCommit: (ws: string, push: boolean) => call<RecordsRun>('POST', `/api/w/${ws}/records/commit`, { push }),
     recordsAutoOff: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-off`),
+    recordsAutoOn: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-on`, {}),
+    /** Whether Claude Code may open this workspace's folders without asking; `available: false` when the host cannot say. */
+    getClaudeTrust: (ws: string) => call<ClaudeTrust>('GET', `/api/w/${ws}/claude-trust`),
+    /** `allowParent`: trust the folders even though a parent folder has someone else's settings (the person chose "Trust anyway"). */
+    grantClaudeTrust: (ws: string, allowParent: boolean) => call<{ on: true }>('POST', `/api/w/${ws}/claude-trust`, { allow_parent: allowParent }),
     /** #1198 C15: the admin clicks. The address is the one the review showed; the tool refuses if git now resolves to another. */
     recordsInit: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/init`, {}),
     recordsMark: (ws: string, url: string | null) => call<RecordsRun>('POST', `/api/w/${ws}/records/remote`, url === null ? { on: false } : { on: true, url }),
@@ -249,6 +285,21 @@ export function createApi(transport: Transport) {
     getIdentity: (ws: string) => call<WorkspaceIdentity>('GET', `/api/workspaces/${ws}/identity`),
     /** Owner only. Everything except rename is signed in the dashboard. */
     postSettings: (ws: string, req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req),
+    /**
+     * D6: the name and icon, unsigned, owner only. The mock runs its own `rename` and `icon` settings ops after the
+     * host's stale check: 409 `cosmetic.conflict` when `if_current` is not what the workspace has now.
+     */
+    setCosmetic: async (ws: string, body: CosmeticBody): Promise<Cosmetic> => {
+      const now = (await call<Workspace[]>('GET', '/api/workspaces')).find((x) => x.id === ws)
+      const sameIcon = (a: Cosmetic['icon'], b: Cosmetic['icon']) => a === b || (!!a && !!b && a.icon === b.icon && a.colour === b.colour)
+      if (!now || now.name !== body.if_current.name || !sameIcon(now.icon ?? null, body.if_current.icon))
+        throw new ApiError(409, { code: 'cosmetic.conflict', message: 'Someone changed the name or icon meanwhile', retryable: false })
+      const settings = (req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req)
+      let after = now
+      if (body.name !== undefined) after = (await settings({ op: 'rename', name: body.name })).workspace
+      if (body.icon !== undefined) after = (await settings({ op: 'icon', icon: body.icon })).workspace
+      return { name: after.name, icon: after.icon ?? null }
+    },
     /** Artifacts of the tickets the viewer can see in `ws`, filtered and paged by the host. */
     listArtifacts: (ws: string, q: ArtifactQuery = {}) =>
       call<ArtifactPage>(

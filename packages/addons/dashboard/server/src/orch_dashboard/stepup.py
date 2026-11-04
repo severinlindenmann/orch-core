@@ -31,6 +31,7 @@ from orch.click.passkeys import action_digest
 from .errors import HostError
 
 LOCAL = "local"
+REMOTE_DEVICE_KIND = "remote-device"
 CLICK = "/api/w/{ws}/click/"
 WORKSPACE = "/api/w/{ws}/"
 HOST = "/api/"
@@ -170,7 +171,8 @@ def refuse_step_up(auth, request, route: str, body, ws: str) -> dict:
     the module text) or raises `passkey.stepup_required`. ``route`` is the entry's `route` (the literal string).
     A session that is not local ALWAYS says `remote: True`: a missing proof can never look like a local call."""
     token = request.state.token
-    if auth.login_kind(token) == LOCAL:
+    kind = auth.login_kind(token)
+    if kind == LOCAL:
         return {}
     for step in STEP_UP:
         if step.route == route and step.applies(body):
@@ -180,5 +182,9 @@ def refuse_step_up(auth, request, route: str, body, ws: str) -> dict:
             fresh, proof = auth.stepup_take(token, step.action, digest)
             if not fresh or (proof is None and step.action in SIGNER_ACTIONS):
                 raise stepup_required(step.name)
+            if kind == REMOTE_DEVICE_KIND:
+                raise stepup_required(step.name)  # a stream holds no passkey: the variant is refused, whatever it holds
             return {"remote": True, "stepup": proof} if proof is not None else {"remote": True}
-    return {"remote": True}
+    # A stream's calls are stamped `remote: true` and the stream id by the signer client itself (`click_signer`), from
+    # the context only the adapter sets; a handler never adds them (a caller-supplied `remote` raises there).
+    return {} if kind == REMOTE_DEVICE_KIND else {"remote": True}

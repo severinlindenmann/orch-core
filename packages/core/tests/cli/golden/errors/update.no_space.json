@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.no_space",
+    "message": "not enough free disk space for a safe update",
+    "hint": "free some space, then update again",
+    "fix": {
+      "argv": [
+        "orch",
+        "update",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

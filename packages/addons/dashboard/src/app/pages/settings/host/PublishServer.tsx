@@ -1,10 +1,13 @@
 // Settings > Add-ons > Publish (real host): where shared files are sent and where a link opens, and whether the server
-// knows this workspace. Changing the addresses is a signed settings change (terminal only); registering is a plain
-// request. Plain words first; the ids the server's admin needs sit under Technical details.
+// knows this workspace. Changing the addresses is a click-signed settings change (the host checks both addresses again);
+// registering is a plain owner click on this computer. Plain words first; the ids the server's admin needs sit under Technical details.
 import { useQuery } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { adminCommand, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
+import { queries } from '@/api/queries'
+import { suggestedWhere, type PublishWhere } from '@/api/addOnSwitches'
+import { adminCommand, destinationLine, hostOf, isUnknownWorkspace, newIdem, reachNote, sameOrigin, shareError, shareQueries, sharesApi } from '@/api/shares'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -24,6 +27,12 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
   const ws = workspace.id
   const list = useQuery(shareQueries.list(ws))
   const data = list.data && list.data.available ? list.data : null
+  // "this computer" in the note only when the Publish add-on row names this computer as the source of this very address
+  const addOns = useQuery(queries.addOns(ws))
+  const row = addOns.data?.available ? addOns.data.add_ons.find((r) => r.id === 'publish') : undefined
+  const suggestedServer = suggestedWhere(row)?.server
+  const from = !!suggestedServer && !!data?.server && sameOrigin(suggestedServer, data.server) ? row?.suggest_from ?? null : null
+  const note = data?.configured ? reachNote(data.server, data.share, from) : null
   const [editing, setEditing] = useState(false)
   const [server, setServer] = useState('')
   const [share, setShare] = useState('')
@@ -63,7 +72,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
     <Wrap embedded={embedded}>
       <div className="space-y-2 text-[13px]" data-testid="publish-server">
         <p className="text-text-muted">
-          When you share files, they are sent to a publish server you choose, and the link opens on a second address. Only a person changes these addresses, and you sign the change in your terminal.
+          When you share files, they are sent to a publish server you choose, and links open at the same address unless you set a different one. Only a person changes these addresses, with one click here.
         </p>
         {data.configured ? (
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5">
@@ -75,9 +84,9 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
         ) : (
           <p className="text-warning">No server is set up yet, so nothing can be shared.</p>
         )}
-        {data.configured && reachNote(data.server, data.share) && (
+        {note && (
           <p data-testid="publish-local-note" className="text-text-muted">
-            {reachNote(data.server, data.share)}
+            {note}
           </p>
         )}
         {owner ? (
@@ -121,7 +130,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => void copyText(`Please allow this workspace on the sharing server:\n${adminCommand(data.workspace, data.owner)}`).then((ok) => setCopyNote(ok ? 'Setup details copied.' : 'Could not copy. Open Technical details and copy the line by hand.'))}
+                    onClick={() => void copyText(`Please allow this workspace on the sharing server:\n${adminCommand(data.workspace, data.owner)}`).then((ok) => setCopyNote(ok ? 'Setup details copied.' : 'Could not copy. Press the i and copy the line by hand.'))}
                   >
                     Copy setup details for the server administrator
                   </Button>
@@ -129,11 +138,10 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
                     {copyNote}
                   </span>
                 </div>
-                <details className="text-[12px] text-text-muted">
-                  <summary className="cursor-pointer select-none">Technical details</summary>
+                <InfoDrawer>
                   <p className="mt-1">The server’s admin runs:</p>
                   <p className="break-all font-mono">{adminCommand(data.workspace, data.owner)}</p>
-                </details>
+                </InfoDrawer>
               </>
             )}
             {owner && (
@@ -149,7 +157,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
           <DialogContent className="max-w-md gap-3 border-border bg-surface">
             <DialogHeader>
               <DialogTitle>Where shared files go</DialogTitle>
-              <DialogDescription>Ask your workspace administrator for the publish server address. You will see both addresses again when you sign. Files you share later go to the first address, and links open at the second.</DialogDescription>
+              <DialogDescription>Ask your workspace administrator for the publish server address. You will see the addresses again when you sign. Files you share later go there, and links open at the same address unless you choose a different one.</DialogDescription>
             </DialogHeader>
             <PublishForm server={server} share={share} setServer={setServer} setShare={setShare} />
             <DialogFooter>
@@ -160,7 +168,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
                 disabled={!ready}
                 onClick={() => {
                   setEditing(false)
-                  ask({ title: 'Choose where shared files go', action: { action: 'publish_setup', server, share }, autoStart: true })
+                  ask({ title: 'Choose where shared files go', action: { action: 'publish_setup', server, share },  })
                 }}
               >
                 Review and sign
@@ -177,28 +185,77 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
 export function publishValidation(server: string, share: string) {
   const bad = (v: string) => v !== '' && !ORIGIN.test(v)
   const problem = bad(server)
-    ? 'The files address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
+    ? 'The address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
     : bad(share)
       ? 'The links address must start with https:// (or http://127.0.0.1 for this computer), in lower case, with no path.'
-      : server && server === share
-        ? 'The two addresses must differ: opened files get their own address.'
-        : ''
-  const ready = ORIGIN.test(server) && ORIGIN.test(share) && server !== share
+      : ''
+  const ready = ORIGIN.test(server) && ORIGIN.test(share)
   return { problem, ready }
 }
 
-export function PublishForm({ server, share, setServer, setShare }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void }) {
+/** One address by default (files and links both use it). `share` follows `server` until the person opens "Links open at a different address". */
+export function PublishForm({ server, share, setServer, setShare, suggested, suggestedFrom, hubName }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void; suggested?: string | PublishWhere | null; suggestedFrom?: 'computer' | 'hub' | null; hubName?: string | null }) {
   const { problem } = publishValidation(server, share)
+  const [separate, setSeparate] = useState(share !== '' && share !== server)
+  const [changing, setChanging] = useState(false)
+  // A plain string is one address for both values; a pair keeps `server` and `share` apart (#1838).
+  const where = typeof suggested === 'string' ? { server: suggested, share: suggested } : suggested
+  // P02: a Publish server installed on this computer is named in one sentence; the address field only appears behind "Change"
+  if (where && where.server && !changing && server === where.server && share === where.share)
+    return (
+      <div className="flex items-center gap-1.5 text-[13px]" data-testid="publish-suggested">
+        <span>{destinationLine(suggestedFrom, hubName, where.server)}</span>
+        <InfoDrawer text="Details">
+          {(close) => (
+            <>
+              {suggestedFrom === 'hub' ? (
+                <p>
+                  Files and links go through your hub{hubName ? <>: <Inline>{hubName}</Inline></> : ''}.
+                </p>
+              ) : (
+                <p>
+                  Files and links use the Publish server on this computer: <Inline>{where.server}</Inline>
+                </p>
+              )}
+              {where.share !== where.server && (
+                <p>
+                  Links open at <Inline>{hostOf(where.share)}</Inline>.
+                </p>
+              )}
+              <button type="button" className="text-[12px] text-text-muted hover:underline" onClick={() => { close(); setChanging(true) }}>
+                Change
+              </button>
+            </>
+          )}
+        </InfoDrawer>
+      </div>
+    )
   return (
     <div className="space-y-3 text-[13px]">
       <div className="space-y-1.5">
-        <Label htmlFor="pub-server">Files are sent to</Label>
-        <input id="pub-server" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={server} onChange={(e) => setServer(e.target.value.trim())} placeholder="https://pub.example.org" />
+        <Label htmlFor="pub-server">Publish server address</Label>
+        <input
+          id="pub-server"
+          className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]"
+          value={server}
+          onChange={(e) => {
+            const v = e.target.value.trim()
+            setServer(v)
+            if (!separate) setShare(v)
+          }}
+        />
+        {!separate && <p className="text-[12px] text-text-muted">Files and links both use this address.</p>}
       </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="pub-share">Links open at</Label>
-        <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} placeholder="https://apps.example.org" />
-      </div>
+      {separate ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="pub-share">Links open at</Label>
+          <input id="pub-share" className="h-8 w-full rounded border border-border bg-bg px-2 font-mono text-[12px]" value={share} onChange={(e) => setShare(e.target.value.trim())} />
+        </div>
+      ) : (
+        <button type="button" className="text-[12px] text-accent hover:underline" onClick={() => { setSeparate(true); setShare('') }}>
+          Links open at a different address
+        </button>
+      )}
       {problem && <p role="alert" className="text-danger">{problem}</p>}
     </div>
   )

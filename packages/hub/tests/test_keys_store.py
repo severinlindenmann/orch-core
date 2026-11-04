@@ -444,6 +444,10 @@ def test_no_private_key_in_errors_or_card(state):
 
 
 def _cli(state, *args):
+    if args[:1] == ("init",):
+        from format_helpers import write_format
+
+        write_format(state)  # `orch install hub` leaves format.json in the state dir before the keys are made
     return subprocess.run(
         [sys.executable, "-m", "orch_hub.cli", "keys", "--state", str(state), *args],
         check=False,

@@ -44,10 +44,12 @@ def envelope(
 
 
 class RouterHub(Hub):
-    def __init__(self, *, queue_path: str = ":memory:", registry: Registry | None = None, limits=None, authz=None):
+    def __init__(
+        self, *, queue_path: str = ":memory:", registry: Registry | None = None, limits=None, authz=None, on_routed=None
+    ):
         self.registry = registry or Registry()
         self.queue = RouteQueue(queue_path, limits if limits is not None else Limits())
-        self.router = Router(self.registry, self.queue, authz, lambda: NOW)
+        self.router = Router(self.registry, self.queue, authz, lambda: NOW, on_routed)
         super().__init__(registry=self.registry, router=self.router)
 
     def join(self, ws: str = G.WS_A):

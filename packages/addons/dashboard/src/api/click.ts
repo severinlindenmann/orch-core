@@ -5,6 +5,8 @@ import type { Workspace } from './types'
 import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
 import { DEV_REFUSED, devRefusedSentence, refusalOf, refusalSentence } from './refusals'
+import { addFirst, missingOf } from './gates'
+import { scheduleDenial } from './scheduleLead'
 
 /** Verbatim risk notice: enable time and Settings, with a tooltip in sign dialogs. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
@@ -59,19 +61,40 @@ export interface ClickPrepared {
   expires_at: string
   op: string
   confirm: 'click'
+  /** P06: a new ticket like one already signed: this is a fresh review, not the earlier one. Shown beside it, never signed. */
+  repeat?: boolean
 }
+
+/** The click contract this page speaks (C3): the View carries `headline` and `risk_lines`. Announced on every click call. */
+export const CLICK_CONTRACT = 4
+/** The request header that announces `CLICK_CONTRACT` to the dashboard server (fetchTransport sets it on `/click/` routes). */
+export const CLICK_CONTRACT_HEADER = 'X-Orch-Click-Contract'
 
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
 export interface ClickView {
+  hold_allowed?: boolean
+  /** Contract 4: one short line the signer built from its own words and the ticket key; the button shows it during the 1 s arm. */
   headline?: string
+  /** Contract 4: the free text beside the headline (a ticket's title), capped and already quoted by the signer, or null. Shown small and muted after the headline. */
+  headline_detail?: string | null
+  /**
+   * Contract 4: the lines the signer marks as risk (agent access, add-on capabilities, a raised role, Publish, hub ops,
+   * device removal, purge, a schedule, a shown secret). Non-empty: never signed at the end of the arm; the lines are
+   * shown under the button and a second press, at least 1 s after they are on screen, signs. A View without them
+   * (`contractViewOk` false) never runs the one-press arm: it keeps the press-after-1-s rule.
+   */
+  risk_lines?: string[]
+  /** Signer-owned informational lines, shown only behind i. */
+  info_lines?: string[]
   content?: import('./signing').SignContent
+  /** The generic convenience-signing note (unchanged, CLICK_RISK). */
   risk: string
   op: string
   workspace: { id: string; name: string; prefix: string }
   fingerprint: string
   lines: string[]
   checks: { repo: string; clean: boolean; attested_by: string; at: string }[]
-  confirm: { kind: 'click' }
+  confirm: { kind: 'click'; mode?: 'press' }
   expires_at: string
   auth: string
   device: string
@@ -92,10 +115,11 @@ export interface ClickViewAnswer {
 }
 
 /** Where a request stands at the host (read by the server through its own link). */
-export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired' | 'unknown'
+export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired' | 'unknown' | 'held' | 'not_sent'
 
 /** `click/state`: where the request stands. For a stopped sequence also the ticket that exists and how far the run got. */
 export interface ClickState {
+  deadline_ms?: number
   id: string
   state: ClickHostState
   key?: string
@@ -103,7 +127,8 @@ export interface ClickState {
 }
 
 export interface ClickSigned {
-  state: 'submitted'
+  state: 'submitted' | 'held'
+  deadline_ms?: number
   duplicate: boolean
   key?: string
   seq?: number
@@ -132,17 +157,22 @@ export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' 
 export type AgentAccessAction = { action: 'agent_access'; hours: number; scope: 'workable' | 'all'; label?: string; reveal_key: string }
 
 /** #1198 C10: join a hub (selective only; a full join is the Terminal's) or leave it, with the backup key sealed to the signer. */
-export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' | 'full' }
+export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' | 'full'; owner_user?: string }
 export type HubModeFullAction = { action: 'hub_mode_full'; hub_card: string; hub_id: string }
 export type HubLeaveAction = { action: 'hub_leave' }
 
+/** R2 (#1590): turn remote access on / add the waiting device, with the backup key sealed to the signer. `days` absent: until turned off. */
+export type RemoteSetAction = { action: 'remote_set'; level: 'view' | 'work' | 'terminals'; premises: 'yes' | 'no'; days?: number; agents_risk?: boolean }
+export type RemoteDeviceConfirmAction = { action: 'remote_device_confirm'; pending: string; level_cap: 'view' | 'work' | 'terminals'; days: number }
+
 /** Every typed action a click request may carry. */
-export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubModeFullAction | HubLeaveAction
+// Schedule actions inherit both existing-ticket and new-ticket shapes from HandoffAction.
+export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubModeFullAction | HubLeaveAction | RemoteSetAction | RemoteDeviceConfirmAction
 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
 /** The owner's risk sentence for the runner grant (D-P2-27), verbatim. */
-export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.'
+export const DEPOSIT_RISK = 'Whoever controls this dashboard could use this access while it lasts. You can stop it any time.'
 
 /**
  * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace.
@@ -161,6 +191,15 @@ export async function keyFingerprint(publicKeyB64: string): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(publicKeyB64)))
   return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('')
 }
+
+/** A View of contract 4: a headline and the signer's risk lines (possibly none). Only such a View may run the one-press arm. */
+export const contractViewOk = (view: Partial<ClickView> | null | undefined): boolean =>
+  !!view && typeof view.headline === 'string' && view.headline.trim() !== '' &&
+  Array.isArray(view.risk_lines) && view.risk_lines.every((l) => typeof l === 'string' && l.trim() !== '')
+
+/** The risk lines to show and to wait for: the signer's, or none when the View carries no list (it then never arms). */
+export const riskLinesOf = (view: Partial<ClickView>): string[] =>
+  Array.isArray(view.risk_lines) ? view.risk_lines.filter((l): l is string => typeof l === 'string') : []
 
 /** A shown-secret View is offered a Sign button only when it is for THIS page's key, the grant.secret purpose, both constants and this workspace. */
 export const revealViewOk = async (view: ClickView, ws: string, publicKeyB64: string): Promise<boolean> =>
@@ -194,7 +233,7 @@ export interface RotateOffer {
     old: string
     new: string
     lines: string[]
-    confirm: { kind: 'click' }
+    confirm: { kind: 'click'; mode?: 'press' }
     rotate_line: string
     seal: { v: 1; alg: string; pk: string; purposes: string[] }
   }
@@ -215,8 +254,8 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
-  'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_purge', 'addon_settings', 'addon_enable', 'publish_setup', 'publish_share',
+  'approve', 'approve_both', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
+  'settings_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'remote_set', 'remote_device_confirm', 'addon_grant', 'market_grant', 'market_update', 'addon_disable', 'addon_purge', 'addon_settings', 'addon_enable', 'publish_setup', 'publish_share', 'followup_cancel', 'followup_reschedule', 'followup_undo', 'schedule_add', 'schedule_cancel',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 
@@ -228,7 +267,7 @@ export type ClickNext =
   /** Start over with a new request. */
   | 'prepare'
   /** Click cannot work here: the terminal path. */
-  | 'terminal'
+  | 'unavailable'
   /** The outcome is unknown: look at the ticket before anything else. */
   | 'check'
   /** Already done: nothing to sign; "Do it again" is an explicit new attempt. */
@@ -237,6 +276,8 @@ export type ClickNext =
   | 'open'
 
 export interface ClickProblem {
+  /** P06: Already done for a new ticket: the existing ticket, to open (key and title come from the host's record). */
+  ticket?: { key: string; title: string }
   title: string
   body: string
   next: ClickNext
@@ -256,21 +297,25 @@ export const PREFIX_PLACEHOLDER = '<prefix>'
 export const withPrefix = (text: string, prefix: string | undefined): string =>
   text.split(PREFIX_PLACEHOLDER).join(prefix || '<your workspace prefix>')
 
-const OFF = ' Fix it, or sign in the terminal: turn convenience off with `orch host convenience off --workspace <prefix>`, then move the key back with `orch keys custody passphrase --workspace <prefix> --in-place`.'
+const OFF = ''
 
 const REFUSED: Record<string, ClickProblem> = {
-  terminal_only: { title: 'Terminal only', body: 'This one cannot be signed with one click.', next: 'terminal' },
+  terminal_only: { title: 'One click is unavailable', body: 'This one cannot be signed with one click.', next: 'unavailable' },
   not_prepared_here: { title: 'Not prepared by this dashboard', body: 'The signing helper does not know this request (it may have restarted). Prepare it again.', next: 'prepare' },
   expired: { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again.', next: 'prepare' },
   view_changed: { title: 'The review changed', body: 'What you would sign is no longer what you were shown. Nothing was signed. Read the new review.', next: 'review' },
-  too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press Sign again.', next: 'retry' },
+  too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press the button again.', next: 'retry' },
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
-  check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'terminal' },
+  check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'unavailable' },
   already_signed: { title: 'Already signed from another window', body: 'This request was signed with a different review. Nothing more can be signed on it; this shows where it stands.', next: 'check' },
-  record_unavailable: { title: 'The signing record is unreadable', body: 'The signing helper cannot read its own record of what it signed, so it refuses to sign. Nothing was signed here. Fix it, or turn convenience off from the terminal with `orch host convenience off --workspace <prefix>`; this workspace then signs in the terminal.', next: 'terminal' },
+  record_unavailable: { title: 'The signing record is unreadable', body: 'The signing record is unreadable. Nothing was signed.', next: 'unavailable' },
   uncertain: { title: 'The outcome is not certain yet', body: 'The signature may or may not have reached the host. It settles by itself; do not sign again until this says it is settled.', next: 'check' },
 }
+
+/** C3: this page and the signing helper speak another click contract. One plain line; nothing to retry here. */
+export const CONTRACT_MISMATCH: ClickProblem = { title: 'Update orch-core', body: 'This page and the signing helper are different versions. Nothing was signed. Reload the page; if it stays, update orch-core.', next: 'unavailable' }
+REFUSED['contract.mismatch'] = CONTRACT_MISMATCH
 
 /**
  * A sign whose outcome the browser cannot know: the answer was lost (a failed fetch) or came from a server that failed
@@ -291,7 +336,7 @@ export function alreadySigned(e: Pick<ApiError, 'signed_at' | 'op' | 'summary'>)
 export const alreadyDetails = (e: Pick<ApiError, 'summary'>): string | undefined => e.summary || undefined
 
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */
-export function clickProblem(e: unknown): ClickProblem {
+export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
   if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again.', next: 'retry' }
   switch (e.code) {
     case 'human.click_refused':
@@ -299,20 +344,26 @@ export function clickProblem(e: unknown): ClickProblem {
       // aborted: what landed stays a draft and starting again would make a NEW ticket; resumable: only the terminal finishes it
       if (e.reason === 'stopped') return { title: 'Signing stopped part way', body: `${e.message} Finish it on its page. Starting again makes a new ticket.`, next: 'open' }
       if (e.reason === 'resumable') return { title: 'Not finished yet', body: e.message, next: 'open' }
-      return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
+      return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'unavailable' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
       // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
-      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the terminal.`, next: 'retry', stale: true, devices: r.devices }
-      return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
+      if (r.reason === 'disabled') return { title: 'One click is off', body: `${refusalSentence(r)} Turn on One click in Settings.`, next: 'unavailable', devices: r.devices }
+      return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'unavailable', devices: r.devices }
     }
     case DEV_REFUSED:
-      return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'terminal' }
+      return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'unavailable' }
     case 'intent.done':
+      if (e.ticket?.key) return { title: 'You already have this ticket', body: `${e.ticket.title ? `“${e.ticket.title}” (${e.ticket.key})` : e.ticket.key} already exists with this text. Open it, or make another one like it.`, next: 'open', ticket: e.ticket, signedAt: e.signed_at }
       return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at, details: alreadyDetails(e) }
     case 'addon.already':
       // The add-on is already as asked: plain words, nothing to sign, nothing to "do again".
       return { title: 'Already done', body: e.message, next: 'open' }
+    case 'gate.incomplete': {
+      // B11 (#14): what the gate lacks, in words; never the raw code or a CLI pointer (`fix`).
+      const lacking = missingOf(e.message)
+      return { title: 'Not ready to approve', body: lacking?.length ? addFirst(lacking) : e.message, next: 'unavailable' }
+    }
     case 'intent.failed':
       return { title: 'The earlier attempt did not land', body: e.message, next: 'prepare' }
     case 'lock.busy':
@@ -321,26 +372,30 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'intent.expired':
       return { title: 'This attempt is too old; start again', body: e.message, next: 'prepare' }
     case 'intent.blocked':
-      return { title: 'The earlier attempt ended', body: e.message, next: 'prepare' }
+      return { title: 'This was already tried before. Start again?', body: e.message, next: 'prepare' }
     case 'intent.open':
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
-      // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.
-      return { title: 'This would add a reader', body: [r.reason ? refusalSentence(r) : e.message, e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' '), next: 'terminal', devices: r.devices }
+      // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays. The host's
+      // hint and fix name terminal commands: folded under the technical details, never in the sentence.
+      const tech = [e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' ')
+      return { title: 'This would add a reader', body: r.reason ? refusalSentence(r) : e.message, next: 'unavailable', devices: r.devices, ...(tech ? { details: tech } : {}) }
     }
     case 'reader.decl_invalid':
-      return { title: 'The reader declaration did not verify', body: refusalSentence(refusalOf(e)!), next: 'terminal' }
+      return { title: 'The reader declaration did not verify', body: refusalSentence(refusalOf(e)!), next: 'unavailable' }
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':
-      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn One click off and on again, or sign in a terminal.'+OFF, next: 'terminal' }
+      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn on One click in Settings.'+OFF, next: 'unavailable' }
     case 'custody.unavailable':
-      return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'terminal' }
+      return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'unavailable' }
     case 'host.version_mismatch':
-      return { title: 'Update orch-core', body: 'The signing helper and the host are different versions of orch-core. Update orch-core and restart the dashboard.', next: 'terminal' }
+      return { title: 'Update orch-core', body: 'The signing helper and the host are different versions of orch-core. Update orch-core and restart the dashboard.', next: 'unavailable' }
+    case 'contract.mismatch':
+      return CONTRACT_MISMATCH
     case 'click.contract':
-      return { title: 'Update orch-core', body: 'This dashboard and its signing helper do not speak the same version. Update orch-core and restart the dashboard.', next: 'terminal' }
+      return { title: 'Update orch-core', body: 'This dashboard and its signing helper do not speak the same version. Update orch-core and restart the dashboard.', next: 'unavailable' }
     case 'click.unavailable':
       return { title: 'The signing helper is not running', body: 'It stopped, so open sign requests are gone. Start again.', next: 'prepare' }
     case 'human.request_expired':
@@ -351,7 +406,30 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'The host does not answer', body: 'Nothing was signed. Try again in a moment.', next: 'retry' }
     case 'not_found':
       return { title: 'Not found', body: 'The dashboard server does not know this request any more. Prepare it again.', next: 'prepare' }
+    case 'invalid.input':
+      // P02: the server's catch-all for a body it could not use; the code is never the sentence. A host refusal with
+      // real words ("a feature ticket has no section nope") says them; only a bare code becomes the plain sentence.
+      if (e.message && e.message !== e.code && e.message !== PLAIN_INVALID) {
+        return { title: 'That could not be used', body: e.message, next: e.retryable ? 'retry' : 'unavailable' }
+      }
+      return { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
+    case 'schedule.denied': {
+      // run 13: the host's raw words ("first occurrence must be after the minimum scheduling lead") stay folded
+      const lead = scheduleDenial(e.code, e.message, minLeadS)
+      if (lead) return { title: 'Too soon', body: `${lead} Nothing was signed. Pick a later time.`, next: 'unavailable', details: e.message }
+      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: 'unavailable' }
+    }
     default:
-      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'terminal' }
+      // a message that is only its own code ("some.new_code") says nothing: one plain sentence and Try again instead
+      // (Opus P02 L2: the sentence changes, the retry decision does not: a non-retryable code never offers Try again)
+      if (e.message === e.code) {
+        return e.retryable
+          ? { title: 'That could not be used', body: PLAIN_INVALID, next: 'retry' }
+          : { title: 'Refused', body: PLAIN_REFUSED, next: 'unavailable' }
+      }
+      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'unavailable' }
   }
 }
+
+const PLAIN_INVALID = 'That could not be used. Check it and try again.'
+const PLAIN_REFUSED = 'This could not be done here. Nothing was signed.'

@@ -13,7 +13,7 @@
 //   npm run layout:guard -- --quick                                # 1440x900, default dock, sidebar left to choose, Normal
 //   npm run layout:guard -- --only tickets --shots ./shots         # routes matching /tickets/, with screenshots
 //
-// Options: --url <base> (default http://127.0.0.1:5201), --quick, --only <regex>, --dataset normal|busy, --docks min,default,max,
+// Options: --theme light|dark|both (the browser colour scheme, #421), --url <base> (default http://127.0.0.1:5201), --quick, --shard <i>/<n>, --only <regex>, --dataset normal|busy, --docks min,default,max,
 // --selftest (plants overflow on a page and checks the detector finds it; then reruns the guard with --break tabs|overlay|loading|tabrow and expects exit 1 with the reason), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
 // --chrome <path> (or CHROME_PATH). Needs the dev build: it moves between routes through `window.__orchRouter` (main.tsx). jsdom cannot lay out, so this runs against the real dev server.
 
@@ -23,7 +23,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { waitForTarget, waitForDevTools } from './layout-startup.mjs'
-import { selectsRealHost } from './layout-guard-pages.mjs'
+import { SETTINGS_HUB_PAGES, selectsRealHost } from './layout-guard-pages.mjs'
 
 const argv = process.argv.slice(2)
 const opt = (name, fallback) => {
@@ -37,15 +37,22 @@ const ONLY = opt('only') ? new RegExp(opt('only')) : null
 const SHOTS = opt('shots')
 const PREFIX = opt('prefix', 'page')
 const QUICK = flag('quick')
+/** --theme light|dark|both (default dark): the browser's colour scheme (#421). `both` runs the pages once per theme. */
+const THEME = opt('theme', 'dark')
+if (!['light', 'dark', 'both'].includes(THEME)) throw new Error('--theme expects light, dark or both')
 /** Self-test only: break one step on purpose ('tabs', 'overlay' or 'loading') to prove the guard then fails. */
 const BREAK = opt('break')
-/** DEMO-0043's tabs: Overview, Acceptance & tasks, Questions, Artifacts, History, Raw. */
-const TICKET_TABS = 6
+/** DEMO-0043's tabs: Overview, Acceptance & tasks, Questions, Results, History. */
+const TICKET_TABS = 5
 
 const VIEWPORTS = QUICK ? [[1440, 900]] : [[1440, 900], [1470, 956]]
 const DOCKS = opt('docks') ? opt('docks').split(',') : QUICK ? ['default'] : ['min', 'default', 'max']
 // 'auto' = no choice made (beside the dock the sidebar becomes the rail by itself); 'wide' and 'rail' = the person's choice.
 const SIDEBARS = QUICK ? ['auto'] : ['wide', 'rail']
+// --shard i/n: run every n-th configuration (1-based i), so CI can spread the 24 configurations over parallel jobs.
+const [SHARD_I, SHARD_N] = (opt('shard') ?? '1/1').split('/').map(Number)
+if (!(SHARD_N >= 1 && SHARD_I >= 1 && SHARD_I <= SHARD_N)) throw new Error('--shard expects i/n with 1 <= i <= n')
+let configIndex = 0
 const DATASETS = opt('dataset') ? [opt('dataset')] : QUICK ? ['normal'] : ['normal', 'busy']
 
 // Places that may scroll sideways inside themselves.
@@ -233,7 +240,12 @@ async function main() {
   await waitForTarget(BASE)
   const { send, close } = await launch()
   try {
-    await run(send, close)
+    // The scheme the page follows when nothing is stored (System). A real pass per theme, not a recolour of one.
+    for (const scheme of THEME === 'both' ? ['dark', 'light'] : [THEME]) {
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] })
+      if (THEME === 'both') console.log(`--- theme: ${scheme}`)
+      await run(send, close)
+    }
   } finally {
     close()
   }
@@ -334,6 +346,7 @@ async function run(send, close) {
     for (const [width, height] of VIEWPORTS) {
       for (const dock of DOCKS) {
         for (const sidebar of SIDEBARS) {
+          if (configIndex++ % SHARD_N !== SHARD_I - 1) continue
           const config = `${dataset} ${width}x${height} dock-${dock} sidebar-${sidebar}`
           console.log(`\n${config}`)
           await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
@@ -388,6 +401,7 @@ async function run(send, close) {
             ['repos-activity', '/addon/repos/repos?tab.repos=activity'],
             ...['general', 'members', 'gates', 'relay', 'addons', 'skills', 'connections'].map((t) => [`settings-${t}`, `/settings/${t}`]),
             ...addonNames.map((n) => [`settings-addon-${n}`, `/settings/addon/${n}`]),
+            ...SETTINGS_HUB_PAGES, // P07: the Hub tab in each mock hub scenario
           ]
           for (const [name, path] of routes) {
             if (ONLY && !ONLY.test(name)) continue
@@ -524,7 +538,6 @@ async function run(send, close) {
               ['real-host-runner-off', 'runner-off', [['the runner card', '[data-testid="workspace-card-runner"]']]],
               // M7a: the real-host terminal dock (fixture runs and a fixture socket; nothing reaches a host).
               ['real-host-terminal-dock', 'terminal-dock', [['the real dock', '[data-real-dock]'], ['the terminal', '[data-real-terminal] .xterm']]],
-              ['real-host-terminal-preview', 'terminal-preview', [['the preview dialog', '[data-term-preview]']]],
               ['real-host-terminal-readonly', 'terminal-readonly', [['the read-only banner', '[data-lease="reading"]']]],
               ['real-host-terminal-take', 'terminal-take', [['the Take control banner', '[data-lease="busy"]']]],
               ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
@@ -536,17 +549,8 @@ async function run(send, close) {
               ['real-host-addons-publish', 'addons-publish', [['the settings chevron', '[data-testid="addon-publish-expand"]']]],
               ['real-host-addons-publish-open', 'addons-publish-open', [['the publish box', '[data-testid="publish-server"]'], ['the connection check', '[data-testid="publish-connection"]']]],
               ['real-host-addons-publish-unset', 'addons-publish-unset', [['the publish row', '[data-testid="addon-publish"]']]],
-              ['real-host-agent-blocked', 'agent-blocked', [['the runner-off line', '[data-testid="agent-runner-off"]'], ['the enable command', '[data-testid="runner-enable-command"]']]],
+              ['real-host-agent-blocked', 'agent-blocked', [['the runner-off line', '[data-testid="agent-runner-off"]'], ['the enable button', '[data-testid="runner-enable"]']]],
               ['real-host-agent-grant', 'agent-grant', [['the access length', '[data-testid="agent-access"]'], ['the sign-and-start button', '[data-testid="agent-start"]']]],
-              // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
-              ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
-              ['real-host-pair-unavailable-click', 'pair-unavailable-click', [['the not-available line', '[data-testid="pair-unavailable"]']]],
-              ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],
-              ['real-host-pair-offer', 'pair-offer', [['the warnings', '[data-testid="pair-warnings"]'], ['the device list', '[data-testid="device-row"]']]],
-              ['real-host-pair-pending', 'pair-pending', [['the code entry', '#pair-sas'], ['the label', '[data-testid="pair-label"]']]],
-              ['real-host-pair-cert', 'pair-cert', [['the cert code', '[data-testid="pair-cert-code"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
-              ['real-host-pair-failed', 'pair-failed', [['the remove-the-device line', '[data-testid="pair-needs-remove"]']]],
-              ['real-host-pair-devices', 'pair-devices', [['the device list', '[data-testid="device-row"]']]],
               // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.
               ['real-host-readers-devices', 'readers-devices', [['the reader rows', '[data-testid="reader-row"]'], ['a device below the level', '[data-testid="reader-row"][data-below="true"]'], ['the required level', '[data-testid="readers-required"]']]],
               ['real-host-convenience-refusals', 'convenience-refusals', [['the refusals', '[data-testid="refusal-gallery"] [data-testid="click-problem"]'], ['the devices by label', '[data-testid="refusal-devices"]'], ['readers_old', '[data-testid="signer-readers-old"]']]],
@@ -567,6 +571,8 @@ async function run(send, close) {
             ]) {
               if (ONLY && !ONLY.test(name)) continue
               await go(`/__layout/${scenario}`)
+              // The publish settings open under their row.
+              if (scenario === 'addons-publish-open' && (await present('[data-testid="addon-publish-expand"]'))) await clickSel('[data-testid="addon-publish-expand"]')
               await check(config, name, await need(shown))
             }
             // The signing card (#578, #580): fixture card with a long name, prefix and device; the forms are opened by their buttons.
@@ -579,12 +585,26 @@ async function run(send, close) {
                 await new Promise((r) => setTimeout(r, 200))
                 return true
               }, sel, value)
+            // New terminal refused: the dock says why (the open runs the host's preview first; the fixture blocks it).
+            if (!ONLY || ONLY.test('real-host-terminal-preview')) {
+              await go('/__layout/terminal-preview')
+              await present('[data-real-dock]')
+              // Radix opens a menu on pointerdown, an item is chosen by its click.
+              await evaluate(() => document.querySelector('[data-real-dock] button[aria-label="New terminal"]')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' })))
+              const asked = await evaluate(async () => {
+                for (let i = 0; i < 30 && ![...document.querySelectorAll('[role="menuitem"]')].length; i++) await new Promise((r) => setTimeout(r, 100))
+                const item = [...document.querySelectorAll('[role="menuitem"]')].find((x) => /^Shell in the workspace/.test(x.textContent.trim()))
+                item?.click()
+                return !!item
+              })
+              await check(config, 'real-host-terminal-preview', asked ? await need([['the refusal message', '[data-real-dock] [role="alert"]']]) : ['the New terminal menu did not open'])
+            }
             const CARD = [['the signing card', '[data-testid="workspace-card-signing"]']]
             if (!ONLY || ONLY.test('real-host-signing-on')) {
               await go('/__layout/signing-on')
               const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               await settle()
-              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the One click switch is missing'])
+              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the password field', '#signing-passphrase[type="password"]']]) : ['the One click switch is missing'])
             }
             if (!ONLY || ONLY.test('real-host-signing-off')) {
               await go('/__layout/signing-off')
@@ -594,11 +614,12 @@ async function run(send, close) {
             }
             if (!ONLY || ONLY.test('real-host-signing-terminal-on')) {
               await go('/__layout/signing-terminal-on')
-              await check(config, 'real-host-signing-terminal-on', await need([...CARD, ['the terminal-on view', '[data-testid="signing-terminal-on"] code'], ['the copy button', '[data-testid="signing-terminal-on"] button']]))
+              await check(config, 'real-host-signing-terminal-on', await need([...CARD, ['the terminal-on view', '[data-testid="signing-terminal-on"]']]))
             }
             if (!ONLY || ONLY.test('real-host-signing-unsafe')) {
               await go('/__layout/signing-unsafe')
-              await check(config, 'real-host-signing-unsafe', await need([...CARD, ['the refused-prefix description', '[data-testid="signing-command-unsafe"]']]))
+              // the unsafe prefix (X;rm -rf ~) no longer has its own text on the card: this checks the card still lays out with it
+              await check(config, 'real-host-signing-unsafe', await need(CARD))
             }
             if (!ONLY || ONLY.test('real-host-signing-unknown')) {
               await go('/__layout/signing-unknown')
@@ -608,27 +629,12 @@ async function run(send, close) {
               await settle()
               await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the One click form did not open or send'])
             }
-            // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
-            if (!ONLY || ONLY.test('real-host-pair-link')) {
-              await go('/__layout/pair-offer')
-              const created = (await present('[data-testid="pair-before"]')) && (await clickText('button', /^Create pairing link$/))
-              const shown = created && (await present('[data-testid="pair-waiting"]')) && (await clickText('button', /^Show QR and link$/))
-              await settle()
-              await check(config, 'real-host-pair-link', shown ? await need([['the QR', '[data-testid="pair-qr"]'], ['the typed fallback', '[data-testid="pair-fallback"]']]) : ['Create pairing link or Show QR and link is missing'])
-            }
             // Drop: the Delete confirmation open at 720 px.
             if (!ONLY || ONLY.test('real-host-drop-delete')) {
               await go('/__layout/drop-list')
               const opened = (await present('[data-testid="drop-row"]')) && (await clickText('button', /^Delete$/))
               await settle()
               await check(config, 'real-host-drop-delete', opened ? await need([['the confirmation', '[data-testid="drop-confirm"]']]) : ['the Delete button is missing'])
-            }
-            // Removal is CLI only: the "Remove this device" disclosure open with its command.
-            if (!ONLY || ONLY.test('real-host-pair-remove-command')) {
-              await go('/__layout/pair-devices')
-              const opened = (await present('[data-testid="device-row"]')) && (await clickText('summary', /^Remove this device$/))
-              await settle()
-              await check(config, 'real-host-pair-remove-command', opened ? await need([['the remove command', '[data-testid="device-remove-command"]']]) : ['the Remove this device disclosure is missing'])
             }
             // The "Make a normal ticket" hand-off, opened from the row menu.
             if (!ONLY || ONLY.test('real-host-quick-normal-ticket')) {

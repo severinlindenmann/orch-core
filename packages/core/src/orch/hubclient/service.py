@@ -13,15 +13,17 @@ committed) and never resurrects (a later binding needs a higher ``binding_seq``)
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from orch.crypto.encoding import b64u, unb64u
 
-from . import wire
+from . import publish_held, wire
 from .errors import HubRefused
 from .link import HubLink, HubTransport
+from .publish_where import check_publish_where_shape
 
 __all__ = [
     "EpochKeys",
@@ -62,8 +64,38 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "publish_owed",
+    "revoked_op_objs", "publish_owed", "snapshot_floors", "closing", "publish_where", "publish_where_floors",
 }  # fmt: skip
+#: the unsigned ``hub_publish`` hint of an earlier build: read and dropped (never kept, never written), so a
+#: ``hub.json`` of that build is not refused as unreadable (#1838)
+_LEGACY = {"hub_publish"}
+_LOG = logging.getLogger("orch.hubclient.service")
+MAX_ADDRS = 4  # M4 (#1461): other addresses of the hub the host has verified (next to ``addr``)
+
+
+def _addrs_ok(v: Any) -> bool:
+    from .tlsadapter import parse_addr
+
+    if type(v) is not list or len(v) > MAX_ADDRS or len(set(v)) != len(v):
+        return False
+    try:
+        for a in v:
+            parse_addr(a)
+    except HubRefused:
+        return False
+    return True
+
+
+def _closing_ok(v: Any) -> bool:
+    return v is None or (
+        type(v) is dict
+        and set(v) == {"removal_id", "issued_ms", "ends_ms", "binding_seq"}
+        and wire.hex16(v["removal_id"])
+        and all(type(v[k]) is int and v[k] >= 0 for k in ("issued_ms", "ends_ms"))
+        and type(v["binding_seq"]) is int
+        and v["binding_seq"] >= 1
+        and v["issued_ms"] < v["ends_ms"]
+    )
 
 
 def _outbox_ok(box: Any) -> bool:
@@ -103,6 +135,10 @@ class HubState:
     #: Per hub, it survives new bindings (even with another hub) and is deleted only once delivered.
     outbox: dict[str, dict[str, Any]] = field(default_factory=dict)
     addr: str | None = None  # host:port the host dials (not signed: the TLS pin of the card is the trust)
+    #: M4 (#1461): up to 4 more ``host:port`` of the same hub, each stored only after a TLS handshake AT that address
+    #: passed against ``tls_spki`` (never from a card or a hint alone); dialled after ``addr``, in this order
+    addrs: list[str] = field(default_factory=list)
+    hub_name: str | None = None  # the display name the hub says of itself (``hub_where``); the hub's words, a hint
     tls_spki: str | None = None  # b64u SPKI hash from the verified hub card: the pin of that dial
     hxk_pub: str | None = None  # b64u, from the verified card: the key a full-mode ``WK_e`` is sealed to
     #: full mode only: ``{"epoch", "hxk_pub"}`` of the last ``wk_seal`` the hub accepted (``None``: nothing sealed)
@@ -115,11 +151,35 @@ class HubState:
     )
     revoked_op_certs: list[str] = field(default_factory=list)  # cert_ids of root-signed hub.op_revoked, never removed
     snapshot: dict[str, Any] | None = None  # the pinned signed hub.snapshot (section 7); its version only grows
+    #: GA-07: ``{hub_id: the highest snapshot version ever pinned from that hub}``. It survives a rebind, a mode switch
+    #: and joining another hub in between (the new state carries every entry): an older snapshot (other end dates)
+    #: is never pinned again (stale_snapshot).
+    snapshot_floors: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def snapshot_floor(self) -> int:
+        """The floor of THIS state's hub."""
+        return self.snapshot_floors.get(self.hub_id, 0)
+
+    def raise_floor(self, version: int) -> None:
+        self.snapshot_floors[self.hub_id] = max(self.snapshot_floor, version)
+
     #: cert_id -> the root-signed ``hub.op_revoked`` object itself: what a ``hub.pinned`` line carries (15.2)
     revoked_op_objs: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: C8 (design-c8 M2.4): hub_id -> the signed ``hub.unbound`` that orch-publish has not acknowledged yet. A leave
     #: tells publish directly (never through the hub); the entry is deleted once publish took it.
     publish_owed: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: #1463 (protocol 9.7): the verified ``hub.closing`` notice of THIS binding, only its four recorded members
+    #: (``verify_closing``'s result). Host-local; cleared by leave, unbind, rebind or a ``closing_get`` answer ``null``.
+    closing: dict[str, Any] | None = None
+    #: #1838 (protocol 10.9.1): the signed ``hub.publish_where`` of THIS binding as received (``{o, sig}``), kept only
+    #: after it verified. Every read goes through :func:`orch.hubclient.publish_held.read`, which checks it again
+    #: against the current pinned card; deleted by leave and unbind.
+    publish_where: dict[str, Any] | None = None
+    #: #1838: ``{hub_id: {seq, digest}}``: the highest publish_where seq ever stored from that hub and the sha256 of the
+    #: object stored at it, the tombstone. It survives leave and a rebind (the new state carries every entry): an older
+    #: object is never stored again (``stale_seq``) and no other object at the same seq (``seq_conflict``).
+    publish_where_floors: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -133,6 +193,8 @@ class HubState:
             "aliases": dict(self.aliases),
             "outbox": self.outbox,
             "addr": self.addr,
+            "addrs": list(self.addrs),
+            "hub_name": self.hub_name,
             "tls_spki": self.tls_spki,
             "hxk_pub": self.hxk_pub,
             "sealed": self.sealed,
@@ -140,15 +202,22 @@ class HubState:
             "card": self.card,
             "revoked_op_certs": sorted(self.revoked_op_certs),
             "snapshot": self.snapshot,
+            "snapshot_floors": {k: self.snapshot_floors[k] for k in sorted(self.snapshot_floors)},
             "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
             "publish_owed": {k: self.publish_owed[k] for k in sorted(self.publish_owed)},
+            "closing": None if self.closing is None else dict(self.closing),
+            "publish_where": self.publish_where,
+            "publish_where_floors": {k: self.publish_where_floors[k] for k in sorted(self.publish_where_floors)},
         }
 
     @classmethod
     def from_json(cls, d: Any) -> HubState:
         """Strict: anything unreadable is ``malformed`` (fail closed)."""
-        keys = {"hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases"}
-        if type(d) is not dict or set(d) - _OPTIONAL != keys:
+        keys = {
+            "hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases",
+            "addrs", "hub_name",
+        }  # fmt: skip
+        if type(d) is not dict or set(d) - _OPTIONAL - _LEGACY != keys:
             raise HubRefused("malformed")
         ok = (
             wire.hex16(d["hub_id"])
@@ -163,6 +232,8 @@ class HubState:
             and all(wire.hex16(p) and wire.hex16(u) for p, u in d["aliases"].items())
             and _outbox_ok(d.get("outbox", {}))
             and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
+            and _addrs_ok(d["addrs"])
+            and (d["hub_name"] is None or (type(d["hub_name"]) is str and len(d["hub_name"]) <= 60))
             and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
             and (d.get("hxk_pub") is None or wire.is_pub(d["hxk_pub"]))
             and _sealed_ok(d.get("sealed"))
@@ -171,10 +242,18 @@ class HubState:
             and type(d.get("revoked_op_certs", [])) is list
             and all(wire.hex16(c) for c in d.get("revoked_op_certs", []))
             and (d.get("snapshot") is None or (type(d["snapshot"]) is dict and type(d["snapshot"].get("o")) is dict))
+            and type(d.get("snapshot_floors", {})) is dict
+            and all(wire.hex16(k) and type(v) is int and v >= 0 for k, v in d.get("snapshot_floors", {}).items())
             and type(d.get("revoked_op_objs", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("revoked_op_objs", {}).items())
             and type(d.get("publish_owed", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("publish_owed", {}).items())
+            and _closing_ok(d.get("closing"))
+            and _publish_where_ok(d.get("publish_where"))
+            and type(d.get("publish_where_floors", {})) is dict
+            and all(
+                wire.hex16(k) and publish_held.floor_ok(v) for k, v in d.get("publish_where_floors", {}).items()
+            )  # a bare int seq is an older file's floor: kept, with no digest
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -190,6 +269,8 @@ class HubState:
             aliases=dict(d["aliases"]),
             outbox=dict(d.get("outbox", {})),
             addr=d.get("addr"),
+            addrs=list(d["addrs"]),
+            hub_name=d["hub_name"],
             tls_spki=d.get("tls_spki"),
             hxk_pub=d.get("hxk_pub"),
             sealed=None if d.get("sealed") is None else dict(d["sealed"]),
@@ -197,9 +278,34 @@ class HubState:
             card=d.get("card"),
             revoked_op_certs=list(d.get("revoked_op_certs", [])),
             snapshot=d.get("snapshot"),
+            snapshot_floors=dict(d.get("snapshot_floors", {})),
             revoked_op_objs=dict(d.get("revoked_op_objs", {})),
             publish_owed=dict(d.get("publish_owed", {})),
+            closing=None if d.get("closing") is None else dict(d["closing"]),
+            publish_where=d.get("publish_where"),
+            publish_where_floors=publish_held.floors_from_json(d.get("publish_where_floors", {})),
         )
+
+
+def _publish_where_ok(v: Any) -> bool:
+    """Shape only (the signature is checked on every read, :func:`orch.hubclient.publish_held.read`)."""
+    if v is None:
+        return True
+    try:
+        check_publish_where_shape(v)
+    except HubRefused:
+        return False
+    return True
+
+
+def _floors_of(state: HubState | None) -> dict[str, int]:
+    """Every floor a state holds, with the pinned snapshot of its own hub counted."""
+    if state is None:
+        return {}
+    out = dict(state.snapshot_floors)
+    held = 0 if state.snapshot is None else state.snapshot["o"]["version"]
+    out[state.hub_id] = max(out.get(state.hub_id, 0), held)
+    return out
 
 
 @dataclass
@@ -269,11 +375,15 @@ def _join(
         _retire_full_state(state, epochs, save, "rejoin")
         _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
         state.status = "unbound"
+        state.closing = None
+        publish_held.drop(state)
         save(state)
     if state is not None and state.status == "joining" and binding_seq is not None and binding_seq > state.binding_seq:
         # the log left and joined again (#1198 C9: the owner proof of the first join ran out before the hub took it):
         # the hub never held that binding, so there is nothing to resume and nothing to unbind
         state.status = "unbound"
+        state.closing = None
+        publish_held.drop(state)
         save(state)
     if mode == "full":
         assert epochs is not None
@@ -340,6 +450,8 @@ def _join(
             rotate_after=None if state is None else state.rotate_after,
             card=hub_card,
             revoked_op_certs=[] if state is None else list(state.revoked_op_certs),  # only ever grows
+            snapshot_floors=_floors_of(state),
+            publish_where_floors=publish_held.floors_of(state),
         )
         record_joined(payload)  # the owner's signature first: nothing leaves the host before it
         save(new)
@@ -347,7 +459,7 @@ def _join(
         transport, hub_id=new.hub_id, workspace_id=workspace_id, hk_op_pub=hk_op, sign=sign_wsk,
         mode=mode, now_ms=now_ms,
     )  # fmt: skip
-    link.call(
+    reply = link.call(
         "join",
         {
             "invite": invite,
@@ -355,9 +467,21 @@ def _join(
             "pk_pub": b64u(pk_pub),
             "binding": binding,
             "owner_proof": dict(owner_proof),
+            "alias_users": sorted(new.aliases.values()),  # the owner-signed aliases: the hub holds them to its invite
         },
     )
+    if type(reply) is not dict or set(reply) - {"publish_where"}:
+        raise HubRefused("malformed")  # the reply is {} or {publish_where}: any other member is not the protocol's
     new.status = "bound"
+    if (
+        "publish_where" in reply
+    ):  # #1838: kept only if it verifies; a bad one (a bad shape too) is dropped and the join stands
+        try:
+            code, _ = publish_held.offer(new, reply["publish_where"], now_ms())
+        except Exception as exc:  # noqa: BLE001  # any failure of the check (JcsError, RecursionError ...) only drops it
+            code = exc.code if isinstance(exc, HubRefused) else "malformed"
+        if code is not None:
+            _LOG.info("publish_where of the join answer not used (%s)", code)
     save(new)
     if mode == "full":
         assert epochs is not None
@@ -379,6 +503,7 @@ def _retire_full_state(
     cur = epochs.current_epoch() if epochs is not None else 0
     state.rotate_after = max(held, cur, state.rotate_after or 0)
     state.sealed = None
+    publish_held.drop(state)  # this binding is ending: what its hub said about publishing goes (the tombstone stays)
     save(state)  # durable before anything else happens
     if epochs is not None:
         epochs.rotate()
@@ -618,6 +743,8 @@ def leave(
     _retire_full_state(state, epochs, save, "leave")  # fail closed: even a never-sealed full hub gets a fresh epoch
     state.sealed = None
     state.status = "unbound"
+    state.closing = None
+    publish_held.drop(state)  # the held object goes with the binding; the seq tombstone stays
     save(state)
     done = settle_rotation(state=state, epochs=epochs, save=save, request=False)  # the retire already asked
     told = flush_publish(state=state, put=publish_put, save=save)  # publish first: it ends hub-forwarded publish

@@ -7,7 +7,9 @@ import type { QuickTyped } from './alsoSigned'
 
 export interface SignStory {
   /** The button: what happens when it is pressed. */
-  signLabel: string
+  signLabel?: string
+  /** A destructive step: red button. */
+  danger?: boolean
   /** "What happens next", each step true for this action. Empty: nothing is promised. */
   steps: string[]
   /** One plain sentence under the content for a signature with a narrower scope than it may sound. */
@@ -18,9 +20,17 @@ export interface SignStory {
   compact?: boolean
   /** A quick task: what was typed, so the review can fold the derived rows under "Also signed". */
   quick?: QuickTyped
+  /** The workspace line (prefix, id, name) sits under "Details" instead of on the main surface: a dialog opened from inside that workspace's own page (hub join, starting an agent). With several workspaces it stays on the main surface. The line is folded, never dropped; a risk state shows it anyway. */
+  foldWorkspace?: boolean
+  /** With foldWorkspace: also fold in the risk state and while armed (only the hub join; every other story shows the line there). */
+  foldInRisk?: boolean
+  /** Ids and capability facts of the review sit under "Technical details" only: the workspace line, "signed id …", and (Publish turn-on) the add-on's capability line. Display only: the signed content and the digest are the host's, unchanged. */
+  foldIds?: boolean
 }
 
 /** What agents may do with the access, in the words of the review (the same for every grant the dashboard signs). */
+/** The same grant in one sentence after the length (the length and who may use it stay in the line before it). */
+export const AGENT_MAY_SHORT = 'They can read and change files in the project folder and run its commands.'
 export const AGENT_MAY = 'Agents (Claude Code) may read and change files in the project folder and run its commands.'
 
 export interface StoryContext {
@@ -38,7 +48,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const hours = action.action === 'new_sequence' ? action.agent?.hours : undefined
       if (hours) return agentCreate(hours)
       if (ctx.startsAgent) return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'An agent starts, with the access you already gave, and writes the requirements and a plan.', 'It stops and waits: nothing is built until you approve the plan.'] }
-      return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'] }
+      return { signLabel: 'Create ticket', steps: [] }
     }
     case 'quick_start': {
       const hours = action.agent?.hours
@@ -47,33 +57,45 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
         signLabel: ctx.startsAgent ? 'Sign and start task' : 'Sign and create task',
         access,
         quick: { title: action.title, details: action.description ?? '', checks: action.checks ?? [], signer: ctx.person },
-        steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Access is given for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
+        steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Agents may work for you for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
       }
     }
+    case 'approve_both':
+      return { signLabel: 'Sign requirements and plan', steps: ['You sign.', 'The requirements and the plan are locked as shown.', 'An agent that waits for this approval may start building.'] }
     case 'approve':
       if (action.gate === 'requirements') return { signLabel: 'Sign requirements', scope: 'This signs the requirements only, not the plan.', steps: ['You sign.', 'The requirements are locked as shown.', 'The plan still needs your approval, separately.'] }
       if (action.gate === 'plan') return { signLabel: 'Sign and start building', steps: ['You sign.', 'The agent may start building the plan shown here.', 'You review the result and give the final verdict.'] }
       return { signLabel: 'Sign approval', steps: ['You sign.', 'Your approval of this step is recorded as shown.'] }
+    case 'market_update':
+      return { signLabel: 'Approve and install', steps: ['You approve the updated package and its permissions.', 'The host updates the enabled add-on.'] }
     case 'market_grant':
-      return { signLabel: 'Approve and install', steps: ['You sign approval for this exact package and its permissions.', 'The host installs the approved package.'] }
+      return { signLabel: 'Install and turn on', steps: ['You sign the required settings, then this exact package and its permissions.', 'The host installs and turns on the approved package.'] }
     case 'answer':
       return { signLabel: 'Send answer', steps: [], compact: true }
     case 'agent_access': {
       const length = accessLength(action.hours)
       return { signLabel: 'Sign and show the secret', access: { length }, steps: ['You sign.', `The secret is shown once on this page. Agents that hold it may work for you for ${length} from now.`] }
     }
+    // The share review is the host's own (publish.share summary); its ids sit behind Details (SignContent checks the host's summary).
+    // addon_enable has no host marker for the built-in package, so a Publish turn-on keeps every line.
+    case 'publish_share':
+      return { foldWorkspace: true, foldIds: true, steps: [] }
     case 'hub_join':
-      return { signLabel: 'Sign and join the hub', steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
+      return { signLabel: 'Connect', foldWorkspace: true, foldInRisk: true, steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
     case 'hub_mode_full':
       return { signLabel: 'Sign and let the hub read everything', steps: ['You sign.', 'The hub can read everything in this workspace.'] }
     case 'hub_leave':
-      return { signLabel: 'Sign and leave the hub', steps: ['You sign.', 'This workspace leaves the hub.'] }
+      return { signLabel: 'Leave hub', danger: true, steps: ['You sign.', 'This workspace leaves the hub.'] }
+    case 'remote_set':
+      return { signLabel: 'Turn on remote access', steps: ['You sign.', 'Devices you add can use this workspace from afar, as shown.'] }
+    case 'remote_device_confirm':
+      return { signLabel: 'Add this device', steps: ['You sign.', 'This device can use this workspace from afar, as shown.'] }
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend
         ? { signLabel: 'Sign and extend', access: { length }, steps: ['You sign.', `The old access ends and the new one starts, for ${length} from now.`, 'Running agents stop. Start them again to use the new access.'] }
         : ctx.startsAgent
-          ? { signLabel: 'Sign and start agent', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`, 'The agent starts.'] }
+          ? { signLabel: 'Sign and start agent', access: { length }, foldWorkspace: true, steps: ['You sign.', `Agents may work for you for ${length} from now.`, 'The agent starts.'] }
           : { signLabel: 'Sign and allow access', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`] }
     }
     default:
@@ -86,6 +108,7 @@ function agentCreate(hours: number): SignStory {
   return {
     signLabel: 'Sign and start agent',
     access: { length },
-    steps: ['You sign.', `The ticket is created and access is given for ${length}.`, 'An agent starts and writes the requirements and a plan for you.', 'It stops and waits: nothing is built until you approve the plan.'],
+    foldWorkspace: true,
+    steps: ['You sign.', `The ticket is created and agents may work for you for ${length}.`, 'An agent starts and writes the requirements and a plan for you.', 'It stops and waits: nothing is built until you approve the plan.'],
   }
 }

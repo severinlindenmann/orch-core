@@ -35,7 +35,6 @@ from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
 from orch.ops.human import Human
 from orch.ops.runtime import Call, Workspace
-from orch.wsicons import COLOUR_LABELS, ICON_LABELS
 
 __all__ = ["OPS", "get"]
 
@@ -74,31 +73,12 @@ _ORIGIN = {
     "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
     r"|http://(?:localhost|127\.0\.0\.1|10\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|172\.(?:1[6-9]|2[0-9]|3[01])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|192\.168\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))(?::[1-9][0-9]{0,4})?)(?![\s\S])",
 }
-_ICON = {  # the workspace icon: an icon and a colour of the closed lists, or null to clear it
-    "oneOf": [
-        {
-            "type": "object",
-            "properties": {"icon": {"enum": list(ICON_LABELS)}, "colour": {"enum": list(COLOUR_LABELS)}},
-            "required": ["icon", "colour"],
-            "additionalProperties": False,
-        },
-        {"type": "null"},
-    ]
-}
 _SET = {
     "type": "object",
     "properties": {
         "grant_hours": {"type": "integer", "minimum": 1, "maximum": GRANT_MAX_HOURS},
         "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
         "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
-        "sign_methods": {  # B6: terminal always; touchid is reserved
-            "type": "array",
-            "items": {"enum": ["terminal", "click", "phone"]},
-            "uniqueItems": True,
-            "minItems": 1,
-            "maxItems": 3,
-            "contains": {"const": "terminal"},
-        },
         "publish": {  # the Publish add-on's server: an address pair, or null to remove it
             "oneOf": [
                 {
@@ -117,7 +97,6 @@ _SET = {
             "propertyNames": {"pattern": r"^[a-z][a-z0-9-]{0,39}(?![\s\S])"},
             "additionalProperties": {"oneOf": [{"type": "object"}, {"type": "null"}]},
         },
-        "icon": _ICON,
         "repos": {
             "type": "object",
             "minProperties": 1,
@@ -216,12 +195,25 @@ def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
         if len(changes) != 1:
             raise OrchError("invalid.input", "add-on settings are changed on their own")
         with h.store.locked():
-            why = settings_value.check_granted(h.store, changes[ADDONS_KEY])
+            meta = ctx.prepare.sequence if ctx.prepare is not None else None
+            if meta and meta["intent"].get("staged"):
+                # human._sequence already checked these exact values against the stage.
+                why = None
+            else:
+                why = settings_value.check_granted(h.store, changes[ADDONS_KEY])
         if why is not None:
             raise OrchError("invalid.input", f"add-on settings: {why}")
     refusal = settings_needs.clear_refusal(changes, h.store.state.workspace.addons)  # AE4: never on without settings
     if refusal is not None:
         raise OrchError("invalid.input", refusal)
+    if isinstance(changes.get("publish"), dict):  # where files go: the host's own origin check, whoever asked
+        from orch.wsproto import wire
+
+        for key in ("server", "share"):
+            try:
+                wire.check_origin(changes["publish"][key])
+            except wire.WireError:
+                raise OrchError("invalid.input", f"publish {key} is not a valid address") from None
     for name, spec in (changes.get("repos") or {}).items():  # the host's own look at a path, before anything is signed
         if spec is not None:
             try:
@@ -326,6 +318,24 @@ def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
     return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch publish send {facts.staged_id}")
 
 
+def handle_app_release(ctx: Context, args: dict[str, Any]) -> Result:
+    """``app.release {staged_id}`` (#1457): the person's signature over the exact words of one staged app release (new
+    version, update, rollback or start), as a ``log.added`` note on its ticket. The words come from the host's facts
+    about the staged release (name, who may open it, what it may reach, every file, what changed since the live
+    version, the hashes), never from the request, which names only the staged id; the host makes the app live only
+    after it finds a note with exactly these words signed by a person."""
+    from orch.publishclient.approval import AppReleaseFacts
+
+    h = _Human(ctx, "app.release")
+    facts = getattr(ctx.prepare, "app", None)
+    if not isinstance(facts, AppReleaseFacts) or facts.staged_id != args["staged_id"]:
+        raise OrchError("human_only", "app.release is prepared only by the host's app module, from a staged release")
+    view = h.ticket(facts.ticket_key)
+    done = h.run({"type": "log.added", "text": facts.text}, view.uid, f"let an app of {view.key} go live",
+                 review=h.header(view))  # fmt: skip
+    return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch app release {facts.staged_id}")
+
+
 def _prior_aliases(hub: dict[str, Any], hk_root_pub: bytes) -> dict[str, str]:
     """The aliases an earlier binding of THIS hub made (a user id means something only on the hub that chose it)."""
     from orch.hubclient import wire
@@ -360,6 +370,10 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
             raise HubRefused("other_hub")
         me = h.person.removeprefix("p_")  # the owner is the only person a join may alias (spec 8a)
         aliases = list(args.get("aliases") or [])
+        if args.get("owner_user_id"):  # a console link names the hub user of the owner: the owner's alias (run 12)
+            if aliases:
+                raise HubRefused("malformed")
+            aliases = [{"person_id": me, "user_id": args["owner_user_id"]}]
         if any(a["person_id"] != me for a in aliases) or len(aliases) > 1:
             raise HubRefused("malformed")
         payload = wire.joined_payload(
@@ -430,6 +444,88 @@ def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
     done = h.run(event, "workspace", f"leave hub {current['hub_id']}", review=[])
     data = {"hub_id": current["hub_id"], "binding_seq": current["binding_seq"]}
     return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
+
+
+_DAY_MS = 86_400_000
+
+
+def _remote_facts(ctx: Context, op: str) -> Any:
+    facts = getattr(ctx.prepare, "remote", None)
+    if facts is None or type(getattr(facts, "now_ms", None)) is not int:
+        raise OrchError("human_only", f"{op} is prepared only by the host, with its own facts")
+    return facts
+
+
+def handle_remote_set(ctx: Context, args: dict[str, Any]) -> Result:
+    """``remote.set {level, premises, days?, agents_risk?}`` (R2 #1590, spec D84-D93): the owner turns remote access on
+    (or changes level and end date) at the workspace: ``remote.changed`` with the remote owner proof of the backup key.
+    The host facts (clock, hub mode, isolation) come from ``ctx.prepare.remote``, never from the request. Refused
+    here, in plain codes: no end date when the computer is at a customer's place or the level is Terminals
+    (``invalid.input``), premises ``yes`` while the hub is in full mode (``remote.needs_selective``), and remote access
+    on a computer where agents run as the person unless the owner said so (``remote.agents_risk``, #1198 H1)."""
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    h = _Human(ctx, "remote.set")
+    _owner(h, "remote.set")
+    facts = _remote_facts(ctx, "remote.set")
+    level, premises, days = args["level"], args["premises"], args.get("days")
+    if days is None and (premises == "yes" or level == "terminals"):
+        raise OrchError(
+            "invalid.input", "remote access needs an end date here (a customer's place, or the Command window level)"
+        )
+    if premises == "yes" and facts.hub_mode == "full":
+        raise OrchError("remote.needs_selective", "remote access is off while the hub reads this workspace (full mode)")
+    risk = bool(args.get("agents_risk", False))
+    if not facts.isolated and not risk:
+        raise OrchError("remote.agents_risk", "agents on this computer can act as you: say so to turn remote access on")
+    try:
+        payload = wire.changed_payload(
+            level=level, premises=premises, agents_risk=risk and not facts.isolated, hub_mode=facts.hub_mode,
+            remote_v=h.store.state.workspace.remote.get("version", 0),
+            until_ms=None if days is None else facts.now_ms + int(days) * _DAY_MS,
+        )  # fmt: skip
+    except HubRefused as exc:
+        raise OrchError("invalid.input", f"remote access is refused: {exc.code}") from None
+    done = h.run({"type": "remote.changed", **payload}, "workspace", f"turn on remote access ({level})", review=[])
+    data = {"level": level, "premises": premises, "until_ms": payload["until_ms"]}
+    return h.workspace_result(done, data, "remote access is on; add a device with orch remote device add")
+
+
+def handle_remote_device_confirm(ctx: Context, args: dict[str, Any]) -> Result:
+    """``remote.device_confirm {pending, level_cap, days}`` (R2): the owner adds the pending device at the workspace:
+    ``remote.device_added`` with the remote owner proof. The device's name, keys and code come from the host's pending
+    enrollment (``ctx.prepare.remote.pending``: the device proved the code at the handshake), the fingerprint is
+    recomputed here, the id is drawn by the host. ``remote.no_pending`` when the pending device is gone (the stream
+    closed or the code ran out), ``remote.full`` at 64 devices."""
+    import secrets
+
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    h = _Human(ctx, "remote.device_confirm")
+    person = _owner(h, "remote.device_confirm")
+    facts = _remote_facts(ctx, "remote.device_confirm")
+    pending = facts.pending
+    if pending is None:
+        raise OrchError("remote.no_pending", "no device is waiting to be added (it may have disconnected)")
+    if len(h.store.state.workspace.remote.get("devices", {})) >= wire.REMOTE_DEVICES_MAX:
+        raise OrchError("remote.full", "this workspace already has the most remote devices it can hold")
+    try:
+        payload = wire.device_added_payload(
+            device_id="rd_" + secrets.token_hex(16), name=pending["name"], person=person,
+            presence_kind=pending["presence_kind"], transport_pub=pending["transport_pub"],
+            presence_pub=pending["presence_pub"], level_cap=args["level_cap"],
+            expires_ms=facts.now_ms + int(args["days"]) * _DAY_MS, code_id=pending["code_id"],
+            remote_v=h.store.state.workspace.remote.get("version", 0),
+        )  # fmt: skip
+    except (HubRefused, KeyError, TypeError):
+        raise OrchError("invalid.input", "the pending device is not well formed") from None
+    done = h.run(
+        {"type": "remote.device_added", **payload}, "workspace", f"add the remote device {pending['name']}", review=[]
+    )
+    data = {"device_id": payload["device_id"], "level_cap": args["level_cap"], "expires_ms": payload["expires_ms"]}
+    return h.workspace_result(done, data, None)
 
 
 def handle_device_mark_exposed(ctx: Context, args: dict[str, Any]) -> Result:
@@ -551,7 +647,8 @@ DEVICE_REMOVE = operation(
 HUB_JOIN = operation(
     "hub.join",
     "Human only",
-    "Join a hub. Selective: the hub sees only what you share and never gets the workspace key. Full: the hub is a "
+    "Join a hub. Selective: the hub sees only what you share, plus this workspace's name, and never gets the "
+    "workspace key. Full: the hub is a "
     "member and can read everything in the workspace.",
     who="human",
     props={
@@ -562,6 +659,11 @@ HUB_JOIN = operation(
             "description": "the hub id from the invite (<hub_id>:<code>); the card must name this hub (D12c)",
         },
         "mode": E("the join mode", "selective", "full"),
+        "owner_user_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "description": "the hub user the connect link names as this workspace's owner: the owner's alias",
+        },
         "aliases": {
             "type": "array",
             "maxItems": 1,
@@ -578,7 +680,16 @@ HUB_JOIN = operation(
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.refused"), err("hub.already_joined"), err("hub.proof_invalid")),
+    errors=(
+        err("role.denied"),
+        err("hub.refused"),
+        err("hub.already_joined"),
+        err("hub.proof_invalid"),
+        err("hub.link_inspected"),
+        err("hub.proxy_auth"),
+        err("hub.proxy_refused"),
+        err("hub.proxy_unreachable"),
+    ),  # fmt: skip
     handler=handle_hub_join,
 )
 HUB_MODE = operation(
@@ -601,6 +712,10 @@ HUB_MODE = operation(
         err("hub.not_joined"),
         err("hub.already_joined"),
         err("hub.proof_invalid"),
+        err("hub.link_inspected"),
+        err("hub.proxy_auth"),
+        err("hub.proxy_refused"),
+        err("hub.proxy_unreachable"),
     ),  # fmt: skip
     handler=handle_hub_mode,
 )
@@ -614,7 +729,15 @@ HUB_LEAVE = operation(
     emits=("hub.left",),
     text="ok hub.left {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.not_joined"), err("hub.proof_invalid")),
+    errors=(
+        err("role.denied"),
+        err("hub.not_joined"),
+        err("hub.proof_invalid"),
+        err("hub.link_inspected"),
+        err("hub.proxy_auth"),
+        err("hub.proxy_refused"),
+        err("hub.proxy_unreachable"),
+    ),  # fmt: skip
     handler=handle_hub_leave,
 )
 
@@ -649,6 +772,19 @@ PUBLISH_SHARE = operation(
     data=obj({"staged_id": STR}),
     errors=(err("role.denied"), err("not_found")),
     handler=handle_publish_share,
+)
+APP_RELEASE = operation(
+    "app.release",
+    "Human only",
+    "Sign the exact words of one staged app release (name, access, reach, files, changes); prepared by the host only.",
+    who="human",
+    props={"staged_id": S("the staged release (pa_ and 32 hex)", pattern="^pa_[0-9a-f]{32}$")},
+    required=("staged_id",),
+    emits=("log.added",),
+    text="ok {key} log.added seq={seq}\nnext: {next}",
+    data=obj({"staged_id": STR}),
+    errors=(err("role.denied"), err("not_found")),
+    handler=handle_app_release,
 )
 
 
@@ -793,6 +929,58 @@ TASK_MARK_DONE = operation(
     handler=handle_mark_done,
 )
 
+REMOTE_SET = operation(
+    "remote.set",
+    "Human only",
+    "Turn remote access on, or change its level and end date: only you can, with your backup key, at this computer.",
+    who="human",
+    props={
+        "level": E("what a remote device may do", "view", "work", "terminals"),
+        "premises": E("does this computer run at a customer's place", "yes", "no"),
+        "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365,
+            "description": "remote access ends after this many days",
+        },
+        "agents_risk": {"type": "boolean", "description": "agents on this computer can act as you (not isolated)"},
+    },
+    required=("level", "premises"),
+    emits=("remote.changed",),
+    text="ok remote.changed {level} seq={seq}\nnext: {next}",
+    data=obj({"level": STR, "premises": STR, "until_ms": {"type": ["integer", "null"]}}),
+    errors=(
+        err("role.denied"),
+        err("remote.needs_selective"),
+        err("remote.agents_risk"),
+        err("remote.proof_invalid"),
+    ),
+    handler=handle_remote_set,
+)
+REMOTE_DEVICE_CONFIRM = operation(
+    "remote.device_confirm",
+    "Human only",
+    "Add the device that is waiting to be added, with a level and an end date: only you can, with your backup key, at "
+    "this computer.",
+    who="human",
+    props={
+        "pending": {"type": "string", "pattern": "^rp_[0-9a-f]{32}$", "description": "the waiting device"},
+        "level_cap": E("the most this device may do", "view", "work", "terminals"),
+        "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 366,
+            "description": "the device is removed after this many days",
+        },
+    },
+    required=("pending", "level_cap", "days"),
+    emits=("remote.device_added",),
+    text="ok remote.device_added {device_id} seq={seq}",
+    data=obj({"device_id": STR, "level_cap": STR, "expires_ms": {"type": "integer"}}),
+    errors=(err("role.denied"), err("remote.no_pending"), err("remote.full"), err("remote.proof_invalid")),
+    handler=handle_remote_device_confirm,
+)
+
 OPS: dict[str, Operation] = {
     op.name: op
     for op in (
@@ -801,12 +989,15 @@ OPS: dict[str, Operation] = {
         SETTINGS_SET,
         PEOPLE_SET,
         PUBLISH_SHARE,
+        APP_RELEASE,
         HUB_JOIN,
         HUB_MODE,
         HUB_LEAVE,
         DEVICE_MARK_EXPOSED,
         DEVICE_ROTATE,
         DEVICE_REMOVE,
+        REMOTE_SET,
+        REMOTE_DEVICE_CONFIRM,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

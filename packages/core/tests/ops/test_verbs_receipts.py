@@ -17,6 +17,13 @@ def ci(ws, verbs, session=SESSION + ".1"):
     return Cli(ws, session=session, ORCH_GRANT=ws.narrow_grant(verbs))
 
 
+@pytest.fixture(autouse=True)
+def _plan_gate_off(ws):
+    """r10-P02: an agent builds only after the plan is approved. These tests are about tasks and receipts, not the
+    plan gate: the workspace turns it off (a signed policy change, as a person would make it)."""
+    ws.plan_gate_off()
+
+
 def test_a_ci_grant_for_task_done_runs_task_done_with_its_receipt(ws, cli):
     claimed(cli)
     cli("task", "add", "t1", "--verify", py("print('ok')"))
@@ -296,3 +303,10 @@ def test_a_crashed_handoff_is_completed_by_the_retry(ws, cli, monkeypatch):
     assert cli("handoff", "-m", "where it stands").code == 0
     assert [e["type"] for e in ws.events("1")][-2:] == ["handoff.written", "claim.released"]
     assert [e["type"] for e in ws.events("1")].count("handoff.written") == 1
+
+
+def test_handoff_warns_when_the_open_gate_cannot_be_approved_yet(ws, cli):
+    claimed(cli)
+    r = cli("handoff", "-m", "waiting on the gates")
+    assert r.code == 0
+    assert "warning: the requirements gate is not ready for approval" in r.out

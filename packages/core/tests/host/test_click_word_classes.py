@@ -45,18 +45,8 @@ def test_publish_is_a_click_whatever_the_capabilities():
     assert op_class("addon.grant", [grant(), grant(name="publish")]) == "click"
 
 
-def test_settings_classes():
-    sets = lambda **kw: op_class("settings.set", args={"set": kw})  # noqa: E731
-    assert sets(addons={"demo": {"mode": "fast"}}) == "click"  # V3-D38
-    for key in ("repos", "grant_hours", "sign_methods"):  # were the typed word
-        assert sets(**{key: None}) == "click"
-    assert sets(publish=None) == "click"  # C2: where files go is a click, the View lists both servers
-    assert sets(publish={"server": "http://a", "share": "http://b"}) == "click"
-    assert op_class("settings.set", args={"set": "not a map"}) == "terminal"  # fails closed
-
-
 @pytest.mark.parametrize(
-    "op", ["member.add", "member.role", "member.remove", "policy.set", "people.set", "addon.purge"]
+    "op", ["member.add", "member.role", "member.remove", "policy.set", "people.set", "addon.purge", "follow_up.cancel"]
 )
 def test_every_former_word_op_is_a_plain_click(op):
     assert op in CLICK_OPS
@@ -72,4 +62,4 @@ def test_the_word_class_and_refusal_are_gone():
     assert "word" not in REFUSALS
     assert not hasattr(protocol, "WORD_OPS") and not hasattr(protocol, "SETTINGS_WORD_KEYS")
     assert not hasattr(views, "word")
-    assert CONTRACT == 3
+    assert CONTRACT == 4  # 3 dropped the word class; 4 (run 13 C3) added headline and risk_lines, still no word

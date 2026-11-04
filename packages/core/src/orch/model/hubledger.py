@@ -116,12 +116,15 @@ def apply_pin(ws: WsCore, e: dict[str, Any], v: Verifier, *, dev: bool) -> Refus
             return _bad("no_card")
         if (code := verified(led["card"], led["snapshot"])) is not None:
             return _bad(code)  # includes stale_snapshot and snapshot_conflict against the pinned one
+        if obj["o"]["version"] < led.get("snapshot_floor", 0):
+            return _bad("stale_snapshot")  # the floor survives leave and rejoin: an old snapshot is never pinned again
         held = led["snapshot"]
         if held is not None and held["o"]["version"] == obj["o"]["version"]:
             return _bad("already_pinned")  # the verifier refused other bytes of this version already
         if len(cj(obj)) > MAX_SNAPSHOT_BYTES:
             return _bad("too_large")
         led["snapshot"] = obj
+        led["snapshot_floor"] = max(led.get("snapshot_floor", 0), obj["o"]["version"])
         led["revoked_channels"] = sorted({*led["revoked_channels"], *obj["o"]["revoked_channels"]})
         return None
     return _bad("malformed")

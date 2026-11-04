@@ -153,6 +153,8 @@ def test_artifacts_raise_verify_and_requirements_only_when_referenced(env):
 
 def test_task_events(env):
     w, uid, a = env
+    w.decide(uid, "sev", "requirements")
+    w.decide(uid, "sev", "plan")  # r10-P02: an agent builds only after the plan is approved
     t = lambda typ, **kw: w.tev(uid, typ, a, task="T1", **kw)
     assert delta(w, uid, lambda: t("task.started"))[0] == ()
     assert delta(w, uid, lambda: t("task.blocked", reason="x"))[0] == ()

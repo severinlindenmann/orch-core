@@ -35,8 +35,10 @@ It is sent as a pin ``{path, dev, ino}``; the trampoline compares it before ``fc
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -94,6 +96,8 @@ _SCHEMAS = {
 }  # fmt: skip
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 
+LOG = logging.getLogger(__name__)
+
 
 def _validate(op: str, args: Any) -> None:
     errors = sorted(_VALIDATORS[op].iter_errors(args), key=lambda e: list(map(str, e.path)))
@@ -108,11 +112,12 @@ def _addon(service: WorkspaceService, name: str) -> bool:
     return hubpolicy.running(service, name)  # granted, on, and not paused by the hub policy
 
 
-def agent_missing(service: WorkspaceService, hub: RunnerHub) -> str | None:
-    """The first of ``addon`` (``start-agent``), ``machine`` that is not in place, else ``None``."""
+def agent_missing(service: WorkspaceService, hub: RunnerHub, addon: str = ADDON) -> str | None:
+    """The first of ``addon`` (``start-agent``; a follow-up run asks for ``schedules``, whose grant already says it
+    starts agents on this computer), ``machine`` that is not in place, else ``None``."""
     from orch.runner import enablement
 
-    if not _addon(service, ADDON):
+    if not _addon(service, addon):
         return "addon"
     if not enablement.state_of(hub.host.state_dir, service.workspace_id, hub.host.host_uid)["enabled"]:
         return "machine"
@@ -309,7 +314,9 @@ def _child_session(hub: RunnerHub, parent: dict[str, Any]) -> str | None:
     return next((f"{base}.{n}" for n in range(1, 10) if f"{base}.{n}" not in used), None)
 
 
-def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool) -> dict[str, Any]:
+def plan(
+    call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool, fu: dict | None = None
+) -> dict[str, Any]:
     """The preview's answer and, under ``_launch``, what start or open sends. ``agent``: ``agent.preview``;
     otherwise ``term.preview`` (a person-run shell or harness: kind ``shell``, ``ORCH_TICKET`` only, no grant)."""
     from orch.runner.config import ConfigError, RunnerConfig, read_config
@@ -321,6 +328,10 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     p = _Plan()
     harness = args.get("harness", "shell")
     mode, model, sub = args.get("mode"), args.get("model"), args.get("subagent_model")
+    # Mode followup is host-only: it goes with the host timer's own ledger follow-up or schedule (`fu`), never with a
+    # client's args (the wire schemas have no such mode; this holds even if one is passed in).
+    if (fu is not None) != (mode == "followup") or (fu is not None and not agent):
+        p.block("launch.invalid", "a follow-up needs an agent in mode followup")
     person = str(call.viewer)
     parent_run = args.get("parent_run")
     policy_in = args.get("policy") if harness == "claude-code" else None  # codex has no delegation limits to store
@@ -360,7 +371,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     if hub is None:
         p.block("runner.unavailable", "this host serves no runner")
     else:
-        gone = agent_missing(service, hub) if agent else missing(service, hub)
+        gone = agent_missing(service, hub, "schedules" if fu is not None else ADDON) if agent else missing(service, hub)
         if gone is not None:
             p.block("runner.disabled", f"dashboard execution is not available here: {gone} missing", missing=gone)
         elif not hub.connected:
@@ -406,6 +417,8 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
          "expected": args.get("expected")}
         if mode == "task" else None
     )  # fmt: skip
+    if fu is not None:
+        task = {"followup": fu["id"]}
     delegate = policy["delegate"] if policy is not None else None
     try:
         argv, login, program = launch_argv(harness, mode, argv_model, key, config, task=task, delegate=delegate)
@@ -451,21 +464,28 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         if helper is not None and harness == "claude-code" and not check_model("subagent_model", helper, "claude-code"):
             env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = helper
     if agent and mode is not None and where["cwd"]["kind"] != "workspace":
-        # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path
+        # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path.
+        # A Claude Code agent in a ticket work folder gets the rules as a system prompt and its prompt names no
+        # path (launch_argv decides): a path outside its folder would raise a hidden permission question (P01).
         try:
             from orch.instructions.harness import agents_rel
 
             lay = service.store.layout
+            in_workdir = where["cwd"]["kind"] == "workdir"
             at = os.path.join(str(service.entry.root), agents_rel(lay.project, lay.store))
+            if in_workdir and harness == "claude-code":
+                at = ""  # the rules are in its system prompt: no path is computed, let alone named
             argv, login, program = launch_argv(
                 harness, mode, argv_model, key, config,
-                instructions=at if at.isascii() and at.isprintable() else None,
-                workdir=where["cwd"]["kind"] == "workdir", task=task, delegate=delegate,
+                instructions=at if at and at.isascii() and at.isprintable() else None,
+                workdir=in_workdir, task=task, delegate=delegate,
             )  # fmt: skip
         except HostError:
             pass  # the first launch_argv already blocked with the same reason
     grant = None
-    if agent:
+    if fu is not None:
+        grant = {"id": fu["grant"], "until": fu["until"], "scope": fu["scope"]}
+    elif agent:
         cur = hub.grants.current(service.workspace_id, person) if hub is not None else None
         if cur is None:
             p.block("launch.no_grant", "no runner grant for you on this machine: issue one", reason="none")
@@ -506,6 +526,8 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
                     "create": where["create"], "mkdir": where["mkdir"], "ticket": key, "login_shell": login,
                     "grant": grant["id"] if grant else None, "session": child_session},
     }  # fmt: skip
+    if fu is not None:
+        out["_launch"]["run_grant"] = True
     if agent:
         out.update(
             ticket=key,
@@ -525,12 +547,84 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
 # -- the worker half ---------------------------------------------------------------------------------------------------
 
 
+def after_sequence(call: Call, request_id: Any) -> tuple[dict[str, Any], str]:
+    """Resolve only a complete, committed chain belonging to this session's person.
+
+    Client ticket, launch settings and idempotency values are deliberately not inputs.
+    """
+    from . import sequence
+    from .requests import REQUEST_ID
+
+    requests = call.service.requests
+    first = (
+        requests.read(request_id)
+        if requests and isinstance(request_id, str) and REQUEST_ID.fullmatch(request_id)
+        else None
+    )
+    if first is None or first.get("person") != call.viewer or first.get("principal") != call.principal:
+        raise HostError("not_found", "no such sequence for this session")
+    meta = first.get("sequence") or {}
+    intent = meta.get("intent") or {}
+    if meta.get("step") != 0 or intent.get("kind") != sequence.KIND or not intent.get("launch"):
+        raise HostError("sequence.invalid", "this request does not bind an agent launch")
+    records = [requests.read(rid) for rid in requests.ids()]
+    current = first
+    key = None
+    ticket = None
+    previous_head = None
+    for k in range(meta["of"]):
+        if (
+            current.get("state") != "submitted"
+            or (current.get("outcome") or {}).get("state") != "committed"
+            or current.get("person") != call.viewer
+            or current.get("signer") != first.get("signer")
+        ):
+            raise HostError("sequence.incomplete", "every signature must land before the agent starts")
+        events = (current.get("submit") or {}).get(sequence._EVENTS) or []
+        if not events:
+            raise HostError("sequence.incomplete", "the signed step is missing")
+        try:
+            ticket = sequence.check_step(
+                intent,
+                k,
+                current["prepared"],
+                person=str(call.viewer),
+                first=ticket,
+                prev_head=previous_head,
+                now=current["created"],
+            )
+        except sequence.Aborted:
+            raise HostError("sequence.invalid", "a landed step does not match the reviewed intent") from None
+        if k == 0:
+            key = ticket["key"]
+        previous_head = call.service.store.head_at(current["prepared"]["log"], current["outcome"]["result"]["seq"])
+        if k + 1 < meta["of"]:
+            current = next(
+                (
+                    r
+                    for r in records
+                    if r
+                    and r.get("sequence")
+                    and r["sequence"].get("digest") == meta["digest"]
+                    and r["sequence"].get("of") == meta["of"]
+                    and r["sequence"].get("step") == k + 1
+                    and r["sequence"].get("prev") == events[-1]["id"]
+                    and r["sequence"].get("ticket") == key
+                    and (r.get("outcome") or {}).get("state") == "committed"
+                ),
+                {},
+            )
+    return {**intent["launch"], "ticket": key, "worktree": True}, "a_" + request_id[3:]
+
+
 def serve(call: Call) -> dict[str, Any]:
     from .workspace import ok_result
 
     op = call.frame["op"]
     args = dict(call.frame["args"])
-    _validate(op, args)
+    after = args.get("after_request") if op == "agent.start" else None
+    if after is None:
+        _validate(op, args)
     opts = call.frame.get("opts") or {}
     if opts.get("dry_run"):
         raise HostError("invalid.input", f"dry_run is not supported by {op}")
@@ -547,21 +641,40 @@ def serve(call: Call) -> dict[str, Any]:
         out = plan(call, args, hub, agent=True)
         out.pop("_launch")
         return ok_result(out)
-    idem = opts.get("idem")
+    if after is not None:
+        from .requests import REQUEST_ID
+
+        if not isinstance(after, str) or not REQUEST_ID.fullmatch(after):
+            raise HostError("invalid.input", "after_request is a request id")
+        run = "r_" + after[3:]
+        if hub is not None and run in hub.store.records:
+            rec = hub.store.records[run]
+            _same(rec, service.workspace_id, str(call.viewer), rec["spec"], after)
+            return ok_result({"replay": run})
+        args, idem = after_sequence(call, after)
+    else:
+        idem = opts.get("idem")
     if not idem:
         raise HostError("idem.required", "agent.start needs opts.idem")
     run = "r_" + str(idem)[2:]
     person = str(call.viewer)
     if hub is not None and run in hub.store.records:  # a retry: the recorded run, nothing recomputed or started
-        _same(hub.store.records[run], service.workspace_id, person, args["spec"])
+        _same(
+            hub.store.records[run],
+            service.workspace_id,
+            person,
+            hub.store.records[run]["spec"] if after is not None else args["spec"],
+            after,
+        )
         return ok_result({"replay": run})
     found = plan(call, args, hub, agent=True)
     if found["blocked"] is not None:
         raise HostError(found["blocked"]["code"], found["blocked"]["message"], detail=found["blocked"].get("detail"))
-    if found["spec"] != args["spec"]:
+    if after is None and found["spec"] != args["spec"]:
         raise HostError("launch.changed", "what agent.start would start differs from the preview: preview again")
     return ok_result({
-        "run": run, "idem": str(idem), "spec": found["spec"], "launch": found["_launch"], "person": person,
+        "run": run, "idem": str(idem), "spec": found["spec"], "after_request": after,
+        "launch": found["_launch"], "person": person,
         "harness": args["harness"], "mode": args["mode"], "model": found["model"],
         "subagent_model": args.get("subagent_model"), "label": args.get("label"), "cwd": found["cwd"],
         "policy": found["policy"], "parent_run": args.get("parent_run"),
@@ -588,13 +701,14 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
     return ok_result({"run": await _start(call, hub, data)})
 
 
-def _same(rec: dict[str, Any], wid: str, person: str, spec: str) -> None:
+def _same(rec: dict[str, Any], wid: str, person: str, spec: str, after: str | None = None) -> None:
     """An idem names exactly one agent start: the same workspace, person, kind and spec (Opus L3)."""
     if (
         rec.get("workspace_id") != wid
         or rec.get("person") != person
         or rec.get("kind") != "agent"
         or rec.get("spec") != spec
+        or rec.get("after_request") != after
     ):
         raise HostError("idem.conflict", "this idem names another request")
 
@@ -606,14 +720,16 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
 
     service = call.service
     wid, person, run = service.workspace_id, data["person"], data["run"]
-    gone = await asyncio.wrap_future(service.submit(agent_missing, service, hub))  # again, at use
+    gone = await asyncio.wrap_future(
+        service.submit(agent_missing, service, hub, "schedules" if data["launch"].get("run_grant") else ADDON)
+    )  # again, at use
     if gone is not None:
         raise HostError("runner.disabled", "dashboard execution is not available here", detail={"missing": gone})
     # from here to the reservation there is no await: the identity check, the limits, the rate charge and the
     # reservation are one step, so two requests with one idem never both start (Codex P2 #1, Opus L2)
     existing = hub.store.records.get(run)
     if existing is not None:
-        _same(existing, wid, person, data["spec"])
+        _same(existing, wid, person, data["spec"], data.get("after_request"))
         return runners.view(existing)
     starting = hub.starting.get(run)
     if starting is not None:  # the same idem is being started right now: its answer is this one's too
@@ -624,15 +740,23 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
         rec = hub.store.records.get(run)
         if rec is None:  # the first start failed before its record existed (Opus info): its outcome is not ours
             raise HostError("outcome.unknown", "the same request was being started and did not record a run; retry")
-        _same(rec, wid, person, data["spec"])
+        _same(rec, wid, person, data["spec"], data.get("after_request"))
         return runners.view(rec)
     if not hub.connected:
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     hub.require_current()
     launch = data["launch"]
-    cur = hub.grants.current(wid, person)
-    if cur is None or cur["grant"] != launch["grant"]:
-        raise HostError("launch.changed", "the runner grant changed since the preview: preview again")
+    if not launch.get("run_grant"):  # a follow-up run carries its own one-run grant (put_run); the limits below apply
+        cur = hub.grants.current(wid, person)
+        if cur is not None:
+            reason = hub.grants.launch_reason(service, person, cur)
+            if reason is not None:
+                raise HostError(
+                    "grant.short" if reason == "expiring" else "grant.missing",
+                    "agent access is no longer valid for a start",
+                )
+        if cur is None or cur["grant"] != launch["grant"]:
+            raise HostError("launch.changed", "the runner grant changed since the preview: preview again")
     live = [r for r in hub.store.records.values() if r.get("state") in runners.LIVE]
     mine = [r for r in live if r.get("person") == person and r.get("kind") == "agent"]
     if sum(1 for r in mine if r.get("workspace_id") == wid) >= AGENTS_PER_WORKSPACE or len(mine) >= AGENTS_PER_PERSON:
@@ -659,7 +783,7 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
 
 
 async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, Any]:
-    from . import runners
+    from . import orgmcp, runners
 
     wid, person, run = call.service.workspace_id, data["person"], data["run"]
     launch = data["launch"]
@@ -674,7 +798,31 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
                "env_fixed": launch["env_fixed"], "cwd": launch["cwd"], "cols": data["cols"], "rows": data["rows"],
                "login_shell": launch["login_shell"], "grant": launch["grant"], "session": session,
                "person": person}  # fmt: skip
-    await hub.intent(wid, fields, payload, idem=data["idem"], spec=data["spec"])
+    if launch.get("run_grant"):
+        payload["run_grant"] = True
+        payload["workspace_id"] = wid
+    skills = await _company_skills(call, launch["argv"])
+    if skills:
+        payload["company_skills"] = skills
+    org = await orgmcp.launch_mcp(call, hub, run, launch["argv"])  # a capability: revoked again if the start fails
+    if org:
+        payload["org_mcp"] = org
+    try:
+        return await _spawn(call, hub, data, fields, payload, launch)
+    except BaseException:
+        if org:
+            orgmcp.revoke_run(hub, run)
+        raise
+
+
+async def _spawn(
+    call: Call, hub: RunnerHub, data: dict[str, Any], fields: dict[str, Any], payload: dict[str, Any],
+    launch: dict[str, Any],
+) -> dict[str, Any]:  # fmt: skip
+    wid, run = call.service.workspace_id, data["run"]
+    await hub.intent(
+        wid, fields, payload, idem=data["idem"], spec=data["spec"], after_request=data.get("after_request")
+    )
     hub.grants.watch()
     if launch.get("mkdir"):
         try:
@@ -694,6 +842,32 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
             await hub.fail(run, "launch.cwd_changed")
             raise HostError("launch.cwd_changed", "the created worktree is not where the preview said")
     return await hub.dispatch(run, payload, audit=True)
+
+
+async def _company_skills(call: Call, argv: list[str]) -> list[dict[str, str]]:
+    """The company skills the owner accepted, for a launch that has the rules file (a Claude Code ticket work folder).
+    Every other launch (Codex, a worktree, a repo, the workspace root, a shell) gets none: they have no appended system
+    prompt file, and a company skill goes nowhere else. Any doubt (no hub, a file the host will not trust) is none."""
+    from orch.runner import rules
+
+    from . import orgstate
+    from .launch import RULES_FLAG, RULES_PLACEHOLDER
+
+    at = argv.index(RULES_PLACEHOLDER) if argv.count(RULES_PLACEHOLDER) == 1 else -1
+    if at <= 0 or argv[at - 1] != RULES_FLAG:
+        return []
+    try:
+        served = await asyncio.to_thread(orgstate.served, call.service)
+    except Exception:  # noqa: BLE001 - the agent starts without company skills rather than not at all
+        return []
+    out = []
+    for s in served["skills"]:
+        one = {"name": s["name"], "text": s["text"], "digest": s["digest"]}
+        if rules.company_problem([one]) is not None:  # the runner would refuse the whole spawn: drop this skill instead
+            LOG.warning("a company skill the runner would refuse was left out of a launch (%s)", s["name"])
+            continue
+        out.append(one)
+    return out
 
 
 def make_workdir(call: Call, key: str, expect: str | None) -> dict[str, Any]:

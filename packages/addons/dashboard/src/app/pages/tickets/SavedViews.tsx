@@ -29,7 +29,7 @@ const ALL = '__all'
 const tab = (on: boolean) =>
   cn(
     'inline-flex h-7 items-center rounded-md border px-2.5 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-brand',
-    on ? 'border-brand bg-brand-soft text-brand' : 'border-transparent text-text-muted hover:bg-accent hover:text-text',
+    on ? 'border-brand bg-brand-soft text-brand-chip-text' : 'border-transparent text-text-muted hover:bg-accent hover:text-text',
   )
 
 export function SavedViews({

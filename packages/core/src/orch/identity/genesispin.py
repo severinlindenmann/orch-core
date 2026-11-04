@@ -25,7 +25,7 @@ from orch.crypto.labels import L
 from .errors import Refused
 from .members import check_genesis
 
-__all__ = ["OP", "Verified", "check_facts", "confirm_word", "pin_o", "pin_payload", "render", "sign_pin"]
+__all__ = ["OP", "Verified", "check_facts", "pin_o", "pin_payload", "render", "sign_pin"]
 
 OP = "relay.genesis_pin"
 FACT_KEYS = frozenset({"v", "workspace_id", "genesis_event", "origin"})
@@ -83,10 +83,6 @@ def check_facts(facts: object, *, workspace_id: str, device_pub: bytes | None = 
         raise Refused("genesis.bad_device_cert", "this key is not the workspace's genesis device")
     wsk = crypto.unb64u(event["wsk_pub"], crypto.PUB_LEN)
     return Verified(pin_o(workspace_id, wsk, genesis), origin, dict(cert), dk, verified["owner_pk_pub"])
-
-
-def confirm_word(workspace_id: str) -> str:
-    return f"{workspace_id[-8:]}/GENESIS"
 
 
 def render(v: Verified, *, name: str) -> str:

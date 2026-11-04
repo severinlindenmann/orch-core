@@ -152,7 +152,7 @@ def test_fresh_run_applies_everything_in_order_with_fixed_binaries() -> None:
     assert len(useradds) == 9
     assert useradds[0] == [
         "/usr/sbin/useradd", "--system", "--user-group", "--home-dir", "/var/lib/orch/agents/orch-agent-sev/home",
-        "--create-home", "--shell", "/bin/bash", "orch-agent-sev",
+        "--create-home", "--skel", "/dev/null", "--shell", "/bin/bash", "orch-agent-sev",
     ]  # fmt: skip
     assert useradds[1][-3:] == ["--shell", "/usr/sbin/nologin", "orch-addon-1"]
     assert [BIN["usermod"], "--lock", "orch-agent-sev"] in ex.commands
@@ -793,3 +793,33 @@ def test_a_readable_folder_entry_is_recorded_and_watched() -> None:
     assert "/etc/sudoers.d/90-x" in facts.pins[facts.users["orch-agent-sev"].uid]["policy"]["files"]
     facts.sigs["/etc/sudoers.d/90-x"] = (31, 2, 3, 5)  # edited in place
     assert "90-x differs in size" in _policy_codes(facts)["policy_changed_since_setup"]
+
+
+def test_a_step_that_hangs_is_killed_and_the_failure_says_what_it_waited_for(monkeypatch) -> None:
+    """#1308: a useradd that hung for the whole step time used to fail with only 'TimeoutExpired'."""
+    import sys
+
+    from orch.setup import osapply
+
+    sleeper = "/bin/sleep" if sys.platform != "linux" else "/usr/bin/sleep"
+    monkeypatch.setattr(osapply, "_ALLOWED", frozenset({sleeper}))
+    monkeypatch.setattr(osapply, "_STEP_TIMEOUT", 1)
+    result = osapply._spawn([sleeper, "30"])
+    assert result.rc == 127 and "TimeoutExpired after 1 s" in result.out
+    assert "waiting:" in result.out
+    if sys.platform == "linux":
+        assert "waits in" in result.out and "sleep" in result.out
+
+
+def test_a_failed_step_reports_its_whole_output_not_only_the_first_300_characters() -> None:
+    """#1308: a hung ``useradd`` was reported as "TimeoutExpired after 120 s: [argv]" cut at 300 characters, which cut
+    off the evidence the executor collects (what the hung process waited for). The report keeps the output's end."""
+    f = FakeOsFacts()
+    ex = FakeExec(f)
+    tail = "waiting:\n  pid 4242 waits in do_wait: /usr/sbin/useradd --system orch-agent-sev"
+    hung = "TimeoutExpired after 120 s: " + "x" * 400 + "\n" + tail
+    real_run = ex.run
+    ex.run = lambda argv: RunResult(127, hung) if argv[0] == BIN["useradd"] else real_run(argv)
+    res, _, _ = _go(facts=f, ex=ex)
+    assert not res.ok
+    assert tail in res.report()

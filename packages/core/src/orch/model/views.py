@@ -7,9 +7,22 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from orch.addons.manifest import EVENTS_KEY
 from orch.canon import gate_hash
 
-from . import claims, gates, generations, needs, policies, questions, source, tasks
+from . import (
+    claims,
+    followups,
+    followups_wire,
+    gates,
+    generations,
+    needs,
+    policies,
+    questions,
+    schedules_wire,
+    source,
+    tasks,
+)
 from .needs import Need
 from .types import GATES, WORKSPACE, Core, TCore, WsCore, ts
 
@@ -136,6 +149,8 @@ class TicketView:
     waiting: bool
     frozen: bool  # an unacknowledged invalid event freezes person decisions on this ticket
     handoff: str | None
+    followups: tuple[Mapping[str, Any], ...] = ()
+    schedules: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,6 +183,8 @@ class GrantView:
     #: the ``grant.issued`` label (H11c: only ``"runner"`` can be handed to the runner) and issue time
     label: str | None = None
     issued_at: str | None = None
+    #: a follow-up grant (`fgr_`) names the grant it was derived from (Schedules, #720)
+    parent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +216,7 @@ class WorkspaceView:
     frozen: bool
     needs: tuple[Need, ...]
     hub: Mapping[str, Any] = MappingProxyType({})  # the workspace's hub (hub contract 9.1); empty if it never joined
+    remote: Mapping[str, Any] = MappingProxyType({})  # remote access policy and devices (R2); empty until the first
 
 
 def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
@@ -308,6 +326,62 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
         any((n.kind == "question" and n.detail == "blocking") or n.kind == "approve" for n in ns),
         frozen,
         t.handoff,
+        tuple(
+            freeze(
+                {
+                    "id": r.id,
+                    "state": followups_wire.view_state(core, t, r, now)[0],
+                    "trigger": r.trigger,
+                    "due": r.due,
+                    "deadline": r.deadline,
+                    "brief": r.brief,
+                    "set_at": r.set_at,
+                    "fired_at": r.fired_at,
+                    "late_by": followups.late_by(ts(r.fired_at), ts(r.due or r.deadline))
+                    if r.fired_at and (r.due or r.deadline)
+                    else None,
+                    "run": r.run,
+                    "outcome": r.outcome,
+                    "reason": followups_wire.view_state(core, t, r, now)[1] or r.reason,
+                    "grant": r.grant,
+                    "person": r.person,
+                    "setter_session": r.setter_session,
+                    **({"label": r.label} if r.label is not None else {}),
+                    **{k: v for k, v in (("event", r.event), ("fallback", r.fallback)) if v},
+                    # the hook hash is not shown to readers (B3): the match without it, and a short prefix
+                    **({"on": {k: v for k, v in r.on.items() if k != "hook"}} if r.on else {}),
+                    **({"hook_prefix": r.hook[:8]} if r.hook else {}),
+                }
+            )
+            for r in t.followups.values()
+        ),
+        tuple(
+            freeze(
+                {
+                    "id": r.id,
+                    "person": r.person,
+                    "rule": r.rule,
+                    "starts": r.starts,
+                    "ends": r.ends,
+                    "brief": r.brief,
+                    "run_hours": r.run_hours,
+                    "label": r.label,
+                    "state": "cancelled" if r.cancelled else "expired" if now > ts(r.ends) else "live",
+                    "set_at": r.set_at,
+                    **({"target": r.target, "title": r.title} if r.target != "existing" else {}),
+                    "occurrences": r.occurrences,
+                    # every settled occurrence, oldest first, as a plain list: the last one is the latest outcome
+                    "outcomes": [
+                        {"occurrence": o, "outcome": row["outcome"], "reason": row.get("reason")}
+                        for o, row in sorted(r.occurrences.items())
+                        if row.get("outcome")
+                    ],
+                    # the longest the firing lets this setter's run last (the member's grant_hours, at most 8)
+                    "grant_hours_cap": schedules_wire.grant_hours_cap(ws, r.person),
+                }
+            )
+            for r in t.schedules.values()
+        ),
     )
 
 
@@ -347,12 +421,14 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                     g.scope,
                     freeze(g.verbs),
                     g.expires_at,
-                    g.revoked,
-                    not g.revoked and ts(g.expires_at) > now,
+                    g.revoked or g.ended,
+                    not (g.revoked or g.ended) and ts(g.expires_at) > now,
                     g.label,
                     g.issued_at,
+                    g.parent,
                 )
                 for i, g in ws.grants.items()
+                if g.root_kind != "schedule"
             }
         ),
         freeze(ws.policies),
@@ -372,6 +448,7 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                         "capabilities": a.capabilities,
                         "purged": a.purged,
                         "runtime": a.runtime,
+                        EVENTS_KEY: a.events,
                     }
                 )
                 for n, a in ws.addons.items()
@@ -381,4 +458,5 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         frozen,
         tuple(needs.workspace_needs(ws, frozen)),
         freeze(ws.hub),
+        freeze(ws.remote),
     )

@@ -70,7 +70,7 @@ export function UsagePage() {
                 type="button"
                 aria-pressed={win === k}
                 onClick={() => setWin(k)}
-                className={cn('rounded-md border px-2.5 py-1 text-[12px]', win === k ? 'border-brand bg-brand-soft text-brand' : 'border-border text-text-muted hover:text-text')}
+                className={cn('rounded-md border px-2.5 py-1 text-[12px]', win === k ? 'border-brand bg-brand-soft text-brand-chip-text' : 'border-border text-text-muted hover:text-text')}
               >
                 {WINDOW_LABEL[k]}
               </button>

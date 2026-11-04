@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import time
 
@@ -105,7 +104,10 @@ def test_nested_json_in_state_files_is_just_unreadable(pair):
     s = env.open(load="all")
     assert s.append({"type": "log.added", "actor": env.agent, "text": "x"}, log=a, idem="k")
     s.scan()
-    assert json.loads((env.store_dir / "config.json").read_bytes())["workspace"]["id"]  # repaired from the events
+    # config.json holds unsigned settings (agents.run_for) no event has: a nested one is reported and left alone, never
+    # replaced by the defaults (D6 review, fail closed; tests/store/test_config_fail_closed.py)
+    assert any("config.json is not valid" in r.detail for r in s.reports)
+    assert (env.store_dir / "config.json").read_bytes() == deep
 
 
 def test_a_forged_index_and_keys_jsonl_do_not_decide_what_a_ref_names(pair):

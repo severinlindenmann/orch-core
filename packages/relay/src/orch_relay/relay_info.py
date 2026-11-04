@@ -54,7 +54,7 @@ def install(app):
         if request.query_params:
             return JSONResponse({"error": "malformed"}, status_code=400, headers=NO_STORE)
         address = directory.client_address(
-            request.client.host if request.client else "unknown", dict(request.headers)
+            request.client.host if request.client else "unknown", request.scope["headers"]
         )
         windows = [("relay-info", address, RELAY_INFO_READ)]
         parent = ipv6_parent(address)

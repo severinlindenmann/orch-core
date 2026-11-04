@@ -128,6 +128,14 @@ the install record) → each downloaded file's sha256 and size. The revocation l
   The overlap is one release.
 - **Root rotation:** the new root public key, signed by the old root (`orch.root-next/1`), ships in a release. Installed
   orch adds it to the stored trust set (continuity). install.sh embeds the new root.
+- **Revocations on a first install (floor and freshness):** the stored-state rule (`issued_at` not older than the one
+  stored) has nothing to compare with on a first install, so an old root-signed list from before a revocation would be
+  accepted. install.sh therefore bakes a FLOOR (`REVOCATIONS_FLOOR_ISSUED_AT`, `REVOCATIONS_FLOOR_MIN_SERIAL`, bumped for
+  every release by `scripts/release/floor.py`; a pytest in `tests/release` fails when it is older than
+  `release/keys/revocations.json`) and requires the list to be at most 30 days old (`REVOCATIONS_MAX_AGE_DAYS`); the
+  scheduled re-sign must re-sign the revocation list too. The 180-day certificate lifetime is longer than that window
+  on purpose: what bounds the exposure after a compromise is how fresh the revocation list must be (30 days), not the
+  certificate lifetime. `orch.update.verify` still has no floor of its own; the update path relies on the stored values.
 - **Release key compromise:** the owner signs a revocation list (`min_serial` = next serial), certifies a new key and
   publishes a release. Clients refuse the old key from then on. `orch update` warns when the installed version was
   signed by a revoked serial ("reinstall with install.sh"). An attacker who holds back the revocation is limited by

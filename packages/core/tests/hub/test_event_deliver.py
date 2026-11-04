@@ -55,7 +55,7 @@ def test_only_unavailable_and_unknown_snapshot_are_retryable():
 
 
 def snap(version: int, roles: dict[str, str], revoked: list[str] = ()) -> dict[str, Any]:
-    return {"o": {"version": version, "roles": roles, "revoked_channels": list(revoked)}}
+    return {"o": {"version": version, "roles": roles, "ends_ms": {}, "revoked_channels": list(revoked)}}
 
 
 def ledger(**kw: Any) -> dict[str, Any]:

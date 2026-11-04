@@ -21,6 +21,14 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_admin_read": "orch/v2/hub-admin-read|",  # F3: hub admin metadata read at orch-publish
     "sig_hub_space": "orch/v2/hub-space|",  # V3-D8 shared spaces (§10.4): a space record at one epoch
     "sig_hub_space_wrap": "orch/v2/hub-space-wrap|",  # V3-D8: SK_e sealed to one member workspace's WXK
+    "sig_hub_org_skills": "orch/v2/hub-org-skills|",  # M3 (#1430): company skills offered to one workspace
+    "sig_hub_org_secrets": "orch/v2/hub-org-secrets|",  # M3 (#1431): sealed company secrets for one workspace
+    "sig_hub_mcp_servers": "orch/v2/hub-mcp-servers|",  # M3 (#1435): remote MCP servers offered to one workspace
+    "sig_hub_closing": "orch/v2/hub-closing|",  # #1463: the hub is being removed; offered to one workspace's owner
+    "sig_hub_release_narrow": "orch/v2/hub-release-narrow|",  # M4 (#1357): a hub admin revokes a link / stops an app
+    "sig_hub_allow": "orch/v2/hub-allow|",  # P02 (#1290): the hub admits one of its own workspaces at orch-publish
+    "sig_hub_publish_where": "orch/v2/hub-publish-where|",  # #1838: where the hub's workspaces publish and share
+    "sig_hub_app_pass": "orch/v2/hub-app-pass|",  # M4 (#1357): single-use pass into a company or group app
     "sig_hub_space_proposal": "orch/v2/hub-space-proposal|",  # p4 (#1020): a proposed member transition, to an invitee
     "sig_hub_relay_request": "orch/v2/hub-relay-req|",
     "sig_hub_api_origin": "orch/v2/hub-api-origin|",  # p4 (B, §6.4, L2B-1): the hub names its own public API origin  # p4 (E1): a hub -> relay request, bytes as admin read
@@ -47,6 +55,9 @@ HUB_LABELS: dict[str, str] = {
     "h_channel_id": "orch/v2/id/channel|",
     "h_hub_event_digest": "orch/v2/hub-event-digest|",
     "h_hub_publish_request": "orch/v2/hub-publish-request|",
+    "h_publish_request_direct": "orch/v2/publish-request|",  # M4: what an approval names on the direct (12.1) path
+    "h_app_meta": "orch/v2/app-meta|",  # M4: the stored meta of one app version (commit binds it)
+    "h_app_reach": "orch/v2/app-reach|",  # M4: the approved reach list of one app version
     "h_hub_session_ref": "orch/v2/hub-session-ref|",  # p4 (B, §6.4): names a pairing session inside channel_auth
     "h_hub_audit_chain": "orch/v2/hub-audit-chain|",  # D4: hash of one signed audit record (the chain link)
     "h_hub_audit_scope": "orch/v2/hub-audit-scope|",  # L2P-4: blinded workspace tag of an audit record
@@ -75,6 +86,17 @@ PURPOSE_HUB_SHARE = "hub-share"  # p4: seal_to purpose: a shared item's key to t
 PURPOSE_SPACE_SK = (
     "space-sk"  # seal_to purpose: SK_e to a member workspace's WXK (an addition to v2 §5.3's closed list)
 )
+
+#: M2-8a: the domain of the digest an owner's channel key signs to approve an access change (``changes/proof.py``). A
+#: hub-local console label like the HKDF ones above: it names no contract object, so it stays out of ``HUB_LABELS`` (the H0
+#: vector file and protocol.md list those); ``tests/test_access_changes.py`` checks it is prefix-free with every label.
+ACCESS_CHANGE_LABEL = "orch/v2/hub-access-change|"
+ACCESS_CHANGE_KIND = "orch.access_change.v1"
+
+#: #1463: the domain of the digest an admin's channel key signs to remove the hub (a console label like the one above: the
+#: hub reads it, no workspace does; protocol.md §9.7 "The removal proof"). Prefix-free with every label.
+HUB_REMOVE_LABEL = "orch/v2/hub-remove|"
+HUB_REMOVE_KIND = "orch.hub_remove.v1"
 
 #: UK signs only under this family: ``"orch/v2/hub-custodial|" + <event type> + "|"`` (spec §5).
 CUSTODIAL_PREFIX = "orch/v2/hub-custodial|"

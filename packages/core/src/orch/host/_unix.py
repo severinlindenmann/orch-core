@@ -10,6 +10,8 @@ import struct
 import sys
 from pathlib import Path
 
+from orch.privdir import others_can_write
+
 _RESOURCE_ERRORS = {errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM, errno.EINTR}
 
 
@@ -138,7 +140,7 @@ def check_directory(fd: int, path: Path, host_uid: int, *, helper: bool = False)
         check_acl(fd, {0}, empty=True)
         return False
     sticky = info.st_uid == 0 and bool(mode & stat.S_ISVTX)
-    if mode & 0o022 and not sticky:
+    if others_can_write(info, host_uid) and not sticky:
         raise UnsafePath(f"{path}: directory writable by another principal")
     check_acl(fd, {0, host_uid})
     return sticky

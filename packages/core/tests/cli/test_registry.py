@@ -13,6 +13,9 @@ from orch.ops.workflows import WORKFLOWS
 # Format doc 10.3, one registry operation per command (subcommands are separate operations).
 SECTION_10_3 = [
     *"status describe help show list search next inbox new claim release handoff submit ask wait set".split(),
+    "follow-up", "follow-up cancel", "follow-up reschedule", "follow-up undo", "follow-up show", "follow-up list",
+    "schedule add", "schedule cancel", "schedule list", "schedule show",
+    "webhook new",
     "section set", "ac add", "ac edit",
     *(f"task {v}" for v in "list next add edit start done skip block reopen".split()),
     *(f"artifact {v}" for v in "add replace list".split()),
@@ -168,8 +171,18 @@ def test_operation_errors_are_declared_once_known_and_complete():
     control_only = {"relay.pair_open", "relay.no_primary", "relay.quota"}
     # V3-D38: no registry op creates a workspace any more; these come from the genesis library `orch setup` uses
     control_only |= {"host.busy", "custody.unsafe_mode", "host.unavailable"}
+    # R2 (#1590, D93): raised by the host op hub.switch (hubops._refuse_switch), which no registry op declares
+    control_only |= {"switch.refused"}
     # #1198 R1-5: returned by the dashboard server's remote listener (route gate, passkey login, enrollment), no op
+    # data across updates: the `orch migrate` command and open_root (orch.migrate), not registry ops
+    control_only |= {"format.older", "format.newer", "format.missing", "format.exists", "update.interrupted"}
+    control_only |= {"migrate.running", "migrate.signed_path", "migrate.backup_refused", "migrate.actor_refused"}
+    control_only |= {"migrate.step_failed"}
+    control_only |= {c for c in ERRORS if c.startswith("update.") and c not in ("update.unverified", "update.stale")}
+    control_only |= {"cosmetic.conflict"}  # run 13 D6: host op workspace.cosmetic.set
     control_only |= {"remote.refused", "passkey.invalid", "enroll.expired", "passkey.stepup_required"}
+    # U2: raised by orch.update.verify; the update ops that declare them land later (then drop these two)
+    control_only |= {"update.unverified", "update.stale"}
     unused = (
         set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only - later
     )  # the latter: the CLI composite `quick add` (H11f)

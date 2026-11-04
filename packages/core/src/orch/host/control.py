@@ -129,6 +129,7 @@ def _closed(required: dict[str, Any], optional: tuple[str, ...] = ()) -> dict[st
 
 _SCHEMAS = {
     "host.list": _closed({}),
+    "host.health": _closed({}),
     "host.wsk_create": _closed({}),
     "host.restart": _closed({}),
     "host.register": _closed({"root": _ROOT, "peers": _PEERS}),
@@ -208,6 +209,30 @@ class ControlOps:
             raise
 
     # -- host.list
+    def health(self) -> dict[str, Any]:
+        """``orch update``'s health check: open (and close again) the format root of every registered workspace, with
+        the same rule every service uses. ``problems`` are plain words; a store with no ``format.json`` yet is
+        ``unchecked`` (P1-B stamps new stores, older ones are reached by ``orch migrate``)."""
+        from orch.migrate.format import open_root
+
+        problems: list[str] = []
+        unchecked: list[str] = []
+        checked = 0
+        for entry in self.host.registry.entries():
+            try:
+                handle = open_root(_store_dir(entry.root), "workspace", {"ORCH_STATE_DIR": str(self.host.state_dir)},
+                                   quarantine_ok=True)  # fmt: skip
+            except Exception as exc:  # noqa: BLE001 - every failure is a problem line, never a crash
+                absent = (
+                    getattr(exc, "code", "") == "format.missing"
+                    and not (_store_dir(entry.root) / "format.json").exists()
+                )  # no file at all is "unchecked"; a damaged one is a problem
+                (unchecked if absent else problems).append(f"{entry.root}: {getattr(exc, 'message', exc)}")
+                continue
+            handle.close()
+            checked += 1
+        return ok_result({"checked": checked, "problems": problems, "unchecked": unchecked})
+
     def list(self, caller_uid: int) -> dict[str, Any]:
         rows = []
         for entry in self.host.registry.entries():
@@ -857,6 +882,12 @@ class ControlGate:
         if self.host.draining:
             refuse(self.host.restarting())
             return None
+        if self.host.quarantine and op not in (
+            "host.list",
+            "host.health",
+        ):  # orch update health check: answer, change nothing
+            refuse(HostError("host.unavailable", "this host is in quarantine while orch is being updated"))
+            return None
         if "auth" in frame:
             refuse(HostError("req.invalid", "auth is not allowed on the control socket"))
             return None
@@ -885,6 +916,7 @@ class ControlGate:
                 return
             call: Callable[[], dict[str, Any]] = {
                 "host.list": lambda: ops.list(session.peer.uid),
+                "host.health": ops.health,
                 "host.wsk_create": ops.wsk_create,
                 "host.register": lambda: ops.register(args, idem),
                 "host.unregister": lambda: ops.unregister(args, idem),

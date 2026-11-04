@@ -1,3 +1,4 @@
+import { BootScreen } from './shell/BootScreen'
 import type { QueryClient } from '@tanstack/react-query'
 import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, Outlet, redirect, useRouterState } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
@@ -30,14 +31,15 @@ const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'Check
 const FeedbackPage = lazyPage(() => import('./feedback/FeedbackPage'), 'FeedbackPage')
 const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
 const MarketPage = lazyPage(() => import('./pages/market'), 'MarketPage')
+const SpacesPage = lazyPage(() => import('./pages/spaces'), 'SpacesPage')
 const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
 const TerminalsPage = lazyPage(() => import('./pages/terminals'), 'TerminalsPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 const FocusPage = lazyPage(() => import('./pages/focus'), 'FocusPage')
+const SchedulesPage = lazyPage(() => import('./pages/schedules'), 'SchedulesPage')
 const UsagePage = lazyPage(() => import('./pages/usage'), 'UsagePage')
-const WikiPage = lazyPage(() => import('./pages/wiki'), 'WikiPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
 // The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
 // `import.meta.env.DEV` is false in a build, so the import, its chunk and the fixtures are not in the production bundle.
@@ -67,7 +69,7 @@ const serves = (feature: string) => () => {
 export interface RouterContext extends LoaderContext {
   urls: UrlState
 }
-// The shell's data loads before its first paint (nothing to keep on screen yet: the document's own background).
+// The shell's data loads before its first paint; until then the boot screen (logo + Loading…) stays, never a blank page.
 function Root() {
   const path = useRouterState({ select: (s) => s.location.pathname })
   return isBarePage(path) ? <Outlet /> : <Shell />
@@ -76,7 +78,7 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Root,
   // The checklist and feedback open before any workspace exists: they ask the host for nothing (no 503s in the console).
   loader: ({ context, location }) => (isBarePage(location.pathname) ? undefined : loadShell(context)),
-  pendingComponent: () => null,
+  pendingComponent: BootScreen,
   pendingMinMs: 0,
 })
 
@@ -159,7 +161,7 @@ const guideRoute = createRoute({
   loader: pageLoader(() => [], [GuidePage.preload, addonNodes]),
   component: GuidePage,
 })
-/** Worktrees of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
+/** Work copies of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
 const worktreesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'worktrees',
@@ -223,6 +225,16 @@ const sharesRoute = createRoute({
   loader: pageLoader(() => [], [SharesPage.preload]),
   component: SharesPage,
 })
+/** Shared spaces of the hub this workspace is in (run-15c P03): read-only; the sidebar lists it only when there is one. */
+const spacesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'spaces',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+  },
+  loader: pageLoader(() => [], [SpacesPage.preload]),
+  component: SpacesPage,
+})
 /** Activity of a real host (#595): the mock keeps its own addon page; a real host that serves `activity/1` gets this route. */
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -244,16 +256,24 @@ const usageRoute = createRoute({
   loader: pageLoader(() => [], [UsagePage.preload]),
   component: UsagePage,
 })
-/** Wiki of a real host (add-on): listed only while the add-on is ON for this workspace (the server adds `wiki` then). */
-const wikiRoute = createRoute({
+/** Schedules of a real host (add-on): the follow-ups agents set; listed only while the add-on is ON (the server adds `schedules` then). */
+const schedulesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'schedules',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('schedules')()
+  },
+  loader: pageLoader(() => [], [SchedulesPage.preload]),
+  component: SchedulesPage,
+})
+/** The old address of the Wiki: kept as a plain redirect to the add-on's page. */
+const wikiRedirectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'wiki',
   beforeLoad: () => {
-    if (!isRealHost()) throw redirect({ to: '/' })
-    serves('wiki')()
+    throw redirect({ to: '/addon/$name/$page', params: { name: 'wiki', page: 'wiki' } })
   },
-  loader: pageLoader(() => [], [WikiPage.preload]),
-  component: WikiPage,
 })
 const focusRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -360,7 +380,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, wikiRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, spacesRoute, activityRoute, usageRoute, schedulesRoute, wikiRedirectRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

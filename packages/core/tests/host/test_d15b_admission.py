@@ -22,10 +22,13 @@ from tests.model.world import World
 
 
 class _Store:
-    """The two reads ``ticket_fact`` makes of a store, over a replayed world (no files)."""
+    """The reads ``ticket_fact`` makes of a store, over a replayed world (no files)."""
 
     def __init__(self, world: World) -> None:
         self.w = world
+
+    def body_sections(self, uid: str) -> dict[str, str]:
+        return {}  # no body.md in a replayed world: the shared item carries no description
 
     def log_seq(self, log: str) -> int:
         return len(self.w.ws if log == "workspace" else self.w.tl[log])

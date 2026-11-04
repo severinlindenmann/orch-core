@@ -17,6 +17,7 @@ from orch.identity import wscard
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import ok
 from tests.host.human_helpers import err
+from tests.host.test_hub_ops import keystore  # noqa: F401
 from tests.hub.fake import FakeHub
 from tests.hub.tlshub import TlsHub
 from tests.hub.vec import V
@@ -120,7 +121,8 @@ def test_join_and_leave_over_the_real_tls_link(human, served, tls_hub):
     got = ok(served.client().req("hub.connect", args, idem=True))["data"]
     assert got["status"] == "bound" and got["hub_id"] == tls_hub.hub_id
     assert tls_hub.auth_verified.is_set() and "wsk_pub" in tls_hub.auth_frames[0]  # the first link of a join
-    assert [r["o"]["op"] for r in tls_hub.requests] == ["join", "snapshot_get"]  # then the first snapshot
+    ops = [r["o"]["op"] for r in tls_hub.requests]
+    assert ops[0] == "join" and ops[-1] == "snapshot_get" and "status_put" in ops  # R14b: the status lands too
     body = tls_hub.requests[0]["o"]["body"]
     assert body["binding"]["o"]["mode"] == "selective" and body["card"]["o"]["workspace_id"] == served.wid
     status = ok(served.client().req("hub.status", {}, idem=False))["data"]
@@ -156,6 +158,28 @@ def test_no_address_means_unreachable_and_a_retry_with_one_resumes(human, served
     assert got["status"] == "bound" and hub_binding_seq(served) == 1
 
 
+#: A P-256 scalar whose public key reads, in base64url, "...ghu_B1gu5c9sd_4KWWXuk5Pd7lUGe1lG3UrKHT...": the GitHub
+#: token shape. Random keys hit such a shape about once in 10^5; this one makes it happen every time.
+TOKEN_SHAPED_KEY = 0xF23F7D6D65F9742FA9B6A55FD3F736133907353B979EA89271DC59695BC4808D
+
+
+@pytest.mark.parametrize("mode", ["selective", "full"])
+def test_a_card_key_that_looks_like_a_token_still_connects(human, served, tls_hub, keystore, mode):  # noqa: F811
+    """The hub card's keys are random base64url: one may contain a token shape. The host redacts what it ANSWERS,
+    never the plan it still acts on: the card a connect verifies and sends is the card it was given."""
+    from orch.crypto import suite
+    from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
+    hxk = suite.private_key_from_scalar(TOKEN_SHAPED_KEY)
+    assert GITHUB_TOKEN_SHAPE.search(crypto.b64u(suite.public_bytes(hxk)))
+    card = make_card(tls_hub, now_ms(served), hxk=hxk)
+    human.run("hub.join", {"hub_card": card, "mode": mode})
+    args = {"invite": "invite-1", "hub_card": card, "addr": f"127.0.0.1:{tls_hub.port}"}
+    got = ok(served.client().req("hub.connect", args, idem=True))["data"]
+    assert got["status"] == "bound" and got["mode"] == mode
+    assert tls_hub.requests[0]["o"]["op"] == "join"
+
+
 def hub_binding_seq(served) -> int:
     store = served.lab.ws.other()
     try:
@@ -177,8 +201,11 @@ def test_a_bad_address_is_malformed(bad):
 
     with pytest.raises(HubRefused):
         parse_addr(bad)
-    assert parse_addr("hub.dev.example:8443") == ("hub.dev.example", 8443)
-    assert parse_addr("[::1]:9") == ("::1", 9)
+    assert (parse_addr("hub.dev.example:8443").host, parse_addr("hub.dev.example:8443").port) == (
+        "hub.dev.example",
+        8443,
+    )
+    assert (parse_addr("[::1]:9").host, parse_addr("[::1]:9").port) == ("::1", 9)
 
 
 # --- C3: the group snapshot is fetched, pinned and readable on the host ---------------------------------------------
@@ -263,6 +290,8 @@ def _race_rig(human, served, monkeypatch):
 
 
 def test_two_racing_refreshes_never_roll_the_pin_back(human, served, monkeypatch):
+    from orch.hubclient import HubRefused
+
     hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
     a, b = started_now(), started_now()  # both read hub.json before either fetched
     hub.set_snapshot(served.wid, {"11" * 16: "admin"})
@@ -274,7 +303,9 @@ def test_two_racing_refreshes_never_roll_the_pin_back(human, served, monkeypatch
     hub.workspaces[served.wid].snapshot = hub._snapshot(served.wid, 2, {"11" * 16: "admin"}, [])  # noqa: SLF001
     stale = started_now()
     stale.snapshot = None  # as if it started before any pin
-    fetch(stale)  # its own view says "newer" (no pin), but the merge under the lock sees version 3 on disk: no write
+    with pytest.raises(HubRefused) as e:  # GA-07: the floor (3) outlives the pin, so version 2 is refused outright
+        fetch(stale)
+    assert e.value.code == "stale_snapshot"
     assert hubops._load_state(service).snapshot["o"]["version"] == 3  # noqa: SLF001
     assert hubops.hub_role(service, "22" * 16) == "read"
 
@@ -312,3 +343,139 @@ def test_an_equal_card_with_other_content_does_not_overwrite_the_disk(human, ser
     with pytest.raises(HubRefused) as e:
         hubops._save_snapshot(service, b)  # noqa: SLF001
     assert e.value.code == "stale_card" and hubops._load_state(service).tls_spki == pin(2)  # noqa: SLF001
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_hub_snapshot_status_once_when_delivered_and_retried_when_not(monkeypatch, fail):
+    from types import SimpleNamespace
+
+    import orch
+    import orch.hubclient
+
+    calls = []
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            calls.append((op, body))
+            if fail:
+                raise RuntimeError("old transport does not know status_put")
+
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    transport = object()
+    monkeypatch.setattr(hubops, "_transport", lambda *args: transport)
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
+    import socket
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "h" * 100)
+    monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Acme")
+    state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="full", hub_id="one")
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state")
+    for _ in range(2):
+        assert hubops._snapshot_link(service, state, b"", None, True)[1] is transport
+    body = {"version": orch.__version__, "commit": "", "host": "h" * 80, "name": "Acme"}
+    # delivered: once; a failure (logged, never raised) is retried on the next link use
+    assert calls == [("status_put", body)] * (2 if fail else 1)
+    if not fail:
+        monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Renamed")
+        hubops._snapshot_link(service, state, b"", None, True)  # a changed name is sent again
+        assert calls[-1] == ("status_put", {**body, "name": "Renamed"}) and len(calls) == 2
+        monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Acme")
+        calls.clear()
+        service.__dict__.pop("_hub_status_sent")  # a (re)connect clears the mark
+        hubops._snapshot_link(service, state, b"", None, True)
+        assert len(calls) == 1
+        calls.clear()
+    else:
+        calls.clear()
+    state.hub_id = "two"
+    hubops._snapshot_link(service, state, b"", None, True)
+    assert len(calls) == 1
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state")
+    hubops._snapshot_link(service, state, b"", None, True)
+    assert len(calls) == 2
+
+
+def test_selective_status_sends_the_workspace_name_but_no_host_name(monkeypatch):
+    from types import SimpleNamespace
+
+    import orch.hubclient
+
+    calls = []
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            calls.append(body)
+
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    monkeypatch.setattr(hubops, "_transport", lambda *args: object())
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
+    monkeypatch.setattr(hubops, "_workspace_name", lambda service: "Anna Test's workspace")
+    state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="selective", hub_id="one")
+    hubops._snapshot_link(
+        SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state"), state, b"", None, True
+    )
+    assert calls and calls[0]["host"] == "" and calls[0]["version"]
+    assert calls[0]["name"] == "Anna Test's workspace"
+
+
+def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypatch):
+    from types import SimpleNamespace
+
+    import orch.hubclient
+
+    calls = []
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            calls.append((op, body))
+
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    links = []
+    monkeypatch.setattr(hubops, "_transport", lambda service, hub_id, link=None: links.append(link) or object())
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
+    monkeypatch.setattr(hubops, "_wsk_sign", lambda service: (b"", None))
+    monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+    state = SimpleNamespace(
+        hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="full", hub_id="one", status="bound"
+    )
+    monkeypatch.setattr(hubops, "_load_state", lambda service: state)
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0, state_dir="/nonexistent-state")
+    hubops.report_addon_request(service, "wiki", "1.2.0", "agent")
+    hubops.report_addon_request(service, "Not A Name")  # a malformed name is never sent
+    hubops.report_addon_request(service, "wiki", "x" * 40)  # a malformed version is sent empty
+    sent = [c for c in calls if c[0] == "addon_request"]
+    assert sent == [
+        ("addon_request", {"name": "wiki", "version": "1.2.0", "actor": "agent"}),
+        ("addon_request", {"name": "wiki", "version": "", "actor": "person"}),
+    ]
+    assert links and all(
+        link["timeout"] == hubops.ADDON_REQUEST_TIMEOUT_S <= 5 for link in links
+    )  # short: the refused install waits
+    state.status = "unbound"  # not bound: nothing is sent
+    hubops.report_addon_request(service, "wiki")
+    assert len([c for c in calls if c[0] == "addon_request"]) == 2
+
+
+def test_hub_leave_and_connect_drop_the_agent_events_position(human, served, monkeypatch):
+    """HUB-AC-03: the real ops forget the position, so deleting the hubops calls fails this test."""
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    pos = served.service.__dict__.setdefault("_agent_events_pos", {})
+    pos["old"] = {"init": True, "logs": {"workspace": 9}}
+    ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))
+    assert "old" not in pos  # a (re)connect starts the agent events at the end of every log
+    pos["old"] = {"init": True, "logs": {"workspace": 9}}
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
+    assert "old" not in pos

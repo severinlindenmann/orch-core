@@ -64,7 +64,7 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
             <span>Changes</span>
             {b && (
               <Mono className="text-text-muted">
-                {b.name} against {b.base}
+                {b.base ? `${b.name} against ${b.base}` : b.name /* W23: never an empty "against" */}
               </Mono>
             )}
           </span>

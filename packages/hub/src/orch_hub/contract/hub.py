@@ -14,10 +14,13 @@ import struct
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from . import hooks as HK
 from . import suite as S
 from .canon import CanonError, b64u, cj, loads_strict, unb64u, unhex
 from .labels import EVENT_TYPE, L, custodial_label
 from .market_policy import valid_policy
+from .org_bundles import valid_org_mcp, valid_org_skills
+from .org_secrets import valid_org_secrets
 
 HV = 0  # hub contract version (H0)
 CONTRACT_NAME = "orch.hub/0"
@@ -77,12 +80,41 @@ def device_id(dk_sig_pub: bytes) -> str:
 Check = Callable[[Any], bool]
 
 
+_BY = re.compile(r"^(person|agent):[A-Za-z0-9_-]{1,64}$")
+
+
+def space_item_body_ok(b: Any) -> bool:
+    """Mirror of orch.hubclient.wire.space_item_body_ok: ``{name, size, data, by}``, ``by`` required, optional
+    ``restored_from`` (an item id)."""
+    if type(b) is not dict or not {"name", "size", "data", "by"} <= set(b) <= {
+        "name",
+        "size",
+        "data",
+        "by",
+        "restored_from",
+    }:
+        return False
+    return (
+        type(b["name"]) is str
+        and type(b["size"]) is int
+        and b["size"] >= 0
+        and type(b["data"]) is str
+        and type(b["by"]) is str
+        and _BY.fullmatch(b["by"]) is not None
+        and ("restored_from" not in b or _hex16(b["restored_from"]))
+    )
+
+
 def _hex16(x: Any) -> bool:
     try:
         unhex(x, 16)
         return True
     except CanonError:
         return False
+
+
+def _hex32(x: Any) -> bool:
+    return type(x) is str and re.fullmatch(r"[0-9a-f]{32}", x) is not None
 
 
 def _pub(x: Any) -> bool:
@@ -113,6 +145,76 @@ def _b64u_any(x: Any) -> bool:
 
 def _int_min(lo: int) -> Check:
     return lambda x: type(x) is int and x >= lo
+
+
+#: the closed set of event type words a workspace may report (what orch.host.agentevents sends; "event" = any other)
+AGENT_EVENT_KINDS = frozenset(
+    {
+        "artifact.added",
+        "artifact.replaced",
+        "branch.pushed",
+        "event",
+        "followup.cancelled",
+        "followup.fired",
+        "followup.outcome",
+        "followup.rescheduled",
+        "followup.restored",
+        "followup.set",
+        "gate.approved",
+        "gate.changes_requested",
+        "gate.invalidated",
+        "grant.issued",
+        "grant.requested",
+        "grant.revoked",
+        "handoff.written",
+        "question.answered",
+        "question.asked",
+        "status.changed",
+        "ticket.closed",
+        "ticket.created",
+        "ticket.moved",
+        "ticket.reopened",
+        "ticket.submitted",
+        "ticket.updated",
+        "verdict.given",
+    }
+)
+_AGENT_NAME = re.compile(r"[0-9A-Za-z][0-9A-Za-z._:@-]*")
+_TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-[0-9]{1,9}")
+AGENT_EVENTS_MAX = 50
+
+
+def _agent_event(x: Any) -> bool:
+    return (
+        type(x) is dict
+        and set(x) == {"kind", "ts_ms", "agent", "ticket"}
+        and type(x["kind"]) is str
+        and x["kind"] in AGENT_EVENT_KINDS
+        and type(x["ts_ms"]) is int
+        and x["ts_ms"] >= 0
+        and type(x["agent"]) is str
+        and len(x["agent"]) <= 64
+        and _AGENT_NAME.fullmatch(x["agent"]) is not None
+        and type(x["ticket"]) is str
+        and (x["ticket"] == "" or _TICKET_KEY.fullmatch(x["ticket"]) is not None)
+    )
+
+
+def _agent_events(x: Any) -> bool:
+    return type(x) is list and 1 <= len(x) <= AGENT_EVENTS_MAX and all(_agent_event(e) for e in x)
+
+
+def _utc_day(x: Any) -> bool:
+    """A calendar day as ``YYYY-MM-DD`` (UTC), a real date."""
+    import datetime
+
+    if type(x) is not str or re.fullmatch(r"\d{4}-\d{2}-\d{2}", x) is None:
+        return False
+    try:
+        datetime.date.fromisoformat(x)
+    except ValueError:
+        return False
+    return True
 
 
 def _enum(*vals: Any) -> Check:
@@ -189,7 +291,45 @@ FIELDS: dict[str, dict[str, Check]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "ends_ms": lambda x: type(x) is dict,  # GA-07 (protocol.md §7): {user_id: ms}, checked in verify_snapshot
         "market_policy": valid_policy,  # D14: required, never null (protocol.md §7.1)
+        "dev": _bool,
+    },
+    "hub.closing": {  # #1463 (protocol 9.7): the hub is being removed; shown to ONE workspace's owner, never acted on alone
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "binding_seq": _int_min(1),
+        "removal_id": _hex16,
+        "issued_ms": _int_min(0),
+        "ends_ms": _int_min(1),
+        "dev": _bool,
+    },
+    "hub.org_skills": {  # M3 (#1430): the company skills offered to one workspace; Off until its owner accepts
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "skills": valid_org_skills,
+        "dev": _bool,
+    },
+    "hub.mcp_servers": {  # M3 (#1435): the remote MCP servers offered to one workspace; Off until its owner accepts
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "servers": valid_org_mcp,
+        "dev": _bool,
+    },
+    "hub.org_secrets": {  # M3 (#1431): company secrets sealed (in the admin's browser) to one workspace's key
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "secrets": valid_org_secrets,
         "dev": _bool,
     },
     "hub.binding": {
@@ -267,7 +407,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "item_id": _hex16,
         "workspace_id": _hex16,
         "created_ms": _int_min(0),
-        "body": lambda x: type(x) is dict,
+        "body": lambda x: space_item_body_ok(x),
         "dev": _bool,
     },
     # p4 (§6.3): what a new channel key signs to prove possession at registration (signed by that key)
@@ -342,12 +482,53 @@ FIELDS: dict[str, dict[str, Check]] = {
         "expires_ms": _int_min(1),
         "dev": _bool,
     },
+    # hub_id is null on the direct (12.1) path; access is what the request grants: any of the four app accesses (M4)
     "hub.publish_approval": {
         "workspace_id": _hex16,
-        "hub_id": _hex16,
+        "hub_id": lambda x: x is None or _hex16(x),
         "device_id": _hex16,
         "request_hash": _b64u_n(32),
-        "access": _enum("public"),
+        "access": _enum("public", "password", "company", "group"),
+    },
+    # M4 (#1357, section 11.5): a hub admin's narrowing of a share or an app at orch-publish (HK_op)
+    "hub.release_narrow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "target": _enum("share", "app"),
+        "id": _hex32,
+        "action": _enum("revoke", "stop"),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u_n(32),
+    },
+    # P02 (#1290, section 11.9): the hub admits ONE of its own workspaces for ONE owner at ONE binding_seq (HK_op)
+    "hub.allow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "owner_person_id": _hex16,
+        "binding_seq": _int_min(1),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u_n(32),
+    },
+    # #1838 (section 10.9.1): where this hub's workspaces publish and share, signed by HK_op. The origins are checked
+    # (and canonicalised) by ``publish_where.check_publish_where``; here only that they are strings.
+    "hub.publish_where": {
+        "hub_id": _hex16,
+        "server": lambda x: type(x) is str,
+        "share": lambda x: type(x) is str,
+        "seq": _int_min(1),
+        "issued_ms": _int_min(0),
+        "dev": _bool,
+    },
+    # M4 (section 11.8): the hub's single-use pass into a company or group app (HK_op); no person id, no user id
+    "hub.app_pass": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "app_id": _hex32,
+        "audience": lambda x: (
+            type(x) is str and re.fullmatch(r"company|group:[a-z0-9][a-z0-9_-]{0,39}|ws:[0-9a-f]{32}", x) is not None
+        ),
+        "nonce": _b64u_n(32),
+        "exp_ms": _int_min(1),
     },
 }
 
@@ -358,9 +539,17 @@ LABEL_OF_KIND = {
     "hub.uk_cert": "sig_hub_uk_cert",
     "hub.channel_cert": "sig_hub_channel_cert",
     "hub.snapshot": "sig_hub_snapshot",
+    "hub.closing": "sig_hub_closing",
+    "hub.org_skills": "sig_hub_org_skills",
+    "hub.mcp_servers": "sig_hub_mcp_servers",
+    "hub.org_secrets": "sig_hub_org_secrets",
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
+    "hub.release_narrow": "sig_hub_release_narrow",
+    "hub.app_pass": "sig_hub_app_pass",
+    "hub.allow": "sig_hub_allow",
+    "hub.publish_where": "sig_hub_publish_where",
     "hub.owner_proof": "sig_hub_owner_proof",
     "hub.space": "sig_hub_space",
     "hub.space_wrap": "sig_hub_space_wrap",
@@ -597,6 +786,11 @@ def verify_snapshot(
         raise Refused("malformed")
     if any(not _hex16(c) for c in revoked) or revoked != sorted(set(revoked)):
         raise Refused("malformed")
+    ends = o["ends_ms"]
+    if any(
+        not _hex16(u) or u not in roles or type(t) is not int or not o["issued_ms"] < t < 2**53 for u, t in ends.items()
+    ):
+        raise Refused("malformed")  # GA-07: only users that have a role; each end is an int after the issue time
     if o["workspace_id"] != workspace_id:
         raise Refused("other_workspace")
     if pinned is not None:
@@ -607,6 +801,121 @@ def verify_snapshot(
                 raise Refused("snapshot_conflict")
             return dict(pinned)
     return o
+
+
+#: a snapshot issued more than this far ahead of the verifier's clock is not trusted for any user with an end date (R6)
+SNAPSHOT_SKEW_MS = 5 * 60 * 1000
+
+
+def role_at(snapshot: Mapping[str, Any], user_id: str, now_ms: int) -> str | None:
+    """THE role of ``user_id`` in a verified snapshot object at ``now_ms`` (GA-07). A user listed in ``ends_ms`` has no role
+    from that time on (fail closed: the true role may only have been lowered, a fresher snapshot says), and none at all when
+    the snapshot claims to be issued more than 5 minutes ahead of this clock (a host clock set back must not extend access).
+    Hub and host use this one rule for every role decision."""
+    role = snapshot["roles"].get(user_id)
+    end = snapshot["ends_ms"].get(user_id)
+    if role is None or end is None:
+        return role
+    if now_ms >= end or snapshot["issued_ms"] > now_ms + SNAPSHOT_SKEW_MS:
+        return None
+    return role
+
+
+#: §9.7: a closing notice lives at most 7 days from its issue
+CLOSING_MAX_MS = 7 * 24 * 3600 * 1000
+
+
+def verify_closing(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    binding_seq: int,
+    now_ms: int,
+    dev_mode: bool,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """§9.7: the ``hub.closing`` notice a host checks. ``held`` is the verified card, ``workspace_id`` and
+    ``binding_seq`` the host's own CURRENT binding. Order: envelope, signature, fields, hub, op cert, dev marker, then
+    ``other_workspace``, ``stale_binding`` (any other ``binding_seq``), ``cert_invalid`` (issued more than 300 s ahead,
+    ``ends_ms`` not after ``issued_ms`` or more than 7 days after it), ``cert_expired`` (``now >= ends_ms``). Returns
+    the verified object; a pure function, nothing is stored."""
+    o = _under_card(signed, "hub.closing", held, dev_mode, revoked_op_certs)
+    if now_ms >= held["op_cert"]["expires_ms"]:
+        raise Refused(
+            "cert_expired"
+        )  # the op cert that signed it has ended (checked at every use, like a snapshot's card)
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if type(binding_seq) is not int or o["binding_seq"] != binding_seq:
+        raise Refused("stale_binding")
+    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS or not o["issued_ms"] < o["ends_ms"] <= o["issued_ms"] + CLOSING_MAX_MS:
+        raise Refused("cert_invalid")
+    if now_ms >= o["ends_ms"]:
+        raise Refused("cert_expired")
+    return o
+
+
+def _verify_bundle(
+    kind: str,
+    signed: Any,
+    held: Mapping[str, Any],
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str],
+) -> dict[str, Any]:
+    o = _under_card(signed, kind, held, dev_mode, revoked_op_certs)
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if pinned is not None:
+        if o["version"] < pinned["version"]:
+            raise Refused("stale_bundle")
+        if o["version"] == pinned["version"]:
+            if cj(o) != cj(pinned):
+                raise Refused("bundle_conflict")
+            return dict(pinned)
+    return o
+
+
+def verify_org_skills(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """M3 condition 1: a bundle names this hub and this workspace, is signed by HK_op under the verified card, and its
+    ``version`` never goes down (``pinned`` is the bundle the host holds). Same version, different bytes is a conflict."""
+    return _verify_bundle("hub.org_skills", signed, held, workspace_id, dev_mode, pinned, revoked_op_certs)
+
+
+def verify_org_mcp(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """The same rules for ``hub.mcp_servers`` (M3 #1435): remote servers only, offered, never enabled."""
+    return _verify_bundle("hub.mcp_servers", signed, held, workspace_id, dev_mode, pinned, revoked_op_certs)
+
+
+def verify_org_secrets(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """The same rules for ``hub.org_secrets`` (M3 #1431): the wraps of ONE workspace; the hub cannot open them."""
+    return _verify_bundle("hub.org_secrets", signed, held, workspace_id, dev_mode, pinned, revoked_op_certs)
 
 
 # --- UK: the custodial event ----------------------------------------------------------------------------------------
@@ -653,6 +962,8 @@ CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
     ("people.changed", "ticket"): "admin",
     ("addon.disabled", "workspace"): "admin",
     ("addon.purged", "workspace"): "admin",
+    # FB15 (§8.8b): the owner's ask to turn an add-on on; the host answers with a host-actor ``addon.granted``
+    ("addon.requested", "workspace"): "admin",
     # phase 5 (§8.8, C10 M6; owner V3-D29). The host makes the grant secret itself: it admits
     # ``grant.requested`` and appends a host-actor ``grant.issued`` naming it (``grant.issued`` stays not custodial).
     ("grant.requested", "workspace"): "edit",
@@ -810,7 +1121,7 @@ def verify_custodial(
         if type(item) is not dict or type(item.get("chain")) is not dict or type(item.get("f1")) is not dict:
             raise Refused("not_granted")
         _selective_item(event, log, item["chain"], item["f1"], log_heads)
-    elif snapshot["roles"].get(user) not in ROLES:
+    elif role_at(snapshot, user, now_ms) not in ROLES:
         raise Refused("forbidden_role")
     # 7b. the closed list of custodial types and the lowest role per type (p4, §8.5; selective: owner-granted users,
     # and still only custodial types)
@@ -819,12 +1130,12 @@ def verify_custodial(
     if mode == "selective":
         floor = MEMBER_ROLE_FLOOR.get(member_roles.get(user, "viewer"))  # unknown role -> None -> forbidden_role
     else:
-        floor = snapshot["roles"].get(user)
+        floor = role_at(snapshot, user, now_ms)
     check_custodial_role(typ, log, floor)
     # 8. D66 factor policy
     if min_factor is not None and FACTOR_RANK[event["channel_factor"]] < FACTOR_RANK[min_factor]:
         raise Refused("factor_too_weak")
-    return {"user_id": user, "channel": event["channel"], "role": snapshot["roles"].get(user)}
+    return {"user_id": user, "channel": event["channel"], "role": role_at(snapshot, user, now_ms)}
 
 
 def _selective_item(
@@ -1306,8 +1617,56 @@ def check_recorded_owner_proof(
 # --- link messages ------------------------------------------------------------------------------------------------
 
 #: op -> (direction of the request, mode it exists in or None for both, exact body fields)
+#: body members a request may leave out (everything else in LINK_OPS is required)
+PROFILE_FIELDS: dict[str, Check] = {
+    "listed": _bool,
+    "tags": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 24 for v in x),
+    "handles": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 80 for v in x),
+    "not_handled": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 80 for v in x),
+    "accepts": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 24 for v in x),
+    "description": lambda x: type(x) is str and len(x) <= 300,
+    "contact": lambda x: type(x) is str and len(x) <= 80,
+    "languages": lambda x: type(x) is str and len(x) <= 40,
+    "hours": lambda x: type(x) is str and len(x) <= 40,
+}
+
+LINK_OPTIONAL: dict[str, frozenset[str]] = {
+    "join": frozenset({"alias_users"}),
+    "directory_get": frozenset({"query"}),
+    "hook_put": frozenset({"replaces"}),
+}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
+    # R4 (#1592, protocol 10.2c): the only stream op that is a request/reply pair. The hub sends it (h2w) and the
+    # host answers with a w2h reply (same op, ``re`` = its seq, body ``{}`` or ``{"error": code}``). A w2h
+    # ``stream_open`` request is therefore ``unknown_op`` here. ``stream_data`` / ``stream_close`` are one-way in both
+    # directions and live in ``remote.STREAM_OPS`` (``remote.verify_stream_link``), never in this table.
+    "stream_open": (
+        "h2w",
+        None,
+        {
+            "stream_id": _hex16,
+            "device_id": lambda x: type(x) is str and re.fullmatch(r"r[dc]_[0-9a-f]{32}", x) is not None,
+            "kind": lambda x: x in ("session", "enroll"),
+        },
+    ),
     "snapshot_get": ("w2h", None, {}),
+    # #1463 (protocol 9.7, 10.2): the removal notice. The hub pushes ``closing_notice`` (h2w, body ``{"notice"}``, reply
+    # ``{}``); a host pulls ``closing_get`` (w2h, ``{}``, reply ``{"closing": <hub.closing> | null}``) on every link session.
+    "closing_notice": ("h2w", None, {"notice": lambda x: type(x) is dict}),
+    "closing_get": ("w2h", None, {}),
+    "hub_where": (
+        "w2h",
+        None,
+        {},
+    ),  # M4 (#1461, protocol 10.9): the addresses the hub advertises and its name (unsigned)
+    "mcp_servers_get": ("w2h", None, {}),  # M3 (#1435): the signed hub.mcp_servers of the link's workspace
+    "org_skills_get": ("w2h", None, {}),  # M3 (#1430): the signed hub.org_skills of the link's workspace
+    "org_secrets_get": ("w2h", None, {}),  # M3 (#1431): the signed hub.org_secrets of the link's workspace
+    "secret_use": (  # M3 (#1433): counts only: how often a secret was used on one UTC day ("YYYY-MM-DD"), bounded
+        "w2h",
+        None,
+        {"secret_id": _hex16, "day": _utc_day, "n": _int_min(0)},
+    ),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),
     "route_in": ("h2w", None, {"envelope": _b64u_any}),
@@ -1322,6 +1681,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "pk_pub": _pub,
             "binding": lambda x: type(x) is dict,
             "owner_proof": lambda x: x is None or type(x) is dict,  # #1198 C9: required member; null is proof_missing
+            # optional (run 12): the hub users the owner-signed aliases name; the hub holds them to the invite's owner
+            "alias_users": lambda x: type(x) is list and all(type(u) is str for u in x),
         },
     ),
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
@@ -1336,8 +1697,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
         },
     ),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
-    "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
-    "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
+    "share_put": ("w2h", None, {"item_id": _hex16, "sealed": _b64u_any}),
+    "share_revoke": ("w2h", None, {"item_id": _hex16}),
     # D4 audit (§10.5): the hub's chain is global; a workspace pulls it and acknowledges the head it verified
     "audit_get": ("w2h", None, {"since": _int_min(0)}),
     # V3-D8 shared spaces (§10.4): both modes; what a selective workspace may put is its owner's share rules (host side)
@@ -1348,6 +1709,65 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "space_get": ("w2h", None, {"space_id": _hex16, "since": _int_min(0)}),
     # p4 (§10.4, #1020): the pending hub.space_proposal objects that name the link's workspace
     "space_proposals": ("w2h", None, {}),
+    # hub one-app (TECH.md 27 Oct): the browser switch between a workspace dashboard and the hub console
+    "switch_ticket": (
+        "w2h",
+        None,
+        {
+            "origin": lambda x: type(x) is str,
+            "return_to": lambda x: type(x) is str,
+            "kind": lambda x: x in ("open", "signout"),
+        },
+    ),
+    "switch_redeem": ("w2h", None, {"ticket": lambda x: type(x) is str}),
+    "rail_get": ("w2h", None, {"origin": lambda x: type(x) is str}),
+    "profile_put": ("w2h", None, PROFILE_FIELDS),
+    "directory_get": ("w2h", None, {"query": lambda x: type(x) is str and len(x) <= 80}),
+    # HUB-AC-03 (#1426): what agents did in the workspace, four references per event, never content (protocol 10.10)
+    "agent_events": (
+        "w2h",
+        "full",  # selective mode never tells the hub about tickets that were not shared (D80)
+        {"events": _agent_events},
+    ),
+    # #1285 (protocol 10.11): the public webhook inbox. Doorbell only; every op is scoped to the link's workspace
+    "hook_put": (
+        "w2h",
+        None,
+        {
+            "token_hash": HK.HASH_RE_CHECK,
+            "followup": lambda x: type(x) is str and HK.FOLLOWUP_RE.fullmatch(x) is not None,
+            "source": _enum(*HK.SOURCES),
+            "secret": lambda x: type(x) is str and HK.SECRET_RE.fullmatch(x) is not None,
+            "expires_ms": _int_min(1),
+            "replaces": HK.HASH_RE_CHECK,
+        },
+    ),
+    "hook_revoke": ("w2h", None, {"token_hash": HK.HASH_RE_CHECK}),
+    "hook_pull": ("w2h", None, {"since": _int_min(0)}),
+    "hook_ack": ("w2h", None, {"seq": _int_min(1)}),
+    "status_put": (
+        "w2h",
+        None,
+        {
+            "version": lambda x: type(x) is str and len(x) <= 32 and re.fullmatch(r"[0-9A-Za-z.+-]+", x) is not None,
+            "commit": lambda x: type(x) is str and len(x) <= 40 and re.fullmatch(r"[0-9a-fA-F]*", x) is not None,
+            "host": lambda x: type(x) is str and len(x) <= 80,
+            "name": lambda x: type(x) is str and len(x) <= 80,  # the workspace's display name; kept in full mode only
+        },
+    ),
+    # M3 (#1450): a host tells the hub an add-on install was refused by the policy; display data, never an authority
+    "addon_request": (
+        "w2h",
+        None,
+        {
+            "name": lambda x: type(x) is str and re.fullmatch(r"[a-z][a-z0-9-]{0,39}", x) is not None,
+            "version": lambda x: type(x) is str and re.fullmatch(r"[0-9A-Za-z.+-]{0,32}", x) is not None,
+            "actor": lambda x: x in ("person", "agent"),  # who asked at the host (the host knows; shown, never trusted)
+        },
+    ),
+    "shared_get": ("w2h", None, {}),  # P02: the shared tickets readable by the calling workspace's owner (display data)
+    "audience_get": ("w2h", None, {}),  # P02: the hub people and teams the owner may name as readers of a shared ticket
+    "owner_get": ("w2h", None, {}),  # FB15: the hub user the hub names as the workspace owner (no argument)
     # p4 (§10.7): the hub's WK_e-sealed view of one workspace log; full mode only (selective: the hub holds no WK_e)
     "log_sync": (
         "w2h",
@@ -1369,14 +1789,40 @@ def link_label(direction: str) -> bytes:
     return L["sig_hub_link"] if direction == "w2h" else L["sig_hub_route"]
 
 
+def link_signed_bytes(direction: str, exporter: bytes, o: Mapping[str, Any]) -> bytes:
+    """What a ``hub.link`` message signature covers (§10.2, R1): ``label || exporter || cj(o)``. ``exporter`` is this
+    connection's 32-byte TLS exporter (§10.1); it is never sent, so a message is valid on one connection only. The
+    fixed-length prefix makes the input parse one way."""
+    if type(exporter) is not bytes or len(exporter) != 32:
+        raise Refused("malformed")
+    try:
+        return link_label(direction) + exporter + cj(o)
+    except CanonError:
+        raise Refused("malformed") from None
+
+
 def verify_link(
-    signed: Any, *, direction: str, hub_id_: str, workspace_id: str, mode: str, pub: bytes, now_ms: int
+    signed: Any,
+    *,
+    direction: str,
+    hub_id_: str,
+    workspace_id: str,
+    mode: str,
+    pub: bytes,
+    now_ms: int,
+    exporter: bytes,
 ) -> dict[str, Any]:
-    """``pub`` is WSK for w2h (checked by the hub) and the card's HK_op for h2w (checked by the host). Requests are
-    messages with ``re: null`` in the op's request direction; a reply has ``re`` = the request's ``seq`` and the other
-    direction, and its body is either the op's reply body or ``{"error": code}`` (not validated in H0)."""
+    """``pub`` is WSK for w2h (checked by the hub) and the card's HK_op for h2w (checked by the host); ``exporter`` is
+    the TLS exporter of the connection the message arrived on. Requests are messages with ``re: null`` in the op's
+    request direction; a reply has ``re`` = the request's ``seq`` and the other direction, and its body is either the
+    op's reply body or ``{"error": code}`` (not validated in H0). The ``seq`` counter is the caller's (§10.2 step 7)."""
     o = _envelope(signed, "hub.link")
-    _signature(signed, link_label(direction), pub)
+    try:
+        sig = unb64u(signed["sig"], S.SIG_LEN)
+    except CanonError:
+        raise Refused("malformed") from None
+    if not S.verify(pub, sig, link_signed_bytes(direction, exporter, o)):
+        raise Refused("bad_signature")
     _fields(o, "hub.link")
     if o["dir"] != direction:
         raise Refused("malformed")
@@ -1395,7 +1841,11 @@ def verify_link(
         raise Refused("other_workspace")
     if abs(now_ms - o["ts_ms"]) > LINK_WINDOW_MS:
         raise Refused("stale_timestamp")
-    if is_request and (set(o["body"]) != set(body) or not all(ok(o["body"][k]) for k, ok in body.items())):
+    optional = LINK_OPTIONAL.get(o["op"], frozenset())
+    if is_request and (
+        not set(body) - optional <= set(o["body"]) <= set(body)
+        or not all(ok(o["body"][k]) for k, ok in body.items() if k in o["body"])
+    ):
         raise Refused("malformed")
     return o
 
@@ -1695,8 +2145,11 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
     seen[nonce.hex()] = now_ms + NONCE_RETENTION_MS
     # 9. the owner's approval (V3-D4): required for public access; verified whenever present
     if approval is None:
-        if req.get("access") == "public":
-            raise Refused("approval_required")
+        from .published import app_route  # late: published imports this module
+
+        route = app_route(req["method"], req["target"].partition("?")[0])
+        if req.get("access") == "public" or (route is not None and route["approval"]):
+            raise Refused("approval_required")  # an app commit, rollback or start never goes live unapproved (M4)
         return {"workspace": wsx, "hub": hub, "approved": False}
     verify_approval(
         approval,
@@ -1716,20 +2169,6 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
 ADMIN_READ_WINDOW_MS = 120_000
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 ADMIN_TARGET_MAX = 2048
-#: The metadata an admin read may return per release, and nothing else (never content or secrets).
-ADMIN_READ_ROW: dict[str, Check] = {
-    "workspace_id": _hex16,
-    "release_id": lambda x: type(x) is str and 0 < len(x) <= 64,
-    "kind": lambda x: type(x) is str and 0 < len(x) <= 32,
-    "state": lambda x: type(x) is str and 0 < len(x) <= 32,
-    "created_ms": _int_min(0),
-    "expires_ms": lambda x: x is None or _int_min(0)(x),
-    "revoked": _bool,
-    "bytes": _int_min(0),
-    "public_url": lambda x: x is None,  # hv 0: orch-publish has no public kind; see protocol.md §10.6
-}
-
-
 ADMIN_READ_PATH = "/v2/hub/releases"
 
 
@@ -1751,18 +2190,6 @@ def parse_admin_target(target: Any) -> str | None:
     if k != "workspace" or not eq or not _HEX32.fullmatch(v):
         raise Refused("malformed")
     return v
-
-
-def check_admin_rows(rows: list[Any], scope: list[str]) -> list[dict[str, Any]]:
-    """Every row the data layer returns is checked against the scope after routing: a row of a workspace outside it
-    is never emitted (``not_bound``), whatever the target resolved to (L2P-5)."""
-    out = []
-    for r in rows:
-        check_admin_read_row(r)
-        if r["workspace_id"] not in scope:
-            raise Refused("not_bound")
-        out.append(r)
-    return out
 
 
 def admin_read_bytes(hub_id_: str, ts_ms: int, method: str, target: str) -> bytes:
@@ -1830,14 +2257,3 @@ def check_admin_read(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: i
     if named is not None and named not in scope:
         raise Refused("not_bound")
     return {"hub": hub, "workspaces": scope}
-
-
-def check_admin_read_row(row: Any) -> dict[str, Any]:
-    """The only shape of a release row an admin read returns."""
-    if (
-        type(row) is not dict
-        or set(row) != set(ADMIN_READ_ROW)
-        or not all(ok(row[k]) for k, ok in ADMIN_READ_ROW.items())
-    ):
-        raise Refused("malformed")
-    return row

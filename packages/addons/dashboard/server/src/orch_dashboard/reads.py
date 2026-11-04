@@ -352,7 +352,7 @@ def media(data: bytes) -> dict | None:
 
     if data.startswith(b"\x89PNG\r\n\x1a\n") or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
         try:
-            kind = "png" if imagecheck.check(data) == "image/png" else "webp"
+            kind = "png" if imagecheck.check(data, display=True) == "image/png" else "webp"
         except imagecheck.ImageRefused:
             return None
     elif data.startswith(b"\xff\xd8\xff"):
@@ -395,9 +395,6 @@ def register(app: FastAPI, gateway: Gateway):
         closed = []
         if any(n.get("status") == "closed" for n in data["items"]):
             closed, _ = all_rows(gateway, ws, {"status": ["closed"], "sort": "updated"})
-        from .hubapprove import HUB_ONLY, mode_of
-
-        sign = "hub" if mode_of(gateway, ws) in HUB_ONLY else None  # V3 C11: full hub mode, approved elsewhere
         return adapters.today(
             data,
             rows,
@@ -407,7 +404,6 @@ def register(app: FastAPI, gateway: Gateway):
             role,
             recent_activity(gateway, ws),
             closed,
-            sign,
             waiting_runs(gateway, ws),
         )
 

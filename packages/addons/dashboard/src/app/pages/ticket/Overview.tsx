@@ -9,8 +9,10 @@ import { ArtifactImagesContext } from '@/addon-ui/artifactImagesContext'
 import { useTicketPictures } from '@/addon-ui/artifactImages'
 import { BlockProblem, ErrorBoundary } from '@/components/ErrorBoundary'
 import { cn } from '@/lib/utils'
-import { ago, Pill, type TabProps } from './shared'
+import { Ago, Pill, type TabProps } from './shared'
 import { EditTicket } from './EditTicket'
+import { LastWorkCard } from './Work'
+import { isRealHost } from '@/api/features'
 import { resolveTicketWidgets, type Segment, type WidgetSpec } from './widgets/parse'
 import { WidgetBlock, type PrototypeOf } from './widgets/WidgetBlock'
 import { queries } from '@/api/queries'
@@ -135,6 +137,7 @@ export function Overview({ ticket, jump, viewer }: TabProps) {
       <div className="flex justify-end">
         <EditTicket ticket={ticket} viewer={viewer} />
       </div>
+      {!isRealHost() && <LastWorkCard ticket={ticket.key} onSeeAll={() => jump({ tab: 'work' })} />}
       {shown.map((key) => {
         const handoff = key === 'current_state'
         return (
@@ -148,7 +151,7 @@ export function Overview({ ticket, jump, viewer }: TabProps) {
                 {handoff && <NotebookPen className="mr-1.5 inline size-4 text-brand" aria-hidden />}
                 {sectionTitle(key, ticket.type)}
               </h2>
-              {handoff && <Pill tone="brand">handoff{handoffAt ? ` · ${ago(handoffAt)}` : ''}</Pill>}
+              {handoff && <Pill tone="brand">handoff{handoffAt ? <> · <Ago at={handoffAt} /></> : null}</Pill>}
             </div>
             <SectionBody
               key={ticket.key}

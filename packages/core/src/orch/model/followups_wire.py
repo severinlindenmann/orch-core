@@ -1,0 +1,394 @@
+"""Ledger wiring for the pure follow-up rules; no clocks or I/O."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from . import claims, identity
+from . import followup_events as fe
+from . import followups as fu
+from .codes import Code, Refusal
+from .types import Core, FollowupRec, Grant, TCore, WsCore, ts
+
+
+def stamp(at: int) -> str:
+    """The canonical ledger timestamp of epoch seconds (UTC, ``Z``, no fraction); ``ts`` reads it back."""
+    return datetime.fromtimestamp(at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def canonical_ts(s: object) -> bool:
+    """True iff ``s`` is a timestamp in its one canonical spelling (``stamp(ts(s)) == s``)."""
+    try:
+        return isinstance(s, str) and stamp(ts(s)) == s
+    except (ValueError, OverflowError, OSError):
+        return False
+
+
+def grant_chain(ws: WsCore, gid: str):
+    return fu.ancestors(
+        {
+            g.id: fu.GrantTerms(
+                g.id,
+                g.person,
+                g.scope,
+                g.verbs,
+                ts(g.issued_at),
+                ts(g.expires_at),
+                g.parent,
+                g.revoked,
+                root_kind=g.root_kind,
+            )
+            for g in ws.grants.values()
+        },
+        gid,
+    )
+
+
+def caps_of(ws: WsCore) -> fu.Caps:
+    """The caps of a workspace. DEV-ONLY: a dev sandbox workspace (signed genesis prefix SBX, never a real one) gets the
+    short minimum lead and zero early tolerance, so real-host e2e runs take seconds."""
+    from .engine import DEV_PREFIX
+
+    return fu.effective_caps(ws.settings.get("followups", {}), dev=ws.prefix == DEV_PREFIX)
+
+
+def enabled(ws: WsCore) -> bool:
+    addon = ws.addons.get("schedules")
+    return bool(addon and addon.enabled and not addon.purged)
+
+
+def active(ws: WsCore, person: str) -> bool:
+    return identity.member_role(ws, person) in ("owner", "maintainer", "member")
+
+
+def chain_state(ws: WsCore, t: TCore, now: int, *, before: int | None = None):
+    c = t.fu_chain
+    events = [fu.ChainSet(at) for at in c.get("sets", [])]
+    events.extend(fu.ChainDone(at, task) for at, task in c.get("dones", []))
+    return fu.chain_state(
+        sorted((e for e in events if before is None or e.at < before), key=lambda e: e.at),
+        open_tasks_at_start=c.get("start_tasks", frozenset()),
+        caps=caps_of(ws),
+        now=now,
+        since=c.get("since"),
+    )
+
+
+def view_state(core: Core, t: TCore, rec: FollowupRec, now: int) -> tuple[str, str | None]:
+    """Return the effective state and cancellation reason without changing replay state."""
+    ws = core.ws
+    reason = fu.derived_cancel_reason(
+        state=rec.state,
+        at=now,
+        replaced=False,
+        ticket_status=t.status,
+        claimed_by_other=bool(t.claim and not claims.in_family(t.claim.session, rec.setter_session)),
+        chain=grant_chain(ws, rec.parent_grant),
+        root_person_active=active(ws, rec.person),
+        member_removed=identity.member_role(ws, rec.person) is None,
+        addon_enabled=enabled(ws)
+        and (rec.trigger != "addon" or fe.declared(ws.addons, (rec.on or {}).get("kind")) is not None),
+        # The set's chain verdict is recorded by set_state. Later sets replace it explicitly;
+        # counting this set again would incorrectly cancel the last permitted pending set.
+        chain_needs_person=chain_state(ws, t, now, before=ts(rec.set_at)).needs_person,
+    )
+    return ("cancelled", reason) if reason else (rec.state, rec.cancel_reason)
+
+
+def denied(denial: fu.Denial | None) -> Refusal | None:
+    return Refusal(Code.FOLLOWUP_DENIED, f"{denial.code}: {denial.detail}") if denial else None
+
+
+def pending_count(core: Core, now: int, *, skip: str | None = None) -> int:
+    """Pending follow-ups in the workspace (FU5/FU6 `pending_max`), not counting the record `skip`."""
+    return sum(
+        r.id != skip and view_state(core, ticket, r, now)[0] == "pending"
+        for ticket in core.tickets.values()
+        for r in ticket.followups.values()
+    )
+
+
+def admit(core: Core, t: TCore, rec: FollowupRec, e: dict[str, Any], *, becomes: str) -> Refusal | None:
+    """The one place the checks shared by a person bringing a follow-up (back) to life live: reschedule of a
+    needs_person one and undo of a cancel. One live follow-up per ticket (set replaces; these refuse), the workspace
+    pending cap when it becomes `pending`, and the signer is the follow-up's person or a manager."""
+    now, a = ts(e["at"]), e["actor"]
+    if a["kind"] != "person":
+        return Refusal(Code.FOLLOWUP_DENIED, "only a person may do this")
+    if a["id"] != rec.person and not claims.signer_manages(core.ws, t, e):
+        return Refusal(Code.FOLLOWUP_DENIED, "only the follow-up's person or a manager may do this")
+    if any(
+        o.id != rec.id and view_state(core, t, o, now)[0] in ("pending", "needs_person", "fired")
+        for o in t.followups.values()
+    ):
+        return Refusal(Code.FOLLOWUP_DENIED, "another follow-up is live on this ticket")
+    if becomes == "pending" and pending_count(core, now, skip=rec.id) + 1 > caps_of(core.ws).pending_max:
+        return Refusal(Code.FOLLOWUP_DENIED, "pending_cap: workspace pending capacity is used up")
+    return None
+
+
+def addon_match_denied(ws: WsCore, match: Any, status: str | None = None) -> Refusal | None:
+    """An add-on follow-up (or the event that wakes it) must fit what the ACTIVE grant declared (addon-api 1.2): the
+    add-on is on, the kind is declared, the ref is in the declared format, the status (when named) is declared.
+    Replay checks the signed grant, never the manifest."""
+    if not isinstance(match, dict) or match.get("source") != "addon" or not fe.valid_match(match):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event match does not fit the trigger")
+    decl = fe.declared(ws.addons, match["kind"])
+    if decl is None:
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: that add-on is off or does not declare this event")
+    if not fe.addon_fits(decl, match["ref"], match.get("status") if status is None else status):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the reference or status is not one the add-on declared")
+    return None
+
+
+def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    ws, a, now = core.ws, e["actor"], ts(e["at"])
+    if e["followup"] in t.followups:
+        return Refusal(Code.FOLLOWUP_DENIED, "duplicate follow-up id")
+    if e.get("trigger") == "addon":
+        if (r := addon_match_denied(ws, e.get("on"))) is not None or "hook" in e:
+            return r or Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: an add-on follow-up has no webhook")
+    if e.get("trigger") == "time":
+        if "on" in e or "hook" in e:
+            return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: a time follow-up has no event match")
+    elif e.get("trigger") == "addon":
+        if "on" not in e or e["on"].get("source") != "addon":
+            return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event match does not fit the trigger")
+    elif not fe.valid_match(e.get("on")) or e["on"]["source"] != e["trigger"]:
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event match does not fit the trigger")
+    elif (e["trigger"] == "webhook") != ("hook" in e) or (e["trigger"] == "webhook" and e["hook"] != e["on"]["hook"]):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: a webhook follow-up names exactly its hook")
+    pending = [r for r in t.followups.values() if view_state(core, t, r, now)[0] == "pending"]
+    ctx = fu.SetContext(
+        a["kind"] == "agent",
+        a.get("grant") in ws.grants,
+        a.get("unattended", False),
+        bool(t.claim and t.claim.session == a.get("session") and claims.lapse_reason(ws, t, now) is None),
+        t.status,
+        enabled(ws),
+        enabled(ws),
+        pending_count(core, now),
+        bool(pending),
+    )
+    req = fu.SetRequest(
+        now,
+        e["trigger"],
+        ts(e["due"]) if "due" in e else None,
+        ts(e["deadline"]) if "deadline" in e else None,
+        e["brief"],
+    )
+    caps = caps_of(ws)
+    if (r := denied(fu.check_set(ctx, req, caps))) is not None:
+        return r
+    for old in pending:
+        old.state, old.cancel_reason = "cancelled", "replaced"
+    rec = FollowupRec(
+        e["followup"],
+        fu.set_state(chain_state(ws, t, now), req, caps),
+        e["trigger"],
+        e["at"],
+        e.get("due"),
+        e.get("deadline"),
+        e["brief"],
+        a["session"],
+        a["for"],
+        a["grant"],
+        e["id"],
+    )
+    rec.label = e.get("label")
+    rec.on, rec.hook = e.get("on"), e.get("hook")
+    t.followups[rec.id] = rec
+    t.claim = None
+    claims.release_leases(t)
+    return None
+
+
+def fired_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    rec = t.followups.get(e["followup"])
+    if rec is None:
+        return Refusal(Code.FOLLOWUP_DENIED, "unknown follow-up")
+    ws, now = core.ws, ts(e["at"])
+    chain = grant_chain(ws, rec.parent_grant)
+    facts = fu.FollowupFacts(
+        view_state(core, t, rec, now)[0],
+        rec.trigger,
+        ts(rec.set_at),
+        ts(rec.due) if rec.due else None,
+        ts(rec.deadline) if rec.deadline else None,
+    )
+    req = fu.FiredRequest(
+        now, e["trigger"], e.get("fallback"), e["actor"]["kind"] == "host", e["secret_hash"].removeprefix("sha256:")
+    )
+    if (r := denied(fu.check_fired(facts, req, chain=chain, root_person_active=active(ws, rec.person)))) is not None:
+        return r
+    if e["grant"] in ws.grants:
+        return Refusal(Code.GRANT_EXISTS, e["grant"])
+    wake = e.get("event")
+    if wake is not None and (e["trigger"] in ("time", "deadline") or not fe.matches(rec.on or {}, wake)):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event does not match the follow-up")
+    if wake is not None and not ts(rec.set_at) <= ts(wake["at"]) <= now:
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event is not between the set and the wake")
+    if e["trigger"] == "addon" and wake is not None:
+        # the event must be one the add-on named in the match still declares (on, ref format, status); the host signs
+        # it with its own clock, so the add-on's word is only a status from its declared list
+        if (r := addon_match_denied(ws, {**rec.on, "status": wake["status"]}, wake["status"])) is not None:
+            return r
+    if e["trigger"] == "addon" and wake is None and not e.get("fallback"):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: an add-on wake carries its event")
+    assert chain
+    from .schedules_wire import root_valid
+
+    if not root_valid(core, chain[-1].id, now):
+        return Refusal(Code.FOLLOWUP_DENIED, "schedule root is no longer live")
+    schedule_live = sum(
+        bool(o.get("grant")) and not o.get("outcome") and not ws.grants[o["grant"]].ended
+        for ticket in core.tickets.values()
+        for schedule in ticket.schedules.values()
+        for o in schedule.occurrences.values()
+    )
+    if (
+        schedule_live
+        and schedule_live
+        + sum(
+            r.state == "fired" and r.grant is not None and not ws.grants[r.grant].ended
+            for ticket in core.tickets.values()
+            for r in ticket.followups.values()
+        )
+        >= fu.FU_CONCURRENT_RUNS
+    ):
+        return Refusal(Code.FOLLOWUP_DENIED, "concurrent_cap")
+    g = fu.derive_grant(
+        chain[0],
+        ticket_uid=t.uid,
+        grant_id=e["grant"],
+        fired_at=now,
+        secret_hash=e["secret_hash"].removeprefix("sha256:"),
+    )
+    ws.grants[g.id] = Grant(g.id, g.person, g.scope, g.verbs, stamp(g.issued_at), stamp(g.expires_at), parent=g.parent)
+    rec.state, rec.fired_at, rec.grant, rec.run, rec.fallback = "fired", e["at"], g.id, e["run"], e.get("fallback")
+    rec.event = wake
+    return None
+
+
+def outcome_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    rec = t.followups.get(e["followup"])
+    if rec is None:
+        return Refusal(Code.FOLLOWUP_DENIED, "unknown follow-up")
+    if (
+        r := denied(
+            fu.check_outcome(
+                view_state(core, t, rec, ts(e["at"]))[0], e["outcome"], e.get("reason"), ran_has_reason="reason" in e
+            )
+        )
+    ) is not None:
+        return r
+    if "run" in e and e["run"] != rec.run:
+        return Refusal(Code.FOLLOWUP_DENIED, "run does not match the fired run")
+    rec.state = rec.outcome = e["outcome"]
+    rec.reason = e.get("reason")
+    if rec.grant is not None:
+        core.ws.grants[rec.grant].ended = True
+    return None
+
+
+def cancelled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    rec = t.followups.get(e["followup"])
+    if rec is None or view_state(core, t, rec, ts(e["at"]))[0] not in ("pending", "needs_person"):
+        return Refusal(Code.FOLLOWUP_DENIED, "only pending or needs_person follow-ups can be cancelled")
+    a = e["actor"]
+    if a["kind"] == "agent":
+        if (
+            not claims.in_family(a["session"], rec.setter_session)
+            or a["for"] != rec.person
+            or e["reason"] not in ("agent", "dismissed")
+        ):
+            return Refusal(Code.FOLLOWUP_DENIED, "an agent may cancel only its own session family's follow-up")
+    elif a["kind"] == "person" and a["id"] != rec.person and not claims.signer_manages(core.ws, t, e):
+        return Refusal(Code.FOLLOWUP_DENIED, "only the follow-up's person or a manager may cancel it")
+    if e["reason"] == "run_now" and view_state(core, t, rec, ts(e["at"]))[0] != "needs_person":
+        return Refusal(Code.FOLLOWUP_DENIED, "run_now applies to a follow-up that needs a person")
+    rec.cancelled_at = e["at"]
+    rec.cancelled_by = a["id"] if a["kind"] == "person" else None
+    rec.cancel_prev_state = rec.state
+    rec.state, rec.cancel_reason = "cancelled", e["reason"]
+    return None
+
+
+def rescheduled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    rec = t.followups.get(e["followup"])
+    a, now = e["actor"], ts(e["at"])
+    if rec is None or a["kind"] != "person":
+        return Refusal(Code.FOLLOWUP_DENIED, "a person and a known follow-up are required")
+    state = view_state(core, t, rec, now)[0]
+    if a["id"] != rec.person and (state == "needs_person" or not claims.signer_manages(core.ws, t, e)):
+        return Refusal(
+            Code.FOLLOWUP_DENIED, "only its own person may resume needs_person; otherwise a manager may reschedule"
+        )
+    req = fu.SetRequest(
+        now,
+        rec.trigger,
+        ts(e["due"]) if "due" in e else None,
+        ts(e["deadline"]) if "deadline" in e else None,
+        rec.brief,
+    )
+    if state == "needs_person" and (r := admit(core, t, rec, e, becomes="pending")) is not None:
+        return r
+    if (
+        r := denied(
+            fu.check_reschedule(state, req, caps_of(core.ws), old_deadline=ts(rec.deadline) if rec.deadline else None)
+        )
+    ) is not None:
+        return r
+    deadline = e.get("deadline")
+    if rec.trigger == "time" and deadline is None and rec.deadline is not None:
+        # one computation on integers, stored in the canonical form (the same value check_reschedule judged)
+        deadline = datetime.fromtimestamp(max(ts(rec.deadline), ts(e["due"])), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rec.due, rec.deadline = e.get("due"), deadline
+    rec.state = "pending"
+    return None
+
+
+def records_newer(t: TCore, rec: FollowupRec) -> bool:
+    return list(t.followups).index(rec.id) != len(t.followups) - 1
+
+
+def restored_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    rec = t.followups.get(e["followup"])
+    a, now = e["actor"], ts(e["at"])
+    if (
+        rec is None
+        or a["kind"] != "person"
+        or a["id"] != rec.cancelled_by
+        or rec.cancelled_by != rec.person  # a manager's Cancel is not undone: it must not bring back needs_person
+        or rec.state != "cancelled"
+        or rec.cancel_reason != "person"
+        or rec.cancelled_at is None
+        or not 0 <= now - ts(rec.cancelled_at) <= fu.FU_UNDO_S
+        or rec.cancel_prev_state not in ("pending", "needs_person")
+    ):
+        return Refusal(Code.FOLLOWUP_DENIED, "only the canceller may undo a person cancellation within 120 seconds")
+    if records_newer(t, rec):
+        return Refusal(Code.FOLLOWUP_DENIED, "a newer follow-up prevents undo")
+    if (r := admit(core, t, rec, e, becomes=rec.cancel_prev_state)) is not None:
+        return r
+    deadline = rec.due if rec.trigger == "time" and rec.deadline is None else rec.deadline
+    if deadline is None or now > ts(deadline):
+        return Refusal(Code.FOLLOWUP_DENIED, "the follow-up deadline has passed")
+    rec.state, rec.cancel_reason = rec.cancel_prev_state, None
+    return None
+
+
+def note_event(t: TCore, e: dict[str, Any]) -> None:
+    now = ts(e["at"])
+    if e["actor"]["kind"] == "person":
+        rec = t.followups.get(e.get("followup", "")) if e["type"].startswith("followup.") else None
+        if rec is not None and e["actor"]["id"] != rec.person:
+            return  # a manager acting on someone else's follow-up does not restart that person's chain (FU7)
+        t.fu_chain = {"since": now}
+    elif e["type"] == "followup.set":
+        if not t.fu_chain.get("sets"):
+            t.fu_chain["start_tasks"] = frozenset(task["id"] for task in t.fields["tasks"])
+        t.fu_chain.setdefault("sets", []).append(now)
+    elif e["type"] == "task.done":
+        t.fu_chain.setdefault("dones", []).append((now, e["task"]))

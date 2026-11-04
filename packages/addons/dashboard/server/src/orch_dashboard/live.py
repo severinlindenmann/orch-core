@@ -1,6 +1,7 @@
 """One upstream subscription per UUID, no downstream replay, bounded per-tab queues."""
 
 import asyncio
+import contextvars
 import json
 import threading
 import time
@@ -234,7 +235,9 @@ class Live:
         if last and last != workspace.latest:
             tab.queue.put_nowait(("resync", {}, workspace.latest))
         if workspace.task is None or workspace.task.done():
-            workspace.task = asyncio.create_task(workspace.run())
+            workspace.task = asyncio.create_task(
+                workspace.run(), context=contextvars.Context()
+            )  # not the request's memo
         return workspace, tab
 
     def checked(self, ws, items):
@@ -344,7 +347,9 @@ class Live:
                     workspace.task = None
                     # A tab may have attached while sub.close was finishing.
                     if workspace.tabs:
-                        workspace.task = asyncio.create_task(workspace.run())
+                        workspace.task = asyncio.create_task(
+                            workspace.run(), context=contextvars.Context()
+                        )  # not the request's memo
 
     async def close(self):
         tasks = [w.task for w in self.workspaces.values() if w.task]

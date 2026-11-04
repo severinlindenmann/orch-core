@@ -25,6 +25,9 @@ import re
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from orch.addons import event_words
+from orch.addons.manifest import EVENTS_KEY
+
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -32,7 +35,7 @@ if TYPE_CHECKING:
 
 __all__ = ["KINDS", "build_url", "handoff"]
 
-KINDS = ("gate", "verdict", "question", "status", "grant")
+KINDS = ("gate", "verdict", "question", "status", "grant", "addon", "settings")
 _GATES = ("requirements", "plan", "code", "verify")
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _WID = re.compile(r"[0-9a-f]{32}")
@@ -46,7 +49,8 @@ def build_url(addr: str, workspace_id: str, ticket_id: str, gate: str | None = N
     from orch.hubclient.tlsadapter import parse_addr
 
     try:
-        host, port = parse_addr(addr)
+        a = parse_addr(addr)
+        host, port = a.host, a.port
     except HubRefused:
         raise HostError(
             "hub.state_mismatch", "the pinned hub address is not usable: the host refuses to guess"
@@ -101,7 +105,7 @@ def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
         want = grantoff.terms(args["scope"], "agent", args["hours"], args.get("label"))
         if want["label"] is None:
             want.pop("label")
-        handoffs.add(model, person, want)
+        handoff_id = handoffs.add(model, person, want)
     return ok_result(
         {
             "mode": mode,
@@ -110,7 +114,147 @@ def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
             "pending": True,
             "valid_for_s": grantoff.MAX_AGE,
             "summary": {"kind": "grant", "person": person, **{k: v for k, v in want.items() if k != "label"}},
-            "url": build_root_url(state.addr, service.workspace_id),
+            "handoff": handoff_id,
+            "url": build_grant_url(state.addr, service.workspace_id, {**want, "handoff": handoff_id}),
+        }
+    )
+
+
+def prepared_event(record: dict[str, Any]) -> dict[str, Any]:
+    """The one unsigned event of a prepared add-on grant request."""
+    return record["prepared"]["events"][0]
+
+
+def build_grant_url(addr: str, workspace_id: str, terms: dict[str, Any]) -> str:
+    """Pinned hub link; terms are display/signing input, never landing authority."""
+    import json
+
+    from orch.crypto.encoding import b64u
+
+    body = json.dumps(terms, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return f"{build_root_url(addr, workspace_id)}/access/{b64u(body)}"
+
+
+def build_addon_url(addr: str, workspace_id: str, terms: dict[str, Any]) -> str:
+    """The one link of an add-on approval (FB15): ``https://<hub>/#/w/<workspace_id>/addon/<b64u(JSON terms)>``. The
+    terms are what the person is asked to approve (:data:`ADDON_TERMS`); the page parses them strictly, shows them and
+    signs only after a click. A fragment, so nothing reaches a server log. The host matches the signed answer against
+    its own prepared request, never against this link."""
+    import json
+
+    from orch.crypto.encoding import b64u
+
+    root = build_root_url(addr, workspace_id)
+    body = json.dumps(terms, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return f"{root}/addon/{b64u(body)}"
+
+
+#: the fields of an ``addon.requested`` action (hub protocol 8.8b); ``handoff`` is the prepared request's id
+ADDON_TERMS = ("name", "version", "package_sha256", "capabilities", "runtime", "handoff")
+
+
+def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str, Any]:
+    """``kind: addon`` (FB15): Mission Control's "turn on / install" in a full-mode workspace waits for an
+    ``addon.requested`` the hub's channel signs. The wait IS the prepared hand-off request (op ``addon.grant``, made by
+    ``human.prepare {handoff: true}``): this read names it, checks it is the calling person's, still open and an
+    add-on grant, and returns the terms and the one link. No log line, no link call."""
+    others = {"ticket", "gate", "question", "scope", "verbs", "hours", "label", "cancel"}
+    if others & set(args) or "request" not in args:
+        raise HostError("invalid.input", "hub.handoff: an add-on takes exactly the prepared request")
+    service = call.service
+    record = service.requests.load(args["request"], call.principal)
+    if (
+        record.get("op") != "addon.grant"
+        or record.get("state") != "prepared"
+        or record.get("person") != call.viewer
+        or record.get("workspace_id") != service.workspace_id
+    ):
+        raise HostError("not_found", "no such add-on request waiting for the hub")
+    if record.get("hub_handoff") is not True or record.get("submit") or service.requests.lapsed(record):
+        raise HostError("not_found", "no such add-on request waiting for the hub")
+    ev = prepared_event(record)
+    if ev.get("type") != "addon.granted":
+        raise HostError("not_found", "no such add-on request waiting for the hub")
+    if record.get("hub_user") is None:
+        # The hub user the hub names as the owner of this workspace, asked by the host over its own link and written
+        # ONCE (never rebound): the one hub user whose request may answer this hand-off when the owner never aliased it
+        # (a console-link join). Host-local state, not replayable log state (prototype).
+        from . import hubops
+
+        who = hubops.owner_user(service, state)
+        if who is not None:
+            record = {**record, "hub_user": who}
+            service.requests.write(record)
+    terms = {
+        "name": ev["name"],
+        "version": ev["version"],
+        "package_sha256": ev["package_sha256"],
+        "capabilities": list(ev["capabilities"]),
+        "handoff": record["id"],
+    }
+    if ev.get("runtime") is not None:
+        terms["runtime"] = dict(ev["runtime"])
+    # The events the add-on can wake follow-ups with, in words, for the summary the hub page shows. Display only: the
+    # signed terms (and the link) keep their shape; the events are part of the package digest the person signs.
+    events = event_words.event_lines(ev.get(EVENTS_KEY) or (), ev["capabilities"], lambda x: ascii(str(x))[1:-1])
+    from orch.hubclient import shorthash
+
+    from .workspace import ok_result
+
+    return ok_result(
+        {
+            "mode": mode,
+            "where": "hub",
+            "kind": "addon",
+            "pending": True,
+            "valid_for_s": max(0, int(record["expires"] - service.clock())),
+            "summary": {
+                "kind": "addon",
+                **{k: v for k, v in terms.items() if k != "handoff"},
+                **({EVENTS_KEY: events} if events else {}),
+            },
+            "short_hash": shorthash.short_hash(terms["package_sha256"]),
+            "url": build_addon_url(state.addr, service.workspace_id, terms),
+        }
+    )
+
+
+#: how long a settings link opens (seconds): an old link must not roll back a later change
+SETTINGS_LINK_TTL = 600
+
+
+def build_settings_url(addr: str, workspace_id: str, change: dict[str, int], expires: int) -> str:
+    """The link of a settings change (27 Oct): ``https://<hub>/#/w/<workspace_id>/settings/<b64u(JSON set)>``. The hub's
+    page parses ``{"set", "exp"}`` strictly (``exp``: epoch seconds, the page refuses an expired link), shows the change
+    in words and signs only after a click (``settings.changed``, 8.8)."""
+    import json
+
+    from orch.crypto.encoding import b64u
+
+    terms = {"exp": int(expires), "set": change}
+    body = json.dumps(terms, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return f"{build_root_url(addr, workspace_id)}/settings/{b64u(body)}"
+
+
+def _settings(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str, Any]:
+    """``kind: settings``: Mission Control's Save of a setting in a full-mode workspace. Only the three keys the hub's
+    channel and refused here (the dashboard says so before it asks). A pure read: nothing is prepared or logged."""
+    from .workspace import ok_result
+
+    allowed = {"kind", "set"}
+    change = args.get("set")
+    if set(args) - allowed or not isinstance(change, dict) or not change:
+        raise HostError("invalid.input", "hub.handoff: a settings change takes exactly set: 1-3 settings")
+    return ok_result(
+        {
+            "mode": mode,
+            "where": "hub",
+            "kind": "settings",
+            "summary": {"kind": "settings", "set": dict(sorted(change.items()))},
+            "short_hash": None,
+            "url": build_settings_url(
+                state.addr, call.service.workspace_id, dict(change), call.service.clock() + SETTINGS_LINK_TTL
+            ),
         }
     )
 
@@ -139,6 +283,10 @@ def handoff(call: Call, args: dict[str, Any], state: Any) -> dict[str, Any]:
         raise HostError("hub.not_joined", "approvals go through the hub only in full hub mode, once connected")
     if kind == "grant":
         return _grant(call, args, state, mode)
+    if kind == "addon":
+        return _addon(call, args, state, mode)
+    if kind == "settings":
+        return _settings(call, args, state, mode)
     if "ticket" not in args:
         raise HostError("invalid.input", f"hub.handoff: a {kind} needs a ticket")
     if {"scope", "verbs", "hours", "label", "cancel"} & set(args):

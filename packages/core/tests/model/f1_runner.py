@@ -61,6 +61,8 @@ def check_after(st: Any, after: dict[str, Any]) -> None:
             assert w.roster_v == exp["roster_v"]
         if "members" in exp:
             assert {p: m.role for p, m in w.members.items()} == exp["members"]
+        for k in exp.get("settings_absent", []):  # an accepted-and-ignored key leaves no state
+            assert k not in w.settings, k
     for uid, exp in after.get("tickets", {}).items():
         t = st.tickets[uid]
         if "gens" in exp:

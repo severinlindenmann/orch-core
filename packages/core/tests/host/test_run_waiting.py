@@ -49,3 +49,20 @@ def test_only_a_live_agent_run_on_a_ticket_can_wait(tmp_path):
     assert runners.waiting_of(service, hub, {**rec, "state": "exited"}) is None
     assert runners.waiting_of(service, hub, {**rec, "kind": "shell"}) is None
     assert runners.waiting_of(service, hub, {**rec, "ticket": None}) is None
+
+
+def test_an_orch_wait_entry_wins_over_a_busy_terminal_and_goes_stale_after_its_deadline(tmp_path):
+    from orch.host import agentwaits
+
+    service, hub, rec, _ = _setup(tmp_path)
+    rec = {**rec, "grant": "g_1"}
+    hub.activity["r_1"] = (10, time.time())  # the harness ticks "Running orch wait · 3m"
+    token = agentwaits.enter(service, "g_1", "DEMO-1", 60)
+    got = runners.waiting_of(service, hub, rec)
+    assert got is not None and got["source"] == "wait"
+    assert agentwaits.of(service, rec, time.time() + 60 + agentwaits.GRACE + 1) is None  # stale: not waiting
+    assert runners.waiting_of(service, hub, {**rec, "ticket": "DEMO-2"}) is None
+    assert runners.waiting_of(service, hub, {**rec, "grant": None}) is None  # no grant: never matched by label
+    agentwaits.leave(service, token)
+    assert runners.waiting_of(service, hub, rec) is None
+    assert agentwaits.enter(service, None, "DEMO-1", 60) is None  # not an agent's wait

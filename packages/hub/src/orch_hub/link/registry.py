@@ -36,6 +36,22 @@ class Registry:
         self._db.executescript(_SCHEMA)
         if "binding_obj" not in {r[1] for r in self._db.execute("PRAGMA table_info(workspace)")}:
             self._db.execute("ALTER TABLE workspace ADD COLUMN binding_obj TEXT")  # registry from before D11
+        columns = {r[1] for r in self._db.execute("PRAGMA table_info(workspace)")}
+        for name, kind in (
+            ("profile", "TEXT"),
+            ("version", "TEXT"),
+            ("commit", "TEXT"),
+            ("host", "TEXT"),
+            ("name", "TEXT"),
+            ("own_name", "TEXT"),
+            ("last_seen_ms", "INTEGER"),
+            ("peer_addr", "TEXT"),
+            ("update_target", "TEXT"),
+            ("update_asked_ms", "INTEGER"),
+            ("update_asked_by", "TEXT"),
+        ):
+            if name not in columns:
+                self._db.execute(f'ALTER TABLE workspace ADD COLUMN "{name}" {kind}')
         self._db.commit()
 
     def close(self) -> None:
@@ -150,6 +166,10 @@ class Registry:
                     None if binding_obj is None else cj(dict(binding_obj)).decode(),
                 ),
             )
+            if state.get("status") != "bound":
+                self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
+            if self._mode_locked(ws):
+                self._db.execute("UPDATE workspace SET host='', name='' WHERE workspace_id=?", (ws,))
             if owner_alias is None:
                 self._db.execute("DELETE FROM owner_alias WHERE workspace_id=?", (ws,))
             else:
@@ -173,9 +193,105 @@ class Registry:
                 "UPDATE workspace SET binding_state=?, binding_obj=COALESCE(?, binding_obj) WHERE workspace_id=?",
                 (cj(dict(state)).decode(), None if binding_obj is None else cj(dict(binding_obj)).decode(), ws),
             )
+            if state.get("status") != "bound":
+                self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
+            if self._mode_locked(ws):
+                self._db.execute("UPDATE workspace SET host='', name='' WHERE workspace_id=?", (ws,))
+
+    def profile(self, ws: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self._db.execute("SELECT profile FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+        return json.loads(row[0]) if row and row[0] is not None else None
+
+    def put_profile(self, ws: str, body: Mapping[str, Any]) -> None:
+        from ..contract.phase4 import strip_text as render_text
+
+        clean = {
+            k: [render_text(v) for v in value]
+            if type(value) is list
+            else render_text(value)
+            if type(value) is str
+            else value
+            for k, value in body.items()
+        }
+        with self.lock, self._db:
+            self._db.execute("UPDATE workspace SET profile=? WHERE workspace_id=?", (cj(clean).decode(), ws))
 
     def binding_objects(self) -> dict[str, dict[str, Any]]:
         """``{workspace_id: the newest accepted signed hub.binding / hub.unbound}``, to re-push after a restart."""
         with self.lock:
             rows = self._db.execute("SELECT workspace_id, binding_obj FROM workspace WHERE binding_obj IS NOT NULL")
             return {ws: json.loads(o) for ws, o in rows.fetchall()}
+
+    def put_status(self, ws: str, body: Mapping[str, str]) -> None:
+        from ..contract.phase4 import render_text
+
+        with self.lock, self._db:
+            self._db.execute(
+                'UPDATE workspace SET version=?, "commit"=?, host=?, name=?, own_name=? WHERE workspace_id=?',
+                (
+                    render_text(body["version"])[:32],
+                    render_text(body["commit"])[:40],
+                    "" if self._mode_locked(ws) else render_text(body["host"])[:80],
+                    "" if self._mode_locked(ws) else render_text(body["name"])[:80],
+                    render_text(body["name"])[:80],  # for the owner alone (own_name); never shown to anyone else
+                    ws,
+                ),
+            )
+
+    def ask_update(self, ws: str, target: str, now_ms: int, by: str) -> bool:
+        """Remember that an admin asked this workspace's owner to update to ``target`` (the hub's own version).
+        A second ask for the same target keeps the first time. True when it was newly recorded."""
+        with self.lock, self._db:
+            row = self._db.execute("SELECT update_target FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+            if row is None or row[0] == target:
+                return False
+            self._db.execute(
+                "UPDATE workspace SET update_target=?, update_asked_ms=?, update_asked_by=? WHERE workspace_id=?",
+                (target, now_ms, by, ws),
+            )
+            return True
+
+    def update_ask(self, ws: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self._db.execute(
+                "SELECT update_target, update_asked_ms FROM workspace WHERE workspace_id=?", (ws,)
+            ).fetchone()
+        return {"target_version": row[0], "asked_ms": row[1]} if row and row[0] else None
+
+    def _mode_locked(self, ws: str) -> bool:
+        return self.last_mode(ws) == "selective"
+
+    def seen(self, ws: str, now_ms: int, peer_addr: str) -> None:
+        """Display telemetry must never fail an authenticated operation."""
+        try:
+            with self.lock, self._db:
+                self._db.execute(
+                    "UPDATE workspace SET last_seen_ms=?, peer_addr=? WHERE workspace_id=?",
+                    (now_ms, peer_addr, ws),
+                )
+        except Exception:  # noqa: BLE001, S110  # display telemetry must never fail the real op
+            pass
+
+    def display_name(self, ws: str) -> str | None:
+        """The name the workspace reported with ``status_put``: only a full-mode workspace shares it (selective keeps
+        it private, like ``host``). ``None`` when there is none: callers show a friendly fallback, never an id."""
+        with self.lock:
+            row = self._db.execute("SELECT name FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+        return row[0] if row and isinstance(row[0], str) and row[0] else None
+
+    def own_name(self, ws: str) -> str | None:
+        """The label the workspace reported, whatever its mode. Only the workspace's owner may be shown this (callers
+        check ``owner_alias``); hub admins and groups get ``display_name`` only."""
+        with self.lock:
+            row = self._db.execute("SELECT own_name FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+        return row[0] if row and isinstance(row[0], str) and row[0] else None
+
+    def status(self, ws: str) -> dict[str, Any]:
+        with self.lock:
+            row = self._db.execute(
+                'SELECT version, "commit", host, peer_addr, last_seen_ms FROM workspace WHERE workspace_id=?',
+                (ws,),
+            ).fetchone()
+        version, commit, host, address, seen = row or (None, None, None, "", None)
+        return {"version": version, "commit": commit, "host": host, "address": address or "", "last_seen_ms": seen}

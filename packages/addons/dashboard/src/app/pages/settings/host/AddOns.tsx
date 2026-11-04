@@ -2,6 +2,7 @@
 // signed settings change like the others: it opens the same review and signing step (`addon.grant` to turn on,
 // `addon.disable` to turn off). Nothing is written without a signature. A switch that cannot move says why.
 import { Inline, plain } from '@/components/sign/visible'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -9,7 +10,7 @@ import { Focus, BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Glob
 import { useCallback, useState, type ReactNode } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
-import type { AddOnRow } from '@/api/addOnSwitches'
+import { suggestedWhere, type AddOnRow, type PublishWhere } from '@/api/addOnSwitches'
 import { AddonReview } from '../../market/AddonReview'
 import type { Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -36,12 +37,19 @@ export interface AddOnListProps {
   /** Said under the list when it has no rows. */
   empty?: string
   label?: string
+  /** The Browse tab (P05): only the built-in add-ons that are off, each with a Turn on button instead of a switch. */
+  browse?: boolean
+  /** A setup step before sharing: the caller announces success after the link exists. */
+  quiet?: boolean
+  /** With `browse`: only these add-ons. */
+  only?: readonly string[]
 }
 
-export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons' }: AddOnListProps) {
-  const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)
+export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons', browse, only, quiet }: AddOnListProps) {
+  const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean; suggest?: PublishWhere | null; from?: 'computer' | 'hub' | null; hub?: string | null } | null>(null)
   const data = useQuery({ ...queries.addOns(workspace.id), enabled: !rows })
-  const list = rows ? { available: true, add_ons: rows } : data.data
+  const full = rows ? { available: true, add_ons: rows } : data.data
+  const list = full && browse ? { ...full, add_ons: full.add_ons.filter((r) => r.state !== 'on' && r.locked === null && (!only || only.includes(r.id))) } : full
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -68,7 +76,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
     const name = row.id
     const turningOn = row.state !== 'on'
     if (turningOn && row.needs && row.set_up !== true && name === 'publish') {
-      setSetup({ name: 'publish', enabling: true })
+      setSetup({ name: 'publish', enabling: true, suggest: suggestedWhere(row), from: row.suggest_from, hub: row.suggest_hub })
       return
     }
     setBusy({ id: row.id, turningOn, stage: 'review' })
@@ -81,7 +89,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
           <LoadFailed what="add-ons" onRetry={() => void data.refetch()} />
         ) : !list ? (
           <p className="text-[13px] text-text-muted">Reading the add-ons…</p>
-        ) : !list.add_ons.length && empty ? (
+        ) : browse && !list.add_ons.length ? null : !list.add_ons.length && empty ? (
           <p className="text-[13px] text-text-muted">{empty}</p>
         ) : !list.available ? (
           <p className="text-[13px] text-text-muted">This host does not say which add-ons there are.</p>
@@ -123,22 +131,27 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
                         {needsSetup && <span data-testid={`addon-${row.id}-state`} className="rounded-full border border-warning/50 px-1.5 text-[11px] leading-4 text-warning">Needs setup</span>}
                       </div>
                       {!fixed && row.desc && <p className="text-text-muted"><Inline>{row.desc}</Inline></p>}
-                      {!mine && row.version && <details className="text-xs text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Version <Inline>{row.version}</Inline></p></details>}
+                      {!mine && row.version && <InfoDrawer><p>Version <Inline>{row.version}</Inline></p></InfoDrawer>}
                       {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
                       {owner && !on && row.runner_switch && <div className="mt-1.5"><RunnerSwitch ws={workspace.id} on initialTerminals={row.id === 'terminals'} testId={`addon-${row.id}-runner`} variant="secondary" /></div>}
                       {row.state === 'attention' && !why && (
                         <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>
                       )}
                     </div>
-                    {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: 'publish', enabling: false })}>Set up</Button>}
+                    {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: 'publish', enabling: false, suggest: suggestedWhere(row), from: row.suggest_from, hub: row.suggest_hub })}>Set up</Button>}
                     {mine && mine.stage !== 'review' && (
                       <span role="status" data-testid={`addon-${row.id}-pending`} className="inline-flex items-center gap-1.5 text-[12px] text-text-muted">
                         <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
                       </span>
                     )}
-                    {!fixed && on && !mine && <span className="text-xs text-text-muted">On</span>}
+                    {!fixed && on && !mine && !browse && <span className="text-xs text-text-muted">On</span>}
                     {actions?.(row, { owner, busy: !!busy })}
-                    {!fixed && (
+                    {!fixed && browse && (
+                      <Button size="sm" aria-label={`Turn on ${plain(row.title)}`} disabled={disabled || !!busy} onClick={() => flip(row)}>
+                        Turn on
+                      </Button>
+                    )}
+                    {!fixed && !browse && (
                       <Switch
                         aria-label={`${plain(row.title)}`}
                         aria-describedby={why ? `addon-${row.id}-why` : undefined}
@@ -149,7 +162,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
                       />
                     )}
                   </div>
-                  {mine && <div data-testid={`addon-${row.id}-accordion`}><AddonReview workspace={workspace} row={row} marketplace={!!rows} onBusy={signing} onDone={() => void refresh()} onClose={() => setBusy(null)} /></div>}
+                  {mine && <div data-testid={`addon-${row.id}-accordion`}><AddonReview quiet={quiet} workspace={workspace} row={row} marketplace={!!rows} browse={browse} onBusy={signing} onDone={() => void refresh()} onClose={() => setBusy(null)} /></div>}
                   {on && open[row.id] && (
                     <div id={`addon-${row.id}-panel`}>
                       {row.id === 'publish' && <PublishServer workspace={workspace} owner={owner} embedded />}
@@ -161,7 +174,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
           </ul>
         )
       }
-      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
+      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} suggested={setup.suggest} suggestedFrom={setup.from} hubName={setup.hub} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, doneToast: quiet ? '' : undefined, prepareOnOpen: true }) }} />}
       {dialog}
     </div>
   )

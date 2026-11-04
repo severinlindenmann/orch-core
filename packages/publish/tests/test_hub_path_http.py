@@ -577,34 +577,32 @@ def test_op_cert_revocation_stops_the_hub_at_once(env):
     assert (r.status_code, err(r)) == (403, "revoked")
 
 
-def test_migration_from_schema_2_keeps_data_and_adds_the_hub_tables(tmp_path):
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 6, 99])
+def test_any_other_schema_version_is_refused_with_an_update_message(tmp_path, version):
+    """format.json let the data dir in, so a database of another schema is an internal mismatch: it is
+    refused, untouched, and the message says to run `orch update`."""
     path = db.prepare_dir(str(tmp_path / "d"))
     conn = sqlite3.connect(path)
     conn.executescript(db.SCHEMA)
-    for t in ("hub_bindings", "hub_cards", "hub_op_revoked", "hub_revoked_devices"):
-        conn.execute(f"DROP TABLE {t}")
-    conn.execute("INSERT INTO owners VALUES ('p', 1)")
-    conn.execute("PRAGMA user_version=2")
+    conn.execute(f"PRAGMA user_version={version}")
     conn.commit()
     conn.close()
+    with pytest.raises(
+        db.SchemaError, match="does not match this orch-publish version: run `orch update`"
+    ):
+        db.init(path)
+    conn = sqlite3.connect(path)  # and nothing was touched
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == version
+    conn.close()
+
+
+def test_the_current_schema_opens_again_unchanged(tmp_path):
+    path = db.prepare_dir(str(tmp_path / "d"))
+    db.init(path)
     db.init(path)
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 3
-    assert conn.execute("SELECT person_id FROM owners").fetchone()[0] == "p"
-    assert conn.execute("SELECT count(*) FROM hub_bindings").fetchone()[0] == 0
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 7
     conn.close()
-    db.init(path)  # idempotent
-
-
-def test_schema_1_is_still_refused(tmp_path):
-    path = db.prepare_dir(str(tmp_path / "d"))
-    conn = sqlite3.connect(path)
-    conn.executescript(db.SCHEMA)
-    conn.execute("PRAGMA user_version=1")
-    conn.commit()
-    conn.close()
-    with pytest.raises(db.SchemaError):
-        db.init(path)
 
 
 def test_a_bound_workspace_has_no_direct_path_either(env):

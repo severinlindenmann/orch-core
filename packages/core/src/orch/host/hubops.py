@@ -7,6 +7,9 @@ The owner's signed record is a person op (``hub.join`` -> ``hub.joined``, ``hub.
   ``WSK`` and send ``join`` (card, owner key, binding) over the hub link.
 * ``hub.unbind {}``: after ``hub.left`` is on the log, sign ``hub.unbound`` with ``WSK`` and offer it to the hub; the
   hub being down is not an error (it stays queued in ``hub.json`` and is offered again).
+* ``hub.profile {profile?}``: owner-only get / replace of local ``hub/profile.json`` (0600); best-effort push.
+  Put returns pushed=False when not yet updated on the hub.
+* ``hub.directory {query?}``: read live routing-authorized profiles as untrusted display data.
 * ``hub.status {}``: the model's hub and the host's link state.
 * ``hub.handoff {kind, ticket, ...}``: a read for Mission Control's "approve in the hub" panel (:mod:`.hubhandoff`).
 
@@ -21,6 +24,9 @@ other workspace refuses a dev hub (hub contract 2.4). The real TLS link is C5: :
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import logging
 import os
 import threading
 from collections.abc import Callable
@@ -30,15 +36,13 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
-from . import hubsign
+from . import agentevents
 from .errors import HostError
-from .hubsign import BREAK_GLASS
 
 if TYPE_CHECKING:
     from .workspace import Call, WorkspaceService
 
 __all__ = [
-    "BREAK_GLASS",
     "HUB_CAPS",
     "HUB_OPS",
     "NETWORK_OPS",
@@ -55,9 +59,22 @@ __all__ = [
 
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
-    "hub.history": 1, "keys.rotate": 1,
+    "hub.profile": 1, "hub.directory": 1, "hub.shared": 1,
+    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1, "hub.address": 1, "hub.network": 1, "hub.network_set": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"hub.connect", "hub.link", "hub.unbind", "hub.refresh"})
+NETWORK_OPS = frozenset(
+    {
+        "hub.connect",
+        "hub.link",
+        "hub.unbind",
+        "hub.refresh",
+        "hub.switch",
+        "hub.directory",
+        "hub.profile",
+        "hub.shared",
+        "hub.address",
+    }
+)
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
 
@@ -67,8 +84,60 @@ TRANSPORT: Any = None
 #: the workspace's current v2 directory card (hub contract 9.5), or ``None``; tests replace it
 CARD_SOURCE: Any = None
 
+_PROFILE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "listed": {"type": "boolean"},
+        "tags": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 24}},
+        "handles": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 80}},
+        "not_handled": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 80}},
+        "accepts": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 24}},
+        "description": {"type": "string", "maxLength": 300},
+        "contact": {"type": "string", "maxLength": 80},
+        "languages": {"type": "string", "maxLength": 40},
+        "hours": {"type": "string", "maxLength": 40},
+    },
+    "required": ["listed", "tags", "handles", "not_handled", "accepts", "description", "contact", "languages", "hours"],
+    "additionalProperties": False,
+}
+_DEFAULT_PROFILE = {
+    "listed": False,
+    "tags": [],
+    "handles": [],
+    "not_handled": [],
+    "accepts": [],
+    "description": "",
+    "contact": "",
+    "languages": "",
+    "hours": "",
+}
+
 _SCHEMAS: dict[str, dict[str, Any]] = {
+    "hub.profile": {"type": "object", "properties": {"profile": _PROFILE_SCHEMA}, "additionalProperties": False},
+    "hub.directory": {
+        "type": "object",
+        "properties": {"query": {"type": "string", "maxLength": 80}},
+        "additionalProperties": False,
+    },
+    "hub.shared": {"type": "object", "properties": {}, "additionalProperties": False},
     "hub.link": {  # run-9 feedback 6: a read; fetch the hub card named by a connect link and check it against the link
+        "type": "object",
+        "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
+        "required": ["link"],
+        "additionalProperties": False,
+    },
+    "hub.network": {"type": "object", "properties": {}, "additionalProperties": False},  # R6: a read
+    "hub.network_set": {  # R6 (#1594): the owner's proxy for the hub link; ``proxy: null`` clears it
+        "type": "object",
+        "properties": {
+            "proxy": {"type": ["string", "null"], "maxLength": 300},
+            "user": {"type": ["string", "null"], "maxLength": 255},
+            "password": {"type": ["string", "null"], "maxLength": 1000},
+        },
+        "required": ["proxy"],
+        "additionalProperties": False,
+    },
+    "hub.address": {  # M4 #1461: move to the address a connect link of the SAME hub names (a person; no invite used)
         "type": "object",
         "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
         "required": ["link"],
@@ -90,6 +159,18 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },
     "hub.unbind": {"type": "object", "properties": {}, "additionalProperties": False},
+    "hub.switch": {  # H1 (27 Oct): one-time switch tickets and the rail list over the hub link; see _switch
+        "type": "object",
+        "properties": {
+            "kind": {"enum": ["ticket", "redeem", "rail"]},
+            "origin": {"type": "string", "pattern": "^https?://[A-Za-z0-9.\\[\\]:-]{1,200}$"},
+            "return_to": {"type": "string", "maxLength": 256},
+            "ticket_kind": {"enum": ["open", "signout"]},
+            "ticket": {"type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+        },
+        "required": ["kind"],
+        "additionalProperties": False,
+    },
     "hub.status": {"type": "object", "properties": {}, "additionalProperties": False},
     "keys.rotate": {"type": "object", "properties": {}, "additionalProperties": False},  # C8: owner, column P only
     "hub.history": {  # C8 M5: what a hub did here; ``since`` starts the third list (default: the last 7 days)
@@ -103,7 +184,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.handoff": {  # V3 C11: a read; see host/hubhandoff.py
         "type": "object",
         "properties": {
-            "kind": {"enum": ["gate", "verdict", "question", "status", "grant"]},
+            "kind": {"enum": ["gate", "verdict", "question", "status", "grant", "addon", "settings"]},
             "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
             "gate": {"enum": ["requirements", "plan", "code", "verify"]},
             "question": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -113,6 +194,19 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "hours": {"type": "integer", "minimum": 1, "maximum": 168},
             "label": {"type": "string", "minLength": 1, "maxLength": 200},
             "cancel": {"const": True},
+            # kind addon (FB15): the prepared hand-off request (op addon.grant) the hub link is for
+            "request": {"type": "string", "pattern": "^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+            # kind settings (27 Oct): the 1-3 settings the hub channel may change (protocol 8.8)
+            "set": {
+                "type": "object",
+                "properties": {
+                    "grant_hours": {"type": "integer", "minimum": 1, "maximum": 168},
+                    "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
+                    "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
+                },
+                "minProperties": 1,
+                "additionalProperties": False,
+            },
         },
         "required": ["kind"],
         "additionalProperties": False,
@@ -167,6 +261,30 @@ def _dir(service: WorkspaceService) -> Path:
     return Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id / "hub"
 
 
+def _load_profile(service: Any) -> dict[str, Any]:
+    from .custody import read_json
+
+    doc = read_json(_dir(service) / "profile.json", service.host_uid, limit=65536)
+    profile = doc if doc is not None else _DEFAULT_PROFILE
+    if not Draft202012Validator(_PROFILE_SCHEMA).is_valid(profile):
+        raise HostError("invalid.input", "invalid stored hub profile")
+    return profile
+
+
+def _save_profile(service: Any, profile: dict[str, Any]) -> None:
+    import json
+
+    from orch.store.fsio import write_atomic
+
+    from .custody import ensure_private_dir
+
+    d = _dir(service)
+    for level in (d.parent, d):
+        ensure_private_dir(level, service.host_uid)
+    write_atomic(d / "profile.json", json.dumps(profile).encode(), mode=0o600)
+    service.__dict__.pop("_hub_profile_sent", None)
+
+
 def _load_state(service: WorkspaceService) -> Any:
     from orch.hubclient import HubRefused, HubState
 
@@ -182,8 +300,42 @@ def _load_state(service: WorkspaceService) -> Any:
 
 
 def _save_state(service: WorkspaceService, state: Any) -> None:
+    """Save a state a long call (a join, a leave) loaded earlier. Under ``_MU`` the publish_where seq tombstones are
+    merged with what is on disk now, so a background ``hub_where`` store that raised one meanwhile is never undone by
+    this older copy (a tombstone only grows; everything else in the state is this call's)."""
     with _MU:
+        _keep_floors(service, state)
         _write_state(service, state)
+
+
+def _keep_floors(service: WorkspaceService, state: Any) -> None:
+    from orch.hubclient import publish_held
+
+    try:
+        cur = _load_state(service)
+    except HostError:
+        return  # an unreadable file is the writer's to replace, not ours to merge
+    for hub_id, floor in publish_held.floors_of(cur).items():
+        mine = state.publish_where_floors.get(hub_id)
+        if mine is None or mine["seq"] < floor["seq"] or (mine["seq"] == floor["seq"] and mine["digest"] is None):
+            state.publish_where_floors[hub_id] = floor
+        elif mine["seq"] == floor["seq"] and floor["digest"] is not None and mine["digest"] != floor["digest"]:
+            # should not happen (one seq, two signed objects): ours is kept; say so for the doctor
+            logging.getLogger("orch.host.hubops").warning(
+                "publish_where floors disagree for hub %s at seq %s: kept this one", hub_id, mine["seq"]
+            )
+    held = state.publish_where
+    floor = state.publish_where_floors.get(state.hub_id)
+    if held is not None and floor is not None:
+        try:
+            older = held["o"]["seq"] < floor["seq"]
+        except (KeyError, TypeError):
+            older = True
+        if older:  # this copy holds an object a newer store has replaced: take the newer one of the same binding
+            same = cur is not None and (cur.hub_id, cur.binding_seq, cur.status) == (
+                state.hub_id, state.binding_seq, "bound",
+            )  # fmt: skip
+            state.publish_where = cur.publish_where if same and state.status == "bound" else None
 
 
 def _write_state(service: WorkspaceService, state: Any) -> None:
@@ -223,8 +375,13 @@ def _save_snapshot(service: WorkspaceService, fetched: Any) -> None:
         new = fetched.snapshot
         if new is not None:
             held = None if cur.snapshot is None else cur.snapshot["o"]
+            if held is None and new["o"]["version"] < cur.snapshot_floor:
+                raise HubRefused(
+                    "stale_snapshot"
+                )  # nothing pinned after a rebind or mode switch: the floor still holds
             if held is None or new["o"]["version"] > held["version"]:
                 cur.snapshot, changed = new, True
+                cur.raise_floor(new["o"]["version"])
             elif new["o"]["version"] == held["version"] and wire.cj(new["o"]) != wire.cj(held):
                 raise HubRefused("snapshot_conflict")
         revoked = sorted({*cur.revoked_op_certs, *fetched.revoked_op_certs})
@@ -317,6 +474,17 @@ def local_card(service: WorkspaceService) -> dict[str, Any]:
         return card
 
 
+def _workspace_name(service: WorkspaceService) -> str:
+    """The workspace's display name from ``config.json`` (what Mission Control shows), at most 80 characters; empty when
+    there is none (the hub then shows a friendly fallback, never an id)."""
+    from .reads_ws import config_name
+
+    try:
+        return config_name(service.store)[:80]
+    except Exception:  # noqa: BLE001 - display only: never fails the status report
+        return ""
+
+
 def wscard_part(service: WorkspaceService) -> dict[str, Any]:
     from orch.identity.epochs import default_part
 
@@ -326,8 +494,18 @@ def wscard_part(service: WorkspaceService) -> dict[str, Any]:
 class _NoLink:
     """No hub link in this host yet (C5): every send is unreachable."""
 
-    def send(self, message: dict[str, Any]) -> dict[str, Any]:
+    def send_next(self, op: str, build: Any) -> dict[str, Any]:
         raise ConnectionRefusedError("no hub link")
+
+
+class _Down:
+    """The network settings cannot be used: every send fails with their code (an ``OSError``), nothing is dialled."""
+
+    def __init__(self, exc: OSError) -> None:
+        self._exc = exc
+
+    def send_next(self, op: str, build: Any) -> dict[str, Any]:
+        raise self._exc
 
 
 def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | None = None) -> Any:
@@ -337,13 +515,29 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
         return TRANSPORT(service, hub_id)
     if not link or not link.get("addr") or not link.get("spki"):
         return _NoLink()
-    from orch.hubclient.tlsadapter import TlsTransport
+    from orch.hubclient.tlsadapter import FailoverTransport, TlsTransport
+    from orch.hubclient.tlslink.errors import ProxyError
 
-    return TlsTransport(
-        addr=link["addr"], tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
-        hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
-        now_ms=lambda: int(service.clock() * 1000),
-    )  # fmt: skip
+    from . import hubaddr, hubnet
+
+    try:
+        net = hubnet.load(service.state_dir)  # the host's own proxy settings; a broken file never means "direct"
+    except ProxyError as exc:
+        return _Down(exc)
+    check = hubaddr.dial_resolver(link["addr"], net=net)  # every dial: resolve once, policy, connect to that IP
+
+    def to(addr: str) -> TlsTransport:
+        return TlsTransport(
+            addr=addr, resolve=check, net=net, inspected=hubnet.inspected(service.state_dir, addr),
+            tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
+            hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
+            now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
+        )  # fmt: skip
+
+    extra = [a for a in link.get("addrs") or [] if a != link["addr"]]
+    if not extra:
+        return to(link["addr"])
+    return FailoverTransport([to(a) for a in (link["addr"], *extra)])  # current first, then verified ones
 
 
 def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
@@ -351,6 +545,14 @@ def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
     else the one kept in ``hub.json``. The address is not signed and not trusted: the card's TLS pin decides."""
     env = os.environ.get("ORCH_HUB_ADDR") if dev else None
     return env or args.get("addr") or (None if state is None else state.addr)
+
+
+def _more_addrs(state: Any, dev: bool) -> list[str]:
+    """The other addresses of the hub the host verified (M4 #1461), dialled after :func:`_addr`. A dev override
+    (``ORCH_HUB_ADDR``) names the one address to use and nothing else."""
+    if state is None or (dev and os.environ.get("ORCH_HUB_ADDR")):
+        return []
+    return list(getattr(state, "addrs", []))
 
 
 def hub_role(service: WorkspaceService, user_id: str) -> str | None:
@@ -378,8 +580,8 @@ def signing_mode(service: WorkspaceService) -> str:
     bricks a workspace that never joined. ``hub.json`` can only make the answer **stricter**: a full join whose
     ``hub.json`` is missing, unreadable, or names another hub, binding or mode is ``unknown``, and a selective join
     whose ``hub.json`` cannot be read, or already says ``full`` (the file is ahead of the log), is ``unknown`` too.
-    ``unknown`` is treated as ``full`` by every caller (:data:`~orch.host.hubsign.HUB_ONLY`). A selective join that has
-    no ``hub.json`` yet (``hub.connect`` not run) stays ``selective``: nothing was handed to the hub.
+    ``unknown`` is treated as ``full`` by every caller (:data:`~orch.host.hubsign.SEALS_TO_HUB`). A selective join
+    that has no ``hub.json`` yet (``hub.connect`` not run) stays ``selective``: nothing was handed to the hub.
 
     Reads the log fresh (``store.refresh()``); safe under the store lock. Never touches the network."""
     store = service.store
@@ -424,9 +626,11 @@ def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
 
     * The log has no ``hub.joined``, or its newest hub record is ``hub.left``: the workspace is not in hub mode, so
       the direct path stays (until the H6 switch). The old binding is not consulted: leaving ends it.
-    * The log says joined: the hub is the **only** path. If ``hub.json`` is missing, is not the joined hub's bound
-      binding (same ``hub_id`` and ``binding_seq``, selective), or cannot be read, the request is refused
-      (``hub.not_joined`` / ``hub.state_mismatch``); it never falls back to direct, which would bypass the hub."""
+    * The log says joined: the hub is the **only** path, in either mode (selective or full). If ``hub.json`` is
+      missing, is not the joined hub's bound binding (same ``hub_id`` and ``binding_seq``), disagrees with the signed
+      log about the mode, or cannot be read, the request is refused (``hub.not_joined`` / ``hub.state_mismatch``,
+      each in plain words); it never falls back to direct, which would bypass the hub. Publishing stays the person's
+      signed decision in both modes: the route carries no authority of its own, the share was signed first."""
     from orch.crypto.encoding import unb64u
 
     model = dict(service.store.state.workspace.hub)
@@ -440,15 +644,27 @@ def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
         or state.binding_seq != model.get("binding_seq")
     ):
         raise HostError(
-            "hub.not_joined", "this workspace has joined a hub but is not connected to it yet: orch hub connect"
+            "hub.not_joined",
+            "This workspace has joined a hub but is not connected to it right now. Connect it in Settings, "
+            "Hub, then try again.",
         )
-    if state.mode != "selective" or model.get("mode") != "selective":
-        raise HostError("hub.state_mismatch", "only selective hub mode publishes today")
+    if (
+        state.mode not in ("selective", "full")
+        or state.mode != model.get("mode")
+        or state.binding["o"]["mode"] != state.mode  # the signed binding must agree too: fail closed
+    ):
+        raise HostError(
+            "hub.state_mismatch",
+            "The hub connection on this computer does not match what the workspace has signed. Open Settings, "
+            "Hub and connect again, then try again.",
+        )
     dev = bool(state.binding["o"]["dev"])
     return {
         "hub_id": state.hub_id,
         "hk_op": unb64u(state.hk_op_pub, 65),
         "addr": _addr({}, state, dev),
+        #: every address the host would dial for this hub (the dial order of :func:`_transport`): one list, one policy
+        "addrs": [a for a in [_addr({}, state, dev), *_more_addrs(state, dev)] if a],
         "spki": state.tls_spki,
         "mode": state.mode,
     }
@@ -608,7 +824,42 @@ def _owner(call: Call) -> str:
     return call.viewer
 
 
+#: R6 (#1594): why the link did not come up, in words a person can act on (no product names)
+NET_MESSAGES: dict[str, tuple[str, str]] = {
+    "hub.link_inspected": (
+        "something on this network opens encrypted connections, so the hub cannot be trusted from here",
+        "ask your IT team to let the hub's name through without inspection",
+    ),
+    "hub.proxy_auth": (
+        "the company proxy did not accept the sign-in",
+        "check the proxy user and password in Network settings",
+    ),
+    "hub.proxy_refused": (
+        "the company proxy refused the connection to the hub",
+        "ask your IT team to allow the hub's address through the proxy",
+    ),
+    "hub.proxy_unreachable": (
+        "the company proxy could not be reached",
+        "check the proxy address in Network settings",
+    ),
+}  # fmt: skip
+
+
+def _link_refused(code: str) -> HostError:
+    """``hub.link``: why the card behind a connect link was not taken. W08: a server that answered at the link's address
+    (another program on the port, or a different hub) is named as such, never as "could not be reached"."""
+    if code in ("not_a_hub", "other_hub"):
+        what = "another program" if code == "not_a_hub" else "a different hub"
+        ask = "ask your hub admin for a connect link with an address this computer can reach"
+        return HostError("hub.refused", f"{what} answers at this link's address, not your hub: {ask}", hint=ask)
+    return _refused(code)
+
+
 def _refused(code: str) -> HostError:
+    full = code if code.startswith("hub.") else f"hub.{code}"
+    if full in NET_MESSAGES:
+        text, hint = NET_MESSAGES[full]
+        return HostError(full, text, hint=hint, retry_after_ms=300000 if full == "hub.link_inspected" else 2000)
     if code == "hub_unreachable":
         return HostError("hub.unreachable", "the hub could not be reached; nothing was lost", retry_after_ms=2000)
     if code == "hub_address_changed":
@@ -634,6 +885,52 @@ def _refused(code: str) -> HostError:
             fix=["orch", "hub", "leave"],
         )
     return HostError("hub.refused", f"the hub is refused: {code}")
+
+
+NET_BROKEN_NOTE = "The network settings of this computer can't be read, so the hub is not contacted. Fix or clear them."
+
+
+def _reachable(service: WorkspaceService, state: Any) -> tuple[bool | None, bool]:
+    """``(up, net_broken)`` for ``hub.status``. Network settings that exist but cannot be used (a corrupt file, loose
+    permissions) are fail-closed: no connect of any kind (a direct probe would go around the owner's proxy), ``up`` is
+    ``None``. No settings file at all is a normal direct setup."""
+    from orch.hubclient.tlslink.errors import ProxyError
+
+    from . import hublinkprobe, hubnet
+
+    try:
+        net = hubnet.load(service.state_dir)
+    except ProxyError:
+        return None, True
+    scope = f"{service.state_dir}:{service.workspace_id}"
+    return hublinkprobe.reachable(scope, _addr({}, state, workspace_dev(service)), net=net), False
+
+
+def _network(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """R6 (#1594, design section 3): the owner's proxy for hub links. Owner at this workspace only (``_owner`` ran: an
+    agent is ``op.not_allowed``; the dashboard route is in the remote refused lists). The hub never reaches this. The
+    password goes to its 0600 file and is never in an answer, the audit line or an error."""
+    from orch.hubclient.netconfig import NetConfigError
+
+    from . import hubnet
+
+    state_dir = call.service.state_dir
+    if op == "hub.network_set":
+        try:
+            if args["proxy"] is None:
+                hubnet.clear_proxy(state_dir)
+            else:
+                hubnet.set_proxy(state_dir, args["proxy"], args.get("user"), args.get("password"))
+        except NetConfigError as exc:
+            what = {
+                "user": "the proxy user name has characters it cannot have",
+                "password": "the proxy password has characters it cannot have",
+            }.get(str(exc), "the proxy address must look like http://name:3128 or https://name:3128")
+            raise HostError("invalid.input", what) from None
+        except OSError:
+            raise HostError("workspace.unavailable", "the network settings could not be saved here") from None
+        _audit(call, "hub.network", proxy_set=args["proxy"] is not None, password_set=bool(args.get("password")))
+    return hubnet.view(state_dir)
 
 
 def _audit(call: Call, event: str, **more: Any) -> None:
@@ -705,10 +1002,25 @@ def serve(call: Call) -> dict[str, Any]:
         out = breakglass.rotate(call, epochs_for(service))
         _audit(call, "keys.rotate")
         return out
+    if op in ("hub.network", "hub.network_set"):
+        return ok_result(_network(call, op, args))
     if op == "hub.link":
         return {"plan": {"op": "hub.link", "link": args["link"], "dev": workspace_dev(service)}}
+    if op == "hub.address":
+        return {"plan": {"op": op, "link": args["link"], "dev": workspace_dev(service)}}
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
+    if op == "hub.profile":
+        if "profile" not in args:
+            return ok_result({"profile": _load_profile(service)})
+        _save_profile(service, args["profile"])
+        if state is None or state.status != "bound":
+            return ok_result({"profile": args["profile"], "pushed": False})
+        return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
+    if op in ("hub.directory", "hub.shared"):
+        if state is None or state.status != "bound":
+            raise HostError("hub.not_joined", "this workspace is not connected to a hub")
+        return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
     if op == "hub.history":
         from . import breakglass
 
@@ -720,20 +1032,27 @@ def serve(call: Call) -> dict[str, Any]:
         from .hubhandoff import handoff
 
         return handoff(call, args, state)
+    if op == "hub.switch":
+        if state is None or state.status != "bound":
+            raise HostError("hub.not_joined", "this workspace is not connected to a hub")
+        need = {"ticket": ("origin", "return_to", "ticket_kind"), "redeem": ("ticket",), "rail": ("origin",)}[
+            args["kind"]
+        ]
+        if set(args) - {"kind"} != set(need):
+            raise HostError("invalid.input", f"hub.switch {args['kind']} takes exactly: {', '.join(need)}")
+        return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
     if op == "hub.status":
         from orch.hubclient import snapshot
 
-        from . import hublinkprobe
+        from . import hubclosing, hublinkprobe, hubpublish
 
         binding = None if state is None else state.status
-        up = None
+        up, net_broken = None, False
         if binding == "bound":
-            up = hublinkprobe.reachable(
-                f"{service.state_dir}:{service.workspace_id}", _addr({}, state, workspace_dev(service))
-            )
+            up, net_broken = _reachable(service, state)
         return ok_result(
             {
-                "snapshot": snapshot.pinned_view(state),
+                "snapshot": snapshot.pinned_view(state, int(service.clock() * 1000)),
                 "joined": bool(model) and model.get("status") == "joined",
                 "hub_id": model.get("hub_id"),
                 "mode": model.get("mode"),
@@ -751,8 +1070,19 @@ def serve(call: Call) -> dict[str, Any]:
                 "binding": binding,
                 "hub_card": None if state is None else state.card,  # public; the dashboard's one-click mode switch
                 "reachable": up,
+                # R6: settings that cannot be read mean no probe and no dial at all, said in plain words
+                "network": {"broken": net_broken, "note": NET_BROKEN_NOTE if net_broken else None},
                 **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),
+                "update_notice": _update_notice(service, state),  # HUB-WS-04: hub admin asks for an update
+                "addrs": [] if state is None else [a for a in [state.addr, *state.addrs] if a],
+                # what the hub says of itself (hub_where): its own words, a hint; never part of a workspace's own text
+                "closing": None if state is None else hubclosing.view(state),  # #1463: {since_ms, ends_ms} | None
+                "hub_says": None if state is None or not state.hub_name else {"name": state.hub_name, "from": "hub"},
+                # #1838: where the hub SIGNED that its workspaces publish and share, verified against the card pinned
+                # now (the Publish form suggests only this; the owner still signs), where the settings came from and
+                # whether the hub has moved since: publish_where, publish_from, publish_moved
+                **hubpublish.status_fields(service),
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
             }
@@ -776,8 +1106,6 @@ def serve(call: Call) -> dict[str, Any]:
         return {"plan": plan}
     if not model or model.get("status") != "joined":
         raise HostError("hub.not_joined", "sign `orch hub join` first: the log has no hub.joined")
-    if model.get("mode") == "full":
-        hubsign.refuse_full_while_click_on(service)  # V3 C11: a full hub never runs beside click-to-sign
     dev = workspace_dev(service)
     now = int(service.clock() * 1000)
     try:
@@ -843,12 +1171,58 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 connectlink.resolve(plan["link"], now_ms=int(service.clock() * 1000), dev_mode=plan["dev"])
             )
         except HubRefused as exc:
-            raise _refused(exc.code) from None
+            raise _link_refused(exc.code) from None
+    if plan["op"] == "hub.address":
+        from . import hubaddr
+
+        return ok_result(hubaddr.move(call, plan["link"], now_ms=int(service.clock() * 1000), dev=plan["dev"]))
+    if plan["op"] == "hub.profile":
+        pushed = False
+        try:
+            wsk_pub, sign = _wsk_sign(service)
+            link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"], send_profile=False)
+            try:
+                link.call("profile_put", plan["args"]["profile"])
+                pushed = True
+            finally:
+                getattr(transport, "close", lambda: None)()
+        except Exception:
+            pass
+        return ok_result({"profile": plan["args"]["profile"], "pushed": pushed})
     wsk_pub, sign = _wsk_sign(service)
+    if plan["op"] == "hub.shared":
+        try:
+            link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
+            try:
+                return ok_result({**link.call("shared_get", {}), "untrusted": True})
+            finally:
+                getattr(transport, "close", lambda: None)()
+        except HubRefused as exc:
+            raise _refused(exc.code) from None
+    if plan["op"] == "hub.directory":
+        try:
+            link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
+            try:
+                return ok_result({**link.call("directory_get", plan["args"]), "untrusted": True})
+            finally:
+                getattr(transport, "close", lambda: None)()
+        except HubRefused as exc:
+            raise _refused(exc.code) from None
+    if plan["op"] == "hub.switch":
+        try:
+            return ok_result(_switch(service, plan, wsk_pub, sign))
+        except HubRefused as exc:
+            raise _refused(exc.code) from None
     now = lambda: int(service.clock() * 1000)  # noqa: E731
     save = lambda s: _save_state(service, s)  # noqa: E731
     model, state = plan["model"], plan["state"]
     _quiesce_logsync(service, plan)
+    if plan["op"] == "hub.unbind" or (plan["op"] == "hub.connect" and plan.get("kind") != "seal"):
+        # a binding is about to change (connect/rebind, unbind, leave): capabilities of the old one go first, before
+        # any state is written. The proxy also checks the live binding on every request, so this is the early half.
+        from . import orgmcp
+
+        orgmcp.revoke_workspace(service, service.workspace_id)
     try:
         if plan["op"] == "hub.connect":
             aliases = [{"person_id": p, "user_id": u} for p, u in sorted(model.get("aliases", {}).items())]
@@ -860,6 +1234,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 "sign": sign,
                 "mode": model["mode"],  # the link carries wk_seal only in full mode
             }
+            service.__dict__.pop("_hub_profile_sent", None)
+            service.__dict__.pop("_hub_status_sent", None)  # a (re)connect: tell the hub again
+            agentevents.forget_position(service)  # and start the agent events at the end of every log
             transport = _transport(service, model["hub_id"], link)
             try:
                 r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
@@ -873,12 +1250,129 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
+        agentevents.forget_position(service)  # before anything can fail: the time not joined is never uploaded
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
+        from . import orgmcp, orgsecrets, orgstate
+
+        # order matters (condition 5, #1575): capabilities first, then the purge; a run must not reach a server
+        # through a capability after the org folder is gone, nor in between
+        orgmcp.revoke_workspace(service, service.workspace_id)  # also drops the values the proxy held
+        orgsecrets.drop_cache(service)  # then the opened values (condition 14), then the files
+        orgstate.purge(service)  # M3: the company skills and servers of that binding go with it (nothing stays served)
+        from . import shareops
+
+        shareops.forget_sent(service)  # the hub purged its copies on unbind: no ghost "shared" state after a rejoin
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
         return ok_result(out)
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
+
+
+_SWITCH_OPS = {"ticket": "switch_ticket", "redeem": "switch_redeem", "rail": "rail_get"}
+
+
+def on_closing_notice(service: WorkspaceService, signed: Any) -> str | None:
+    """A pushed ``closing_notice`` (protocol 9.7): ``None`` = acknowledge with ``{}``, else the refusal code."""
+    from . import hubclosing
+
+    return hubclosing.on_closing_notice(service, signed)
+
+
+def owner_user(service: Any, state: Any) -> str | None:
+    """The hub user the bound hub names as the owner of this workspace (``owner_get`` over the host's OWN link), or
+    ``None`` when it cannot say (no owner alias, hub away). FB15: only the host asks, never a caller; the answer is the
+    hub's word (V3-D19, #1394). Runs on the workspace worker like the snapshot fetch of an event delivery."""
+    import re
+
+    try:
+        wsk_pub, sign = _wsk_sign(service)
+        hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, workspace_dev(service))
+    except Exception:  # noqa: BLE001 - no usable link: no owner known
+        return None
+    try:
+        user = hub_link.call("owner_get", {}).get("user_id")
+    except Exception:  # noqa: BLE001 - the hub refuses or is away: fail closed
+        return None
+    finally:
+        getattr(transport, "close", lambda: None)()
+    return user if isinstance(user, str) and re.fullmatch(r"[0-9a-f]{32}", user) else None
+
+
+#: The install that was refused waits for this call, so it is short: a hub that is away must not hold the answer up.
+ADDON_REQUEST_TIMEOUT_S = 3.0
+
+
+def report_addon_request(service: Any, name: str, version: str = "", actor: str = "person") -> None:
+    """M3 (#1450): tell the bound hub that installing ``name`` was refused by its policy (``market.addon_not_allowed``),
+    so its admin can allow it. Best effort and display only: no link, no hub or any error means nothing is sent; it
+    never changes the refusal and grants nothing."""
+    import re
+
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", str(name)):
+        return
+    try:
+        state = _load_state(service)
+        if state is None or state.status != "bound":
+            return
+        wsk_pub, sign = _wsk_sign(service)
+        hub_link, transport = _snapshot_link(
+            service, state, wsk_pub, sign, workspace_dev(service), send_profile=False, timeout=ADDON_REQUEST_TIMEOUT_S
+        )
+    except Exception:  # noqa: BLE001, S110 - no usable link: nothing to tell
+        return
+    try:
+        hub_link.call(
+            "addon_request",
+            {
+                "name": str(name),
+                "version": version if re.fullmatch(r"[0-9A-Za-z.+-]{0,32}", version) else "",
+                "actor": "agent" if actor == "agent" else "person",
+            },
+        )
+    except Exception:  # noqa: BLE001, S110 - the hub refuses or is away: the install was refused locally anyway
+        pass
+    finally:
+        getattr(transport, "close", lambda: None)()
+
+
+def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> dict[str, Any]:
+    """``hub.switch`` (H1, 27 Oct): the hub decides the person (the owner alias of this workspace), the host relays.
+    ``ticket``: a one-time ticket to open (or sign out of) the hub console; ``redeem``: the hub answers for a ticket the
+    hub console made for THIS workspace (single use, 30 s, audience = this authenticated link); ``rail``: the workspace
+    list. Nothing here is logged, signed by a person or kept."""
+    a = plan["args"]
+    if a["kind"] == "redeem":
+        _refuse_switch(service, plan["state"])  # D93: before the hub is asked, so the ticket stays unused
+    hub_link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
+    try:
+        if a["kind"] == "ticket":
+            r = hub_link.call(
+                "switch_ticket", {"origin": a["origin"], "return_to": a["return_to"], "kind": a["ticket_kind"]}
+            )
+        elif a["kind"] == "redeem":
+            r = hub_link.call("switch_redeem", {"ticket": a["ticket"]})
+        else:
+            r = hub_link.call("rail_get", {"origin": a["origin"]})
+    finally:
+        getattr(transport, "close", lambda: None)()
+    return r
+
+
+def _refuse_switch(service: Any, state: Any) -> None:
+    """D93 (R2 #1590): a hub console switch into this workspace is refused when the owner said it runs at a customer's
+    place (premises yes) or when the hub is joined selectively (the hub cannot vouch for who opens the dashboard). The
+    answer comes from the model, never from the request; the refusal is plain and nothing is sent to the hub."""
+    from orch.model.remote import hub_mode_of
+
+    ws = service.store.state.workspace
+    premises = (ws.remote or {}).get("premises") == "yes"
+    if premises or getattr(state, "mode", None) != "full" or hub_mode_of(ws) != "full":
+        raise HostError(
+            "switch.refused",
+            "this workspace cannot be opened from another computer through the hub",
+            hint="open it on its own computer",
+        )
 
 
 def _quiesce_logsync(service: Any, plan: dict[str, Any]) -> None:
@@ -898,19 +1392,116 @@ def _stop_peers(service: Any) -> None:
     logsyncops.start(service)  # V3 C14: eligible (full, bound, sealed) -> a pass now; else the sender ends
 
 
-def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:
+def _send_status(service: Any, state: Any, hub_link: Any) -> None:
+    """Tell the hub this workspace's version, host and name (display only). Kept per hub as the last body that was
+    DELIVERED: a failure is logged (no secret in it) and retried on the next link use, a changed name or mode is
+    sent again, and a (re)connect clears the mark (R14b: it was one attempt, errors swallowed)."""
+    import logging
+    import re
+    import socket
+
+    import orch
+
+    body = {
+        "version": orch.__version__,
+        "commit": "",
+        "host": socket.gethostname()[:80] if state.mode == "full" else "",  # selective keeps its host name private
+        "name": _workspace_name(service),  # the workspace name is display-only and owner-chosen: sent in every mode
+    }
+    sent = service.__dict__.setdefault("_hub_status_sent", {})
+    if type(sent) is not dict:
+        sent = service.__dict__["_hub_status_sent"] = {}
+    at = service.__dict__.setdefault("_hub_status_at", {})
+    now = service.clock()
+    # the same body is sent again after STATUS_POLL_S: the reply is how the hub's "please update" request arrives (pull)
+    if sent.get(state.hub_id) == body and now - at.get(state.hub_id, 0) < STATUS_POLL_S:
+        return
+    try:
+        reply = hub_link.call("status_put", body)
+    except Exception as exc:  # noqa: BLE001 - display only: never fails the op, but is not silent either
+        logging.getLogger("orch.host.hubops").warning(
+            "hub status not delivered (%s); will retry on the next hub link", getattr(exc, "code", type(exc).__name__)
+        )
+        return
+    sent[state.hub_id] = body
+    at[state.hub_id] = now
+    asks = service.__dict__.setdefault("_hub_update_req", {})
+    req = reply.get("update_requested") if type(reply) is dict else None
+    target = req.get("target_version") if type(req) is dict else None
+    if type(target) is str and re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", target):
+        asks[state.hub_id] = target
+    else:
+        asks.pop(state.hub_id, None)
+
+
+STATUS_POLL_S = 600
+
+
+def _version_tuple(v: Any) -> tuple[int, ...] | None:
+    import re
+
+    m = re.match(r"^(\d+(?:\.\d+)*)", v) if isinstance(v, str) else None
+    if m is None:
+        return None
+    nums = [int(n) for n in m[1].split(".")]
+    while nums and nums[-1] == 0:
+        nums.pop()
+    return tuple(nums)
+
+
+def _update_notice(service: Any, state: Any) -> dict[str, str] | None:
+    """HUB-WS-04: the hub's admin asked this workspace's owner to update. Only while this host's own version is lower
+    than the asked one (so it clears itself); the version string is all the hub sends, never text."""
+    import orch
+
+    asks = service.__dict__.get("_hub_update_req")
+    target = asks.get(state.hub_id) if type(asks) is dict and state is not None else None
+    have, want = _version_tuple(orch.__version__), _version_tuple(target)
+    if have is None or want is None or have >= want:
+        return None
+    return {"target_version": target}
+
+
+def _snapshot_link(
+    service: Any,
+    state: Any,
+    wsk_pub: bytes,
+    sign: Any,
+    dev: bool,
+    *,
+    send_profile: bool = True,
+    timeout: float | None = None,
+) -> tuple[Any, Any]:
     """``(HubLink, transport)`` for the bound hub of ``state`` (the caller closes the transport)."""
     from orch.crypto.encoding import unb64u
     from orch.hubclient import HubLink
 
     hk_op = unb64u(state.hk_op_pub, 65)
-    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign,
-            "mode": state.mode}  # fmt: skip
+    link = {"addr": _addr({}, state, dev), "addrs": _more_addrs(state, dev), "spki": state.tls_spki, "hk_op": hk_op,
+            "wsk_pub": wsk_pub, "sign": sign, "mode": state.mode}  # fmt: skip
+    if timeout is not None:
+        link["timeout"] = timeout  # seconds per socket step (the TLS link's own default is 10)
     transport = _transport(service, state.hub_id, link)
     hub_link = HubLink(
         transport, hub_id=state.hub_id, workspace_id=service.workspace_id, hk_op_pub=hk_op, sign=sign,
         mode=state.mode, now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
+    _send_status(service, state, hub_link)
+    agentevents.send(service, state, hub_link)  # HUB-AC-03: four references per agent action, never content
+    try:
+        if send_profile:
+            profile = _load_profile(service)
+            digest = hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            sent = service.__dict__.setdefault("_hub_profile_sent", {})
+            if sent.get(state.hub_id) != digest:
+                hub_link.call("profile_put", profile)
+                service.__dict__.setdefault("_hub_profile_sent", {})[state.hub_id] = digest
+    except Exception as exc:  # noqa: BLE001 - display only; logged, retried on the next link use
+        import logging
+
+        logging.getLogger("orch.host.hubops").warning(
+            "hub profile not delivered (%s)", getattr(exc, "code", type(exc).__name__)
+        )
     return hub_link, transport
 
 
@@ -919,18 +1510,27 @@ def _refresh(
 ) -> dict[str, Any]:
     from orch.hubclient import snapshot
 
+    from . import hubclosing
+
     service = call.service
     adopted = False
     if plan.get("hub_card") is not None:  # a rotated card first: the link below dials its pin and trusts its op key
         adopted = snapshot.adopt_card(state, plan["hub_card"], now_ms=now(), dev_mode=plan["dev"])
     hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, plan["dev"])
+    from . import hubaddr
+
+    where = None
     try:
         changed = snapshot.refresh(
             state=state, link=hub_link, workspace_id=service.workspace_id, dev_mode=plan["dev"], now_ms=now,
             save=lambda fetched: _save_snapshot(service, fetched), card_adopted=adopted,
         )  # fmt: skip
+        where = hubaddr.fetch_where(hub_link)  # M4: only the question is asked inside the session
+        hubclosing.pull(service, state, hub_link)  # #1463: the hub's closing notice, if it is being removed
     finally:
         getattr(transport, "close", lambda: None)()
+    if where is not None:  # probes run after the link is closed and off this thread: no timing for the hub to read
+        hubaddr.apply_in_background(service, state, where)
     view = snapshot.pinned_view(_load_state(service))  # what is on disk now, not the copy this call started from
     _audit(call, "hub.snapshot", hub_id=state.hub_id, version=(view or {}).get("version"), changed=changed)
     return {"hub_id": state.hub_id, "changed": changed, "snapshot": view}
@@ -1089,6 +1689,11 @@ def _unbind(
 
         flush_publish(state=state, put=put, save=save)  # publish first, then the hub
 
+        if state.status == "bound" and model.get("binding_seq", 0) > state.binding_seq:
+            from orch.hubclient import publish_held
+
+            if publish_held.drop(state):  # the log moved on to a newer binding: this one ended, so what it held goes
+                save(state)  # (the seq tombstone stays; also for a selective binding, which retires nothing else)
         if state.status == "bound" and state.mode == "full" and model.get("binding_seq", 0) > state.binding_seq:
             retire_full_state(state, epochs, save, "unbind")  # the log moved on to a newer binding: this one ended
         flush(state=state, workspace_id=service.workspace_id, sign_wsk=sign, now_ms=now, transport_for=tf, save=save)

@@ -3,7 +3,7 @@ import type { AddonPackage, InstalledAddon } from '@/api/types'
 import { addonName, Raw, wordsAndId } from '@/addon-ui/SignConfirm'
 import { plain } from '@/components/sign/visible'
 import { SignPrompt } from '@/components/sign/SignPrompt'
-import { addedCapabilities, explain, removedCapabilities } from './capabilities'
+import { addedCapabilities, eventLine, explain, removedCapabilities } from './capabilities'
 
 export const shortSha = (sha: string) => `${sha.slice(0, 8)}…${sha.slice(-6)}`
 
@@ -11,7 +11,9 @@ export type GrantAsk = { kind: 'grant'; addon: InstalledAddon } | { kind: 'updat
 
 /**
  * Core's signing prompt for a capability grant or an update: name, version, package hash and what it may do.
- * The owner signs exactly these values (addon.granted {name, version, package_sha256, capabilities}).
+ * The owner signs exactly these values (addon.granted {name, version, package_sha256, capabilities, viewer_actions,
+ * events}); every event the addon can wake a follow-up with is read out in core's words (same sentence as
+ * `orch addon grant`).
  * Installing and granting are one signed act that also turns the addon on ("Grant and turn on").
  */
 export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: () => void; onClose: () => void }) {
@@ -24,6 +26,9 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
   const caps = update?.capabilities ?? installed.capabilities
   const added = update ? addedCapabilities(installed.capabilities, caps) : []
   const removed = update ? removedCapabilities(installed.capabilities, caps) : []
+  // The wake events (addon-api 1.2) of the version being signed: the update's, else the package's or the grant's.
+  const events = update ? (update.events ?? []) : ask.kind === 'install' ? (ask.addon.events ?? []) : (ask.addon.ws.granted?.events ?? ask.addon.events ?? [])
+  const eventLines = events.map((ev) => eventLine(ev, caps, plain))
   const viewerNow = viewerActions(manifestFor(addon as AddonPackage, installed.version))
   const viewerNext = update ? viewerActions({ actions: update.actions ?? addon.actions }) : viewerNow
   const turnsOn = ask.kind !== 'update'
@@ -50,6 +55,7 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         `Addon: ${plain(addon.name)} ${v}`,
         caps.length ? `Capabilities: ${caps.map(plain).join(', ')}` : 'Capabilities: none',
         viewersCan,
+        ...eventLines.map((l) => `Can wake a waiting follow-up: ${l}`),
         ...(turnsOn ? ['Grants these capabilities and turns it on in this workspace'] : []),
         ...(update ? [staysOn ? `The new capabilities take effect now and ${named} stays on` : `${named} stays off; the new capabilities apply when it is turned on`] : []),
         ...(caps.includes('pty') ? ['Agents never get pty'] : []),
@@ -105,6 +111,13 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
               </p>
             ))}
           </section>
+        )}
+        {eventLines.length > 0 && (
+          <ul aria-label="Events" className="space-y-1 text-text-muted">
+            {eventLines.map((l, i) => (
+              <li key={events[i].kind} className="break-words">{`Can wake a waiting follow-up: ${l}`}</li>
+            ))}
+          </ul>
         )}
         <ul className="space-y-1">
           {caps.map((c) => (

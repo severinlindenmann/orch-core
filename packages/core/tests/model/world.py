@@ -49,7 +49,6 @@ class World:
         self.dev: dict[str, str] = {}
         self.uid_n = 0
         self.workspace_id = hex32("workspace")
-        self.hub_only = False  # model-only tests opt out of the full-mode rule (C8 L2-C8i-5: the default is on)
 
     # ---- plumbing
     def tick(self, seconds: int = 10) -> str:
@@ -69,7 +68,12 @@ class World:
     def _build(self, log: str, typ: str, actor: dict[str, Any], payload: dict[str, Any], **env: Any) -> dict[str, Any]:
         events = self.ws if log == "workspace" else self.tl.get(log, [])
         prev = canon.event_head(events[-1]) if events else None
-        if typ in ("hub.joined", "hub.left"):  # #1198 C9: the member is required; the test verifier checks no proof
+        if typ in (
+            "hub.joined",
+            "hub.left",
+            "remote.changed",
+            "remote.device_added",
+        ):  # #1198 C9, R2: the member is required; the test verifier checks no proof
             payload = {"owner_proof": None, **payload}
         e: dict[str, Any] = {
             "v": 2,
@@ -127,7 +131,6 @@ class World:
             verifier=self.verifier,
             now=now or self.at(),
             expected_workspace_id=self.workspace_id,
-            hub_only=self.hub_only,
         )
 
     def build_unappended(self, log: str, typ: str, actor, **payload):
@@ -274,6 +277,19 @@ class World:
         if with_tasks:
             tasks = [{"id": "T1", "text": "do it", "verify": {"cmd": "make test"}, "proves": ["AC1"]}]
             self.edit(uid, actor, {"ticket.tasks": tasks})
+
+    def approve_plan(self, uid: str, who: str = "sev"):
+        """r10-P02: an agent starts and finishes tasks only after the plan is approved. Fill what the requirements and
+        plan gates need (keeping existing acceptance criteria and tasks), then approve both."""
+        v = self.view(uid)
+        names = ("context", "requirements", "out_of_scope", "plan", "decisions", "verification")
+        secs = {s: f"{s} text" for s in names}
+        sets = {} if v.acceptance else {"ticket.acceptance": [{"id": "AC1", "text": "it works"}]}
+        self.edit(uid, who, sets, secs)
+        if not v.tasks:
+            self.edit(uid, who, {"ticket.tasks": [{"id": "T1", "text": "do it", "verify": None, "proves": []}]})
+        self.decide(uid, who, "requirements")
+        self.decide(uid, who, "plan")
 
     def decide(
         self, uid: str, who: str, gate: str, kind: str = "approve", text: str = "x", try_: bool = False, **over: Any

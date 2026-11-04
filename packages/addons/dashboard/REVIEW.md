@@ -117,9 +117,9 @@ Every addon page, panel and Today card, each marked with the orange A.
 - [ ] **GitHub** — Review on GitHub, Approve; the issues lane on the Board imports an issue as a ticket. Page: `/addon/github/reviews`.
 - [ ] **Usage** — Overview and By model; every number says its period. Page: `/addon/usage/overview`.
 - [ ] **Wiki** — Open a page, edit it, link it to a ticket. Page: `/addon/wiki/pages`.
-- [ ] **Terminals** — Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only. Page: `/addon/terminals/sessions`.
+- [ ] **Command window** — Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only. Page: `/addon/terminals/sessions`.
 - [ ] **Estimate** — Estimate a card in its ticket panel; the Board column shows the sum. Page: `/board`.
-- [ ] **Worktrees** — Add a worktree, Remove is refused on a dirty one, Open terminal here. Page: `/addon/worktrees/worktrees`, Busy day.
+- [ ] **Work copies** — Add a work copy, Remove is refused on a dirty one, Open terminal here. Page: `/addon/worktrees/worktrees`, Busy day.
 - [ ] **Quick tasks** — Add, close with proof, make a ticket, the outgrew decision. Page: `/addon/quick/quick`, Busy day.
 - [ ] **Records** — Record changes, push twice (rejected: pull first), pull, push. Page: `/addon/records/records`, Busy day.
 - [ ] **Activity** — Filters and Show older. Page: `/addon/activity/activity`, Busy day.
@@ -180,7 +180,7 @@ Compact addon pages; what needs you sits above the tabs.
 - [ ] **Schedules** — Schedules | Runs; the finding above the tabs. Page: `/addon/schedules/schedules`, Busy day.
 - [ ] **AI Factory** — The folded “n permits waiting · Review” row above the tabs; expand it to answer. Page: `/addon/factory/factory`, Busy day.
 - [ ] **Quick tasks** — Active | Completed. Page: `/addon/quick/quick`, Busy day.
-- [ ] **Worktrees** — Filters, then Add worktree. Page: `/addon/worktrees/worktrees`, Busy day.
+- [ ] **Work copies** — Filters, then Add work copy. Page: `/addon/worktrees/worktrees`, Busy day.
 
 ### 13. Widgets
 
@@ -277,7 +277,7 @@ Nothing here talks to a real system. Each simulation says so where you meet it (
 | Thing | In the mockup |
 |---|---|
 | Touch ID and signatures | Every human signature shows core's sign dialog with what you sign; "Touch ID" is a 600 ms pause. Signatures, hashes and key fingerprints are made up. No OS prompt. |
-| Terminals (PTY) | A scripted fake shell in xterm.js. `orch status`, `orch show`, `orch wait`, `git status`, `git log`, `ls`, `help` and a few more answer from the demo state; nothing runs on your machine. |
+| Command window (PTY) | A scripted fake shell in xterm.js. `orch status`, `orch show`, `orch wait`, `git status`, `git log`, `ls`, `help` and a few more answer from the demo state; nothing runs on your machine. |
 | Claude Code and Codex in the dock | Scripted CLI screens. Your own session answers each prompt with a short canned reply marked simulated; agent sessions are replayed transcripts that end on the ticket's real blocker. |
 | Agent runs | "Start agent" plays a script on a timer: claim after 1.5 s, a task lease, a log line, T1 done, then a question to you. The Busy day adds a live script (an event every 4–8 s). AI Factory "Run demo activity" and the Landing "Run the worker (demo)" are scripts too. |
 | GitHub | Pull requests and issues live in the addon's demo state. "Review on GitHub" opens a github.com address; approve and import change only the demo. |
@@ -646,7 +646,7 @@ B10 phone approvals (phase 1): on a host with phone/1, pair a phone and allow Ph
 
 Open through `orch setup` after the parallel core branch is integrated. `/setup#launch=<single-use code>` uses the setup process, not mock workspace storage. A normal dashboard launch token is intentionally refused. In development, `/setup` uses the same API; tests provide an in-process fetch fake and a real private Unix socket contract fake.
 
-Review Welcome → You → Agents may → Approval → Secret words → Review, then progress and Done. Check One click disables relay with its reason, recovery words form a numbered four-column/six-row grid, Print includes only recovery words, and confirmed words disappear. Check three-day runner access is one plain click and needs the matching terminal fingerprint. Existing workspaces say “Finish setup” and skip secret screens. Failures show per-step status and a “Finish setup later” path.
+Review Welcome → You → Agents may → Approval → Secret words → Review, then progress and Done. Check One click disables relay with its reason, recovery words form a numbered four-column/six-row grid, Print includes only recovery words, and confirmed words disappear. Check three-day runner access is one plain click; the terminal fingerprint is checked only with Terminal approval (One click has no terminal check). Existing workspaces say “Finish setup” and skip secret screens. Failures show per-step status and a “Finish setup later” path.
 
 ### B9 core-aligned setup (2026-10-16)
 
@@ -669,3 +669,24 @@ Tests were added for the lead to run; this task does not run Vitest or pytest.
 ## Try the hub pages (V3 A7)
 
 Open `/w/DEMO/settings/hub?hub=selective` (also `standalone`, `full`, `offline`, `nottold`): the chip in the top bar, the three Hub pages, "Choose what to share" with its live preview, the switch to full access (type "full access"), Leave, and the Terminal step with its copy box. Tickets shows the Hub column in selective mode only. Nothing is signed in the page.
+
+### D3 — install and turn on (28 Oct 2026)
+
+In Add-ons → Browse, press Install. Required fields appear inline with manifest defaults; edit them and press Install and turn on. The signer shows the exact settings and capability risks. Wait at least one second, then press again to sign the sequence. Without required fields, Install opens the signer directly. Cancelling consumes the stage; staging alone installs nothing. Tokens use the existing sealed login after installation.
+
+D3 validation: 479 core tests (marketplace, add-on sequence, click risk, identity vectors), 404 dashboard server tests, 70 touched Vitest tests, and one vector test each in hub, relay and mobile passed. TypeScript and Ruff passed. Core tests used isolated temporary HOME directories. CLI addon.grant snapshots were refreshed for digest/caps and addon.stage_changed. No commit or push.
+
+### D2 review (2026-10-28)
+
+Create a ticket with “Create and start”. With missing/short access, verify the signer headline, ticket fields, eight-hour grant terms and inline deposit risk; waiting alone must never sign, and the second press must wait one second. With valid access of at least 15 minutes, verify no grant step or access copy outside “i”. Interrupt signing after creation: the draft remains and start is refused. Retry a lost launch response: the same request returns the same run.
+
+### D5 check (2026-10-28)
+
+On a real host, post a comment and let the C3 arm finish: the toast says “Sending in N s; closing this page still sends.” Undo within ten seconds cancels without a signature. Navigate away or close/reopen the page to see delivery checked against the signer. Restart the signer during the wait to see “Not sent”; sleep past the deadline by more than 30 seconds has the same outcome. Add-on off and runner off offer Undo that opens a fresh turn-on review. Follow-up cancel keeps its existing signed, authority-checked Undo within 120 seconds.
+
+### X3 check (2026-10-31)
+
+1. In the mock, use `?hub=delivery` and open DEMO-0043, DEMO-0045, DEMO-0042 and DEMO-0044. See: sent, waiting, not sent and refused respectively.
+2. On the not-sent ticket, choose Send now. See: the existing sharing review; nothing sent until Sign. Cancel sends nothing.
+3. Open Settings > Hub or the real host's Shares page with unsent shares. See: the count and Send now opening the same review.
+4. Join with pre-existing, unconfirmed share rules. See: “Some shares were made before you joined. Send them now?” Later dismisses it for that join; reopening Settings does not offer again.

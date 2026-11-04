@@ -133,7 +133,7 @@ def test_a_dirty_tree_blocks_the_decision_at_prepare(world, dirt):
 def test_a_tree_dirtied_after_prepare_is_refused_at_binding(world):
     name, args = decision(world)
     h = world.human
-    prepared = h.prepare(name, args, handoff=True)
+    prepared = h.prepare_unbound(name, args)
     rid = prepared["request"]["id"]
     assert prepared["checks"][0]["clean"] is True
     (world.repo / "evil‮txt.sh").write_text("x\n")
@@ -160,7 +160,7 @@ def test_unknown_fails_closed_at_prepare_and_at_binding(owner_world, monkeypatch
     world = owner_world
     h = world.human
     name, args = decision(world)
-    prepared = h.prepare(name, args, handoff=True)
+    prepared = h.prepare_unbound(name, args)
     reader = world.served.service.capabilities().git.reader
     monkeypatch.setattr(reader, "tree_checks", False)  # tier B without its worker: no answer
     e = error(h.c.req("human.get", {"request_id": prepared["request"]["id"], "signer": h.signer}))
@@ -191,7 +191,7 @@ def test_a_booby_trapped_repo_runs_nothing_through_a_whole_decision(owner_world)
     (repo / ".git" / "info" / "attributes").write_text("* filter=trap\n")
     os.utime(repo / "impl.txt", (3, 3))  # forces the raw-bytes hash where a filter would have run
     h = world.human
-    prepared = h.prepare(*decision(world), handoff=True)
+    prepared = h.prepare_unbound(*decision(world))
     bound = ok(h.c.req("human.get", {"request_id": prepared["request"]["id"], "signer": h.signer}))["data"]
     ok(h.submit_res(bound["request"]["id"], h.sign(bound).events))
     assert not [m.name for m in marks if m.exists()]
@@ -204,7 +204,7 @@ def test_binding_requires_a_check_for_every_bound_repo_never_a_cached_one(world,
     trusted either way: the current tree decides."""
     h = world.human
     name, args = decision(world)
-    prepared = h.prepare(name, args, handoff=True)
+    prepared = h.prepare_unbound(name, args)
     rid = prepared["request"]["id"]
     path = world.served.lab.state / "hosts" / world.served.wid / "requests" / rid
     rec = json.loads(path.read_text())
@@ -229,7 +229,7 @@ def test_clean_is_tied_to_the_signed_commit_at_binding(world, move):
     refused, although the tree is clean there."""
     h = world.human
     name, args = decision(world)
-    prepared = h.prepare(name, args, handoff=True)
+    prepared = h.prepare_unbound(name, args)
     rid = prepared["request"]["id"]
     world.hws.git("checkout", "-q", "-b", "other")
     if move == "other commit":
@@ -261,7 +261,7 @@ def test_a_dry_run_runs_no_tree_check(owner_world, monkeypatch):
 def test_a_bound_request_polled_within_5_seconds_is_not_walked_again(owner_world, monkeypatch):
     world = owner_world
     h = world.human
-    prepared = h.prepare(*decision(world), handoff=True)
+    prepared = h.prepare_unbound(*decision(world))
     rid = prepared["request"]["id"]
     ok(h.c.req("human.get", {"request_id": rid, "signer": h.signer}))  # binds: always checked
     reader = world.served.service.capabilities().git.reader

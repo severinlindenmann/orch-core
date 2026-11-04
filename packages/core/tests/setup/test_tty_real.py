@@ -33,7 +33,7 @@ def work():
         Creator._tty_confirm(me)
         out["code"] = 0
     except SetupError as e:
-        out["code"] = 10 if e.code == "tty.declined" else 11
+        out["code"] = 10 if e.code == "sign.cancelled" else 11
 
 t = threading.Thread(target=work)
 t.start()
@@ -65,7 +65,8 @@ def _run(answer: bytes, early: bytes = b"") -> tuple[int, str]:
             if not chunk:
                 break
             seen += chunk
-        if not sent and b"type yes: " in seen:
+        if not sent and b"any other key cancels." in seen:
+            time.sleep(1.2)
             if early:  # the early line was discarded: the child still waits for an answer
                 time.sleep(1.0)
                 assert os.waitpid(pid, os.WNOHANG)[0] == 0, f"type-ahead was taken as the answer: {seen!r}"
@@ -86,10 +87,10 @@ def _run(answer: bytes, early: bytes = b"") -> tuple[int, str]:
 
 
 def test_the_terminal_shows_the_plain_block_and_yes_confirms():
-    code, seen = _run(b"yes\n")
+    code, seen = _run(b"\r")
     assert "orch setup is asking you to confirm." in seen
     assert "stick napkin dress" in seen
-    assert "If they match, type yes: " in seen
+    assert "Press Enter to sign, any other key cancels." in seen
     assert code == 0
 
 
@@ -103,5 +104,5 @@ def test_input_typed_before_the_prompt_is_discarded_never_an_answer():
     """Opus review MEDIUM: a "yes" queued before the prompt (type-ahead, a pasted line) is flushed; only a line typed
     after the prompt answers it. Here the later line is "no", so the run is declined."""
     code, seen = _run(b"no\n", early=b"yes\n")
-    assert "If they match, type yes: " in seen
+    assert "Press Enter to sign, any other key cancels." in seen
     assert code == 10

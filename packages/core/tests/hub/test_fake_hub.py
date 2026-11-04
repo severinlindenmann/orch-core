@@ -14,7 +14,7 @@ from orch.crypto import suite as S
 from orch.crypto.encoding import b64u, unb64u
 
 from . import contract as H
-from .fake import FakeHub, HostLink, HubError, owner_proof_for, sign_with, vector_join_body
+from .fake import TEST_EXPORTER, FakeHub, HostLink, HubError, owner_proof_for, sign_with, vector_join_body
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
@@ -49,7 +49,14 @@ def test_every_reply_passes_the_host_side_link_check(joined: HostLink, hub: Fake
     msg = joined.message("snapshot_get", {})
     reply = hub.send(msg)
     o = H.verify_link(
-        reply, direction="h2w", hub_id_=hub.hub_id, workspace_id=WS, mode="selective", pub=hub.hk_op_pub, now_ms=NOW
+        reply,
+        direction="h2w",
+        hub_id_=hub.hub_id,
+        workspace_id=WS,
+        mode="selective",
+        pub=hub.hk_op_pub,
+        now_ms=NOW,
+        exporter=TEST_EXPORTER,
     )
     assert o["re"] == msg["o"]["seq"] and o["op"] == "snapshot_get"
 
@@ -156,14 +163,14 @@ def test_wk_seal_is_wrong_mode_in_selective(joined: HostLink, hub: FakeHub):
     assert hub.workspaces[WS].wk_seals == []
 
 
-def test_share_ops_work_in_selective_only(joined: HostLink, hub: FakeHub):
+def test_share_ops_work_in_both_modes(joined: HostLink, hub: FakeHub):
     item = "11" * 16
     assert joined.call("share_put", {"item_id": item, "sealed": "AAAA"}) == {}
     assert hub.workspaces[WS].shares == {item: "AAAA"}
     assert joined.call("share_revoke", {"item_id": item}) == {}
     assert hub.workspaces[WS].shares == {}
     assert joined.call("binding_put", {"object": binding(2, "full")}) == {}
-    assert code(joined, "share_put", {"item_id": item, "sealed": "AAAA"}) == "wrong_mode"
+    assert joined.call("share_put", {"item_id": item, "sealed": "AAAA"}) == {}
 
 
 def test_full_mode_takes_wk_seal_and_audit_ack(joined: HostLink, hub: FakeHub):
@@ -237,7 +244,14 @@ def test_link_auth_under_the_pinned_wsk(joined: HostLink, hub: FakeHub):
 def test_hub_pushes_signed_h2w_requests(joined: HostLink, hub: FakeHub):
     msg = hub.push(WS, "route_in", {"envelope": "AAAA"})
     o = H.verify_link(
-        msg, direction="h2w", hub_id_=hub.hub_id, workspace_id=WS, mode="selective", pub=hub.hk_op_pub, now_ms=NOW
+        msg,
+        direction="h2w",
+        hub_id_=hub.hub_id,
+        workspace_id=WS,
+        mode="selective",
+        pub=hub.hk_op_pub,
+        now_ms=NOW,
+        exporter=TEST_EXPORTER,
     )
     assert o["re"] is None and o["seq"] == 1
     assert hub.push(WS, "route_in", {"envelope": "AAAA"})["o"]["seq"] == 2

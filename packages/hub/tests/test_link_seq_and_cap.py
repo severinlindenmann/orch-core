@@ -62,14 +62,11 @@ def test_a_replayed_join_is_not_applied_twice(hub):
     assert _closed(c)
 
 
-def test_first_frame_sets_the_baseline_and_a_new_link_may_continue_numbering(hub):
-    c = hub.open(first=True)
-    c.seq = 40  # a host numbers across reconnects (core HubLink); the first frame of a link is the baseline
-    c.request("join", hub.join_body())
+def test_a_new_link_starts_again_at_1(hub):  # R1: no baseline, no numbering across reconnects
+    c = joined(hub)
     assert "snapshot" in c.request("snapshot_get", {})
     c.close()
     c2 = hub.open()
-    c2.seq = 44
     assert "snapshot" in c2.request("snapshot_get", {})
     assert "snapshot" in c2.request("snapshot_get", {})
 

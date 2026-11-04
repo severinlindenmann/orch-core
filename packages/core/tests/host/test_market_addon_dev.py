@@ -64,7 +64,10 @@ def test_in_a_dev_workspace_the_signed_grant_installs_the_commit_and_records_no_
         assert st["dev"] is True and st["name"] == NAME and st["package_sha256"] == packed.digest  # same as pack
         assert st["commit"] == packed.commit and not addon_dir(served, NAME).exists()  # staged is not installed
         h = Human(served)
-        prepared = h.prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
+        prepared = h.prepare(
+            "addon.grant",
+            {"name": NAME, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+        )
         assert prepared["material"]["market"]["class"] == "dev-folder"  # labelled, per host, not signed
         assert prepared["events"][0]["package_sha256"] == st["package_sha256"]
         ok(h.submit_res(prepared["request"]["id"], h.sign(prepared).events))
@@ -94,7 +97,10 @@ def test_a_plain_grant_of_the_dev_folder_later_is_refused(tmp_path, repo):
     try:
         st = ok(dev_stage(served, repo))["data"]
         h = Human(served)
-        prepared = h.prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
+        prepared = h.prepare(
+            "addon.grant",
+            {"name": NAME, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+        )
         ok(h.submit_res(prepared["request"]["id"], h.sign(prepared).events))
         assert err(h.prepare_res("addon.grant", {"name": NAME})) == "market.not_installed"
     finally:
@@ -159,7 +165,10 @@ def test_the_dev_gate_is_asked_again_at_submit(tmp_path, repo):
     try:
         st = ok(dev_stage(served, repo))["data"]
         h = Human(served)
-        prepared = h.prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
+        prepared = h.prepare(
+            "addon.grant",
+            {"name": NAME, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+        )
         served.service.dev = None  # the host stopped being a dev host between stage and submit
         res = h.submit_res(prepared["request"]["id"], h.sign(prepared).events)
         assert err(res) == "host.dev_refused" and not addon_dir(served, NAME).exists()
@@ -235,7 +244,10 @@ def test_the_dev_review_carries_a_per_host_not_signed_dev_folder_block(tmp_path,
     lab, served = sbx(tmp_path)
     try:
         st = ok(dev_stage(served, repo))["data"]
-        prepared = Human(served).prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
+        prepared = Human(served).prepare(
+            "addon.grant",
+            {"name": NAME, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+        )
         block = prepared["material"]["market"]
         assert block["class"] == "dev-folder" and block["commit"] == st["commit"] and block["url"] == "local folder"
         text = signer.render(prepared, lambda w: ("Acme", "DEMO"))

@@ -21,6 +21,14 @@ export interface StagedFile {
   sha256: string
 }
 
+/** A file picked on this computer: kept aside by the host until Review; nothing is shared. */
+export interface Picked {
+  upload_id: string
+  name: string
+  size: number
+  sha256: string
+}
+
 export interface Share {
   id: string
   ticket: string | null
@@ -44,6 +52,8 @@ export interface Staged {
   days: number | null
   views: number | null
   origin: 'agent' | 'person' | null
+  /** W22: this person already signed this copy and the send did not go through: Send now, no second signature. */
+  signed?: boolean
   files: StagedFile[]
   created_at: string | null
 }
@@ -59,6 +69,13 @@ export type SharesData =
       owner: string | null
       /** The server answered with its own numbers; false: these are this computer's records. */
       live: boolean
+      /**
+       * Only when `live` is false: no answer (`unreachable`), an answer that refused (`not_allowed`), or no hub (`local`);
+       * `hub_left`: the settings came from a hub this workspace is no longer bound to; `hub_moved`: the hub's address moved off
+       * them. For a moved hub the page reads the add-ons row only (`hub_moved` there, with the new values): the one source for
+       * the banner and its review; this reason just keeps "cannot be reached" from showing beside it.
+       */
+      why?: 'unreachable' | 'not_allowed' | 'refused' | 'local' | 'hub_left' | 'hub_moved'
       shares: Share[]
       staged: Staged[]
     }
@@ -82,7 +99,9 @@ const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 
 export const sharesApi = {
   list: (ws: string, ticket?: string) => call<SharesData>('GET', `${w(ws)}/shares${ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''}`),
-  prepare: (ws: string, body: { ticket: string; artifacts: string[]; kind: ShareKind; days: Days; views?: Views }, idem: string) =>
+  /** One picked file (P05): its bytes as base64. At most `PICK_MAX_BYTES`. */
+  upload: (ws: string, body: { name: string; data: string }, idem: string) => call<Picked>('POST', `${w(ws)}/shares/upload`, { ...body, idem }),
+  prepare: (ws: string, body: { ticket: string; artifacts: string[]; uploads?: string[]; /** Files of the ticket's own work folder, by name; the host finds them there. */ workfiles?: string[]; kind: ShareKind; days: Days; views?: Views }, idem: string) =>
     call<{ staged: Staged; server: string | null; share: string | null }>('POST', `${w(ws)}/shares/prepare`, { ...body, idem }),
   /** The one answer with a link. Do not store the result anywhere but the component that shows it. */
   send: (ws: string, staged_id: string, idem: string) => call<Sent>('POST', `${w(ws)}/shares/send`, { staged_id, idem }),
@@ -117,24 +136,60 @@ export const effectiveState = (s: Pick<Share, 'state' | 'expires_at'> & Partial<
 }
 
 export const viewsText = (s: Pick<Share, 'kind' | 'views' | 'view_limit'>): string =>
-  s.views === null ? 'not known' : s.kind === 'once' && s.view_limit ? `${s.views} of ${s.view_limit}` : String(s.views)
+  s.views === null ? 'Not known' : `Opened ${s.views} time${s.views === 1 ? '' : 's'}${s.kind === 'once' && s.view_limit ? `; up to ${s.view_limit}` : ''}`
 
 /** What a ticket's file needs to be shareable: a real file whose name the server takes, within the limits. */
 export const LIMITS = { files: 20, file_bytes: 25 * 1024 * 1024, share_bytes: 50 * 1024 * 1024 }
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,99}$/
+/** The most a file picked on this computer may hold (the host holds the same limit). */
+export const PICK_MAX_BYTES = 1024 * 1024
+
+/** Why a file picked on this computer cannot be added, or null. Checked before any byte is read. */
+export function unpickable(file: { name: string; size: number }, taken: readonly string[]): string | null {
+  if (!NAME.test(file.name) || file.name.includes('..') || file.name !== file.name.trim()) return 'The name has characters the server does not take (letters, digits, space, dot, dash and underscore only).'
+  if (file.size === 0) return 'This file is empty.'
+  if (file.size > PICK_MAX_BYTES) return 'Larger than 1 MB. Add it to the ticket first, or pick a smaller file.'
+  if (taken.some((n) => n.toLowerCase() === file.name.toLowerCase())) return 'A file with this name is already in the list.'
+  return null
+}
+
+/** The bytes of a File as base64, in pieces so a large string is never spread into one call. */
+export async function fileBase64(file: Blob): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
 
 export function unshareable(a: { name: string; kind: string; bytes: number | null; addon?: string; url?: string }): string | null {
   if (a.kind === 'link' || a.url || a.addon) return 'This is a link or an add-on item, not a file.'
   if (!NAME.test(a.name) || a.name.includes('..') || a.name !== a.name.trim()) return 'The name has characters the server does not take (letters, digits, space, dot, dash and underscore only).'
   if (a.bytes !== null && a.bytes > LIMITS.file_bytes) return 'Larger than 25 MB.'
+  if (a.bytes === 0) return 'The file is empty.'
   return null
 }
 
 export const fmtSize = (n: number): string => (n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1024 * 1024)).toFixed(1)} MB`)
 
+/** The host's words when the settings came from a hub this workspace is no longer bound to (`hub_left`). The name is the hub's display name when the page knows it. */
+export const hubLeftText = (hubName?: string | null): string => `Sharing went through your hub${hubName ? ` ${hubName}` : ''}. Connect again, or set a sharing server.`
+const HUB_LEFT_TEXT = hubLeftText()
+
+/**
+ * The paused line when the hub has moved, by host name: it names whichever value changed (files, links, or both). `old` is the
+ * pair in force now; when it is not known nothing is claimed unchanged, so both are named.
+ */
+export function hubMovedText(moved: { server: string; share: string }, old?: { server: string | null; share: string | null } | null): string {
+  const files = !old?.server || !sameOrigin(old.server, moved.server)
+  const links = !old?.share || !sameOrigin(old.share, moved.share)
+  if (files && !links) return `Sharing paused: your hub now takes files at ${hostOf(moved.server)}.`
+  if (files && links) return `Sharing paused: your hub now takes files at ${hostOf(moved.server)} and shares links through ${hostOf(moved.share)}.`
+  return `Sharing paused: your hub now shares links through ${hostOf(moved.share)}.`
+}
+
 /** The server's reasons in words. `unknown_workspace` names the admin step. */
 export const REASON_TEXT: Record<string, string> = {
-  unknown_workspace: 'The sharing server has not allowed this workspace yet. Ask the person who runs the server to allow it.',
+  unknown_workspace: 'Your hub has not allowed this workspace to share yet. Ask the hub’s admin.',
   blocked: 'The server’s admin has blocked this workspace.',
   owner_not_allowed: 'The server’s admin has not allowed the owner of this workspace.',
   limit: 'The server refused: a size or count limit is reached.',
@@ -142,13 +197,15 @@ export const REASON_TEXT: Record<string, string> = {
   clock: 'This computer’s clock is off. Fix the time and try again.',
   delegation: 'This workspace’s identity could not be read.',
   rejected: 'The server refused this.',
+  hub_left: HUB_LEFT_TEXT,
+  hub_moved: 'Sharing paused: your hub now shares through a new address. Use the new address.',
 }
 
 const CODE_TEXT: Record<string, string> = {
   'publish.not_configured': 'No publish server is set up yet. Set one up on the Add-ons page.',
   'publish.not_approved': 'A signature for exactly these files and this server is missing or too old. Sign it again.',
   'publish.changed': 'The prepared copy changed or is gone. Prepare the share again.',
-  'publish.unreachable': 'The publish server could not be reached. Nothing was shared.',
+  'publish.unreachable': 'Sharing is paused: your hub cannot be reached. Your files were not sent.',
   'publish.no_link': 'The files were shared but no link came back. Revoke this share and share again.',
   'runner.disabled': 'Publish is switched off for this workspace. Turn it on in Settings, Add-ons.',
   'rate.limited': 'Too many publish requests in a minute. Wait a little and try again.',
@@ -169,22 +226,69 @@ export function shareError(e: unknown): string {
   return CODE_TEXT[e.code] ?? 'That did not work. Reload and try again.'
 }
 
+export const isUnreachable = (e: unknown): boolean => e instanceof ApiError && e.code === 'publish.unreachable'
+
 export const isUnknownWorkspace = (e: unknown): boolean => e instanceof ApiError && e.code === 'publish.server_refused' && (e.detail as { reason?: string } | undefined)?.reason === 'unknown_workspace'
 
 /** The command the server's admin runs (`orch-publish admin ws allow WORKSPACE OWNER`). Shown under Technical details. */
 /** Is this address one that opens only on this computer? */
 export const isLoopback = (origin: string | null): boolean => !!origin && /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin)
 
-/** What the two addresses mean for who can open the links. null: nothing to add (both public, or one is not known). */
-export function reachNote(server: string | null, share: string | null): string | null {
+/**
+ * What the two addresses mean for who can open the links. null: nothing to add (both public, or one is not known).
+ * "This computer" (and "nobody else") only when `from` says the Publish server is on this computer: a loopback address alone
+ * does not say so, a hub can be reached through one.
+ */
+/** B07: the links open only on this computer (the local test setup): the "anyone with the link" warning would contradict it. */
+export const localOnly = (server: string | null, share: string | null, from: 'computer' | 'hub' | null = null): boolean =>
+  from === 'computer' && isLoopback(server) && isLoopback(share)
+
+export function reachNote(server: string | null, share: string | null, from: 'computer' | 'hub' | null = null): string | null {
   if (!server || !share) return null
   const s = isLoopback(server)
   const l = isLoopback(share)
-  const host = (o: string) => o.replace(/^https?:\/\//, '')
-  if (s && l) return 'Local test link: opens only on this computer, so nobody else can use it.'
-  if (l) return `Links open only on this computer, but files are uploaded to ${host(server)}, which other people can reach.`
-  if (s) return `Links open from ${host(share)}, which other people can reach; files are uploaded to this computer only.`
+  const here = from === 'computer'
+  if (s && l) return here ? 'This link needs access to the Publish server on this computer.' : null
+  if (l) return `Links open only ${here ? 'on this computer' : `at ${hostOf(share)}`}, but files are uploaded to ${hostOf(server)}, which other people can reach.`
+  if (s) return `Links open from ${hostOf(share)}, which other people can reach; files are uploaded to ${here ? 'this computer only' : hostOf(server)}.`
   return null
+}
+
+/** Where files go, by name and never by address: the one plain line every publish review keeps in its main view (full addresses stay in Details). */
+export function destinationLine(from: 'computer' | 'hub' | null | undefined, hubName?: string | null, server?: string | null, withHost = false): string | null {
+  if (!server) return null // unknown: no line, never a guess
+  // `withHost`: a review that signs `server` also names its host after a name that is not signed (the hub's display name)
+  const at = withHost ? ` (${hostOf(server)})` : ''
+  if (from === 'hub') return hubName ? `Files go to your hub, ${hubName}${at}.` : `Files go to your hub${at}.`
+  // "this computer" only when the Publish server on this computer is the known source; a loopback address alone does not say so (a hub can be reached through one)
+  if (from === 'computer') return `Files go to this computer${at}.`
+  return `Files go to ${hostOf(server)}.`
+}
+
+/** The host name of an address, parsed (never cut out by pattern). An address that does not parse is shown whole, as given. */
+export function hostOf(address: string): string {
+  try {
+    return new URL(address).hostname || address
+  } catch {
+    return address
+  }
+}
+
+/** The same address, compared by origin so a trailing slash does not matter; an address that does not parse is compared as given. */
+/** Two addresses name the same http(s) server. Fails closed: an address that does not parse, or has an opaque origin
+ * (`new URL('a:b').origin` is the string "null" for every non-http scheme), never matches anything, since this is
+ * the gate for a "this computer" or hub-name claim. */
+export function sameOrigin(a: string, b: string): boolean {
+  const origin = (x: string): string | null => {
+    try {
+      const o = new URL(x).origin
+      return o === 'null' ? null : o
+    } catch {
+      return null
+    }
+  }
+  const oa = origin(a)
+  return oa !== null && oa === origin(b)
 }
 
 export const adminCommand = (workspace: string | null, owner: string | null): string => `orch-publish admin ws allow ${workspace ?? 'WORKSPACE_ID'} ${owner ?? 'OWNER_ID'}`

@@ -130,7 +130,11 @@ class RequestStore:
         return self.dir / request_id
 
     def read(self, request_id: str) -> dict[str, Any] | None:
-        return read_json(self._path(request_id), self.host_uid)
+        # A submitted staged grant journals the verified package snapshot (up to MAX_STAGE_BYTES)
+        # alongside its request, so recovery never substitutes bytes read later.
+        from .marketstate import MAX_STAGE_BYTES
+
+        return read_json(self._path(request_id), self.host_uid, limit=MAX_STAGE_BYTES + (16 << 20))
 
     def write(self, record: dict[str, Any]) -> None:
         terminal = record.get("state") in TERMINAL

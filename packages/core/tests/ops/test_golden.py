@@ -49,6 +49,7 @@ def build(tmp: Path, mode: Any = None) -> Ws:
     session notes are then the host's (keyed by principal and session, F4), as the cases run on it expect."""
     ws = Ws(tmp)
     ws.bootstrap()
+    ws.plan_gate_off()  # r10-P02: the base starts and finishes T1 with no plan approval, so the plan gate is off here
     with (mode or _direct)(ws) as extra:
         _fill(ws, extra)
     return ws

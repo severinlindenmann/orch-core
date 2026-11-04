@@ -1,0 +1,6 @@
+Cancel a pending follow-up.
+usage: orch follow-up cancel ID_OR_REF [--reason REASON] [--dry-run]
+  ID_OR_REF  follow-up ID or ticket REF
+  --reason REASON  cancellation reason; dismissed marks a dismissal
+  --dry-run  say what would happen, append nothing
+more: orch describe follow_up.cancel

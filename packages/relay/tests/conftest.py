@@ -16,6 +16,26 @@ def drop_state_dir(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _formatted_data(monkeypatch, request):
+    """``orch install relay`` leaves ``format.json`` in the data dir and the relay opens it only at
+    that format: a data dir that a test names for ``create_app`` gets the same file first. A test
+    that wants the real rule on a bare dir says ``raw_data``."""
+    if request.node.get_closest_marker("raw_data"):
+        return
+    from format_helpers import ensure_format
+
+    from orch_relay import app as app_mod
+
+    real = app_mod.open_data
+
+    def open_formatted(path, kind, current, *args, **kw):
+        ensure_format(path, kind, current)
+        return real(path, kind, current, *args, **kw)
+
+    monkeypatch.setattr(app_mod, "open_data", open_formatted)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_apns(monkeypatch):
     """A test that forgot to inject a transport must never reach Apple: the gateways go nowhere."""
     from orch_relay import apns

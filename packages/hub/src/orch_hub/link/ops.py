@@ -3,22 +3,25 @@
 A handler gets an :class:`OpContext` (the link's workspace and its verified request body) and returns the reply body
 or raises :class:`~orch_hub.contract.hub.Refused` (sent back as ``{"error": code}``). There is no op that makes the hub
 sign anything for the host. ``route_out`` is served when a router is configured (``route_in`` is the hub's own
-h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:mod:`orch_hub.link.wkseal`). ``share_put`` / ``share_revoke`` are served in selective mode
-(:mod:`orch_hub.shares`).
+h2w request, see :mod:`orch_hub.router`). ``wk_seal`` is served in full mode (:mod:`orch_hub.link.wkseal`). ``share_put`` / ``share_revoke`` are served in both modes
+(:mod:`orch_hub.shares`; full mode accepts ticket items only).
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..access.store import AccessError
 from ..contract import hub as H
 from ..contract.canon import unb64u
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
 from ..contract.market_policy import default_policy
+from ..versions import version_state
 from .registry import Registry
 
 if TYPE_CHECKING:
@@ -92,6 +95,7 @@ class StubSnapshots:
             "issued_ms": self._now(),
             "roles": {},
             "revoked_channels": [],
+            "ends_ms": {},
             "market_policy": default_policy(),
             "dev": True,
         }
@@ -118,6 +122,32 @@ class OpContext:
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
     views: ViewService | None = None  # D15's log_sync receiver; None: the op is `unavailable`
     shares: Any = None  # orch_hub.shares.ShareService; None = share ops not served (unknown_op)
+    activity: Any = None  # orch_hub.activity.ActivityLog; None: agent_events is `unavailable`
+    switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
+    where: Callable[[], dict[str, Any]] | None = None  # settings.where_answer: the advertised addresses and the name
+    #: #1838: gives the signed hub.publish_where now (signed by the current op key); None, or a call that gives None, = the
+    #: hub advertises none
+    publish_where: Callable[[], dict[str, Any] | None] | None = None
+    hooks: Any = None  # orch_hub.hooks.HookInbox; None = the webhook inbox is off (hook ops answer `unavailable`)
+    closing: Any = None  # orch_hub.closing.Closing; None = no removal service (closing_get answers null)
+    same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
+
+
+def safe_publish_where(
+    fn: Callable[[], dict[str, Any] | None],
+) -> Callable[[], dict[str, Any] | None]:
+    """``fn`` (a hub's ``publish_where`` provider) that never raises: any exception is "this hub advertises none right
+    now" (``None``: ``{}`` in the join reply, no ``publish_where`` member in ``hub_where``). The join is committed
+    before its reply is built, so a failure here must never turn it into an error reply (#1840 N1)."""
+
+    def call() -> dict[str, Any] | None:
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("orch_hub.link").info("publish_where not available: %s", type(e).__name__)
+            return None
+
+    return call
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -125,6 +155,16 @@ def _require_pin(c: OpContext) -> dict[str, str]:
     if pin is None:
         raise Refused("unknown_workspace")
     return pin
+
+
+def _require_not_pending(c: OpContext) -> None:
+    """Company content is served only when no cleanup of this workspace is pending (a drop that failed is retried)."""
+    access = getattr(c, "access", None)
+    if access is not None:
+        from ..access.orgcleanup import org_cleanup
+
+        if org_cleanup(access).is_pending(c.workspace_id):
+            raise Refused("unavailable")
 
 
 def _require_bound(c: OpContext) -> None:
@@ -200,6 +240,11 @@ def join(c: OpContext) -> dict[str, Any]:
         )
         owner_user = getattr(c.invites, "owner_user", None)
         alias = owner_user(invite) if owner_user is not None else None
+        # run 12: the owner's alias on the workspace log must be the user the admin bound to this invite, nothing a
+        # crafted link could say; the hub's own invite binding is the authority.
+        claimed = c.body.get("alias_users") or []
+        if type(claimed) is not list or any(u != alias for u in claimed):
+            raise Refused("owner_alias_mismatch")
         c.registry.commit_join(
             c.workspace_id,
             pin["owner_person_id"],
@@ -221,8 +266,12 @@ def join(c: OpContext) -> dict[str, Any]:
         c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
     except Refused as e:
         logging.getLogger("orch_hub.link").info("card not admitted by publish at join: %s", e.code)
-    c.downstream.binding(c.workspace_id, join_msg["binding"])
-    return {}
+    try:  # the same: committed is committed, a downstream that fails or refuses must not turn the join into an error
+        c.downstream.binding(c.workspace_id, join_msg["binding"])
+    except Exception:
+        logging.getLogger("orch_hub.link").exception("binding not passed to publish at join")
+    signed = None if c.publish_where is None else safe_publish_where(c.publish_where)()
+    return {} if signed is None else {"publish_where": signed}  # §10.2, §10.9.1
 
 
 def card_put(c: OpContext) -> dict[str, Any]:
@@ -289,6 +338,11 @@ def binding_put(c: OpContext) -> dict[str, Any]:
             state = H.apply_unbound(held, u)
         else:
             raise Refused("malformed")
+        owes_drop = c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound")
+        if owes_drop:  # marked before the commit: a crash right after it still leaves the mark, and nothing is served
+            from ..access.orgcleanup import org_cleanup
+
+            org_cleanup(c.access).mark(c.workspace_id)
         c.registry.set_binding_state(c.workspace_id, state, obj)
 
     def locked(step: Callable[[], None]) -> Callable[[], None]:
@@ -304,12 +358,21 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         ):
             c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
 
+    def drop_org_content() -> None:
+        # a workspace that left (or is joining afresh) keeps no company secret, skill or tool server; a failed drop stays
+        # pending and is retried, and nothing is served to that workspace meanwhile
+        if owes_drop:
+            from ..access.orgcleanup import org_cleanup
+
+            org_cleanup(c.access).drop(c.workspace_id)
+
     steps: list[tuple[str, Callable[[], None]]] = [
         ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
         ("share sync", locked(lambda: _sync_shares(c, state))),
         ("view drop", locked(lambda: _drop_view(c, state))),
         ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
         ("spaces on_unbind", leave_spaces),
+        ("org content drop", drop_org_content),
     ]
     for name, step in steps:
         try:
@@ -325,6 +388,96 @@ def snapshot_get(c: OpContext) -> dict[str, Any]:
         _require_bound(c)
         mode = c.registry.mode(c.workspace_id)
     return {"snapshot": c.snapshots.snapshot(c.workspace_id, mode)}
+
+
+def hub_where(c: OpContext) -> dict[str, Any]:
+    """M4 (#1461, protocol 10.9): where this hub can be reached (1 to 4 link addresses) and its display name. Only a bound
+    workspace is answered. Unsigned: a hint under the TLS pin the host already holds, so the reply carries nothing a
+    peer could not learn from the connect link, and it is built from ``hub-settings.json`` only (no request member)."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.where is None:
+        raise Refused("unavailable")
+    return c.where()
+
+
+def closing_get(c: OpContext) -> dict[str, Any]:
+    """#1463 (protocol 9.7): ``{}`` -> ``{"closing": <hub.closing> | null}``. A fresh signed notice for the LINK's workspace
+    while the hub is being removed (withdrawn, notified, ordered), else ``null`` (also what a restored hub answers, which
+    clears the host's banner). Only a bound workspace is answered; nothing in the request is read."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    note = None if c.closing is None else c.closing.notice_for(c.workspace_id)
+    return {"closing": note}
+
+
+def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
+    """The gates were checked before the fetch; a leave or a drop that began meanwhile must not hand out the bundle."""
+    with c.registry.lock:
+        _require_bound(c)
+        _require_not_pending(c)
+    return bundle
+
+
+def org_skills_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1430): the signed company-skills bundle of the LINK's workspace (never a caller-named one). Only a bound
+    workspace gets one; what is in it is offered, not enabled: the owner's accept at the host decides."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        _require_not_pending(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "org_skills", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
+
+
+def mcp_servers_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1435): the signed remote-MCP-servers bundle of the LINK's workspace (never a caller-named one). Offered, not
+    enabled: the owner's accept at the host decides, and the host reaches a server only through its own proxy."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        _require_not_pending(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "mcp_servers", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
+
+
+def org_secrets_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1431): the signed bundle of sealed company secrets of the LINK's workspace (never a caller-named one). The hub
+    cannot open the wraps; the host asks for them only in tier B (host side)."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        _require_not_pending(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "org_secrets", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
+
+
+def secret_use(c: OpContext) -> dict[str, Any]:
+    """M3 (#1433): counts only. How often a secret was used on one UTC day, for the admin's "used N times this week". Bounded,
+    rate limited per workspace, only for a secret shared with the link's workspace; display data, never an authority."""
+    if c.access is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    _require_not_pending(c)
+    from ..access.orgsecrets import org_secrets
+
+    try:
+        org_secrets(c.access).record_use(c.workspace_id, c.body["secret_id"], c.body["day"], c.body["n"], c.now_ms)
+    except AccessError:
+        raise Refused("malformed") from None
+    return {}
 
 
 def publish_out(c: OpContext) -> dict[str, Any]:
@@ -372,7 +525,16 @@ def audit_ack(c: OpContext) -> dict[str, Any]:
 
 
 def space_list(c: OpContext) -> dict[str, Any]:
-    return {"spaces": _spaces(c).list_for(c.workspace_id)}
+    """The signed ``hub.space`` records plus ``meta``: the display name and kind of each listed space. ``meta`` is NOT
+    signed (the record has no name); a host shows it as "from the hub"."""
+    svc = _spaces(c)
+    recs = svc.list_for(c.workspace_id)
+    kinds = svc.store.metas()
+    meta = {}
+    for r in recs:
+        sid = r["o"]["space_id"]
+        meta[sid] = {"name": svc.store.name(sid) or "", "kind": kinds.get(sid, {}).get("type", "")}
+    return {"spaces": recs, "meta": meta}
 
 
 def space_put(c: OpContext) -> dict[str, Any]:
@@ -436,11 +598,302 @@ def log_sync(c: OpContext) -> dict[str, Any]:
         return c.views.accept(c.workspace_id, unb64u(pin["wsk_pub"], 65), c.body)
 
 
+def _switch(c: OpContext) -> Any:
+    if c.switch is None or c.access is None:
+        raise Refused("unknown_op")
+    return c.switch
+
+
+def _owner_user(c: OpContext) -> str:
+    user = c.registry.owner_alias(c.workspace_id)
+    if not user:
+        raise Refused("no_owner_alias")
+    return user
+
+
+def switch_ticket(c: OpContext) -> dict[str, Any]:
+    """The workspace's owner alias gets a ticket for the hub console; the host never names the user."""
+    from ..switch import SwitchError
+
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
+    sw = _switch(c)
+    user = _owner_user(c)
+    try:
+        sw.set_origin(c.workspace_id, c.body["origin"])
+        base = sw.hub_origin_for(c.body.get("origin"), c.same_computer)
+        if not base:
+            raise Refused("unavailable")
+        t = sw.issue_to_hub(user, c.workspace_id, c.body["return_to"], c.body["kind"])
+    except SwitchError as e:
+        raise Refused(e.code) from None
+    return {"ticket": t, "url": f"{base}/#t={t}"}
+
+
+def switch_redeem(c: OpContext) -> dict[str, Any]:
+    from ..switch import SwitchError
+
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
+    sw = _switch(c)
+    owner = c.registry.owner_alias(c.workspace_id)
+    try:
+        held = sw.peek(c.body["ticket"], "to_ws")
+    except SwitchError:
+        held = None  # unknown, used or expired: `redeem` below gives the one refusal
+    if held is not None and held["ws"] == c.workspace_id and held["user"] != owner:
+        # Only the workspace owner's hub alias redeems here. A ticket for anyone else is refused WITHOUT being used
+        # (it stays bound to this workspace and dies in 30 s); one presented at another workspace is still spent.
+        raise Refused("bad_ticket")
+    try:
+        r = sw.redeem(c.body["ticket"], "to_ws", ws=c.workspace_id)
+    except SwitchError as e:
+        raise Refused(e.code) from None
+    if r["user"] != owner:
+        raise Refused("bad_ticket")  # only the workspace owner's dashboard takes a hub ticket
+    name = next((u["name"] for u in c.access.users() if u["user_id"] == r["user"]), None)
+    return {"user_id": r["user"], "name": name, "return_to": r["rt"], "kind": r["kind"]}
+
+
+def profile_put(c: OpContext) -> dict[str, Any]:
+    if set(c.body) != set(H.PROFILE_FIELDS) or not all(check(c.body[k]) for k, check in H.PROFILE_FIELDS.items()):
+        raise Refused("malformed")
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        c.registry.put_profile(c.workspace_id, c.body)
+    return {}
+
+
+def directory_get(c: OpContext) -> dict[str, Any]:
+    from ..contract.phase4 import strip_text as render_text
+    from ..router import AccessAuthz
+
+    if set(c.body) - {"query"} or type(c.body.get("query", "")) is not str or len(c.body.get("query", "")) > 80:
+        raise Refused("malformed")
+    entries = []
+    query = c.body.get("query", "").casefold()
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        # the router's own rule (a connection AND access): never list a workspace the caller cannot route to
+        authz = c.router.authz if c.router is not None else AccessAuthz(c.registry, c.access)
+        for ws in sorted(c.registry.pins()):
+            profile = c.registry.profile(ws)
+            if ws == c.workspace_id or c.registry.mode(ws) is None or not profile or not profile["listed"]:
+                continue
+            if not authz.may_route(c.workspace_id, ws):
+                continue
+            name = render_text(c.registry.display_name(ws) or "")
+            haystack = [name, profile["description"], *profile["tags"], *profile["handles"]]
+            if query and not any(query in value.casefold() for value in haystack):
+                continue
+            entries.append(
+                {
+                    "workspace_id": ws,
+                    "name": name,
+                    "online": c.router.is_online(ws) if c.router else False,
+                    **{k: v for k, v in profile.items() if k != "listed"},
+                }
+            )
+            if len(entries) == 50:
+                break
+    return {"entries": entries}
+
+
+def audience_get(c: OpContext) -> dict[str, Any]:
+    """P02: the people and teams of this hub that the owner of the calling workspace may name as readers of a shared
+    ticket (contract 10.2b ``audience``). Display data for the host's form: names are cleaned text and are never
+    signed; only the ids go into the signed audience. The owner alias itself and the hub-admin group are not offered
+    (a hub role grants nothing in a selective workspace); disabled people are not offered. No argument."""
+    from ..access.store import ADMIN_GROUP
+    from ..contract.phase4 import strip_text
+
+    if c.access is None:
+        raise Refused("unavailable")
+    with c.registry.lock:  # pin, binding, mode and owner are judged together, on the state as it is now
+        _require_pin(c)
+        _require_bound(c)
+        owner = _owner_user(c)
+        users = c.access.users()
+        groups = c.access.groups()
+    people = [
+        {"user_id": u["user_id"], "name": strip_text(u["name"])[:80]}
+        for u in users
+        if not u["disabled"] and u["user_id"] != owner
+    ][:200]
+    teams = [{"group": g["name"], "members": len(g["members"])} for g in groups if g["name"] != ADMIN_GROUP][:50]
+    return {"people": people, "teams": teams}
+
+
+def shared_get(c: OpContext) -> dict[str, Any]:
+    """P02: the shared TICKETS other workspaces of this hub have shared with the owner of the calling workspace (through
+    their owner-signed audience, never as a role). The viewer is always the calling workspace's owner alias; the answer
+    is built by ``ShareService.list_shared`` (the one read rule), skips the viewer's own workspace and names who shared
+    it. Display data for the host's Tickets list; it grants nothing. No argument."""
+    from ..contract.phase4 import strip_text
+
+    if c.shares is None or c.access is None:
+        raise Refused("unavailable")
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        viewer = _owner_user(c)
+        names = {u["user_id"]: u["name"] for u in c.access.users()}
+        sources = [(ws, c.registry.owner_alias(ws)) for ws in sorted(c.registry.pins()) if ws != c.workspace_id]
+    out: list[dict[str, Any]] = []
+    for ws, owner in sources:
+        if owner is None or owner == viewer:
+            continue
+        for it in c.shares.list_shared(viewer, ws):
+            o = it["item"]
+            if o["item_kind"] != "ticket":
+                continue
+            content = o["content"]
+            out.append(
+                {
+                    "workspace_id": ws,
+                    "item_id": o["item_id"],
+                    "shared_by": strip_text(names.get(owner, "someone on the hub"))[:80],
+                    "key": content["key"],
+                    "type": content["type"],
+                    "title": content["title"],
+                    "status": content["status"],
+                    "labels": content["labels"],
+                    "deadline": content["deadline"],
+                    "description": content.get("description"),
+                }
+            )
+            if len(out) >= 100:
+                return {"items": out}
+    return {"items": out}
+
+
+def status_put(c: OpContext) -> dict[str, Any]:
+    if c.registry.pin(c.workspace_id) is None:
+        raise Refused("unknown_workspace")
+    c.registry.put_status(c.workspace_id, c.body)
+    # HUB-WS-04: an admin asked the owner to update. Only the version, never text; sent only while still older.
+    ask = c.registry.update_ask(c.workspace_id)
+    if ask is not None and version_state(c.body["version"], ask["target_version"], "0") == "older":
+        return {"update_requested": {"target_version": ask["target_version"]}}
+    return {}
+
+
+#: HUB-AC-03: at most this many agent events per workspace per hour are kept; the rest are dropped (the call still succeeds)
+AGENT_EVENTS_PER_HOUR = 500
+_AGENT_SEEN: dict[str, list[int]] = {}
+_AGENT_LOCK = threading.Lock()
+
+
+def agent_events(c: OpContext) -> dict[str, Any]:
+    """HUB-AC-03 (#1426): what agents did in this workspace, as four references per event (type word, agent session,
+    ticket key, time). Display data for the admin's Activity page: it grants nothing, the hub never asks for more, and
+    nothing is stored but the references. Time on the page is the hub's own clock (the workspace's is not trusted)."""
+    if c.activity is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    _require_not_pending(c)
+    with _AGENT_LOCK:
+        stamps = [t for t in _AGENT_SEEN.get(c.workspace_id, []) if c.now_ms - t < 3_600_000]
+        room = max(AGENT_EVENTS_PER_HOUR - len(stamps), 0)
+        take = c.body["events"][:room]
+        _AGENT_SEEN[c.workspace_id] = [*stamps, *([c.now_ms] * len(take))]
+    for e in take:
+        try:
+            c.activity.record(
+                "agent.event",
+                actor_kind="agent",
+                actor_session=e["agent"],
+                workspace_id=c.workspace_id,
+                detail={"what": e["kind"], **({"ticket": e["ticket"]} if e["ticket"] else {})},
+            )
+        except ValueError:
+            raise Refused("malformed") from None
+    return {}
+
+
+def addon_request(c: OpContext) -> dict[str, Any]:
+    """M3 (#1450): the workspace's host says an install was refused by the hub policy. Bounded display data for the hub
+    admin's Add-ons page; it grants nothing and changes no policy."""
+    if c.access is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    try:
+        c.access.add_addon_request(c.workspace_id, c.body["name"], c.body["version"], c.body["actor"])
+    except AccessError:
+        raise Refused("malformed") from None
+    return {}
+
+
+def _hooks(c: OpContext) -> Any:
+    """The inbox of the calling workspace's link (#1285). Every op below is keyed by ``c.workspace_id`` (the link's),
+    never by anything in the body."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.hooks is None or not c.hooks.enabled:
+        raise Refused("unavailable")
+    return c.hooks
+
+
+def hook_put(c: OpContext) -> dict[str, Any]:
+    from ..contract import hooks as HK
+
+    hooks = _hooks(c)
+    if not HK.put_ok(c.body):  # the cross-field rules the per-field table cannot state (replaces != token_hash)
+        raise Refused("malformed")
+    hooks.store.put(c.workspace_id, c.body, c.now_ms)
+    return {"url_base": hooks.url_base}
+
+
+def hook_revoke(c: OpContext) -> dict[str, Any]:
+    _hooks(c).store.revoke(c.workspace_id, c.body["token_hash"])
+    return {}
+
+
+def hook_pull(c: OpContext) -> dict[str, Any]:
+    return _hooks(c).store.pull(c.workspace_id, c.body["since"], c.now_ms)
+
+
+def hook_ack(c: OpContext) -> dict[str, Any]:
+    return {"acked": _hooks(c).store.ack(c.workspace_id, c.body["seq"])}
+
+
+def owner_get(c: OpContext) -> dict[str, Any]:
+    """FB15: the hub user this hub names as the owner of the calling workspace (V3-D19, #1394). The host binds an
+    add-on hand-off to it. No argument, nothing stored."""
+    _require_bound(c)
+    return {"user_id": _owner_user(c)}
+
+
+def rail_get(c: OpContext) -> dict[str, Any]:
+    from ..switch import SwitchError
+
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
+    sw = _switch(c)
+    user = _owner_user(c)
+    try:
+        sw.set_origin(c.workspace_id, c.body["origin"])
+    except SwitchError as e:
+        raise Refused(e.code) from None
+    origin = sw.hub_origin_for(c.body.get("origin"), c.same_computer)
+    other = sw.hub_origin()
+    return {
+        # `network_origin`: the address other devices use, named only when this answer is the same-computer form
+        "hub": {"name": sw.hub_name, "origin": origin, "network_origin": other if other and other != origin else None},
+        "user_id": user,
+        "workspaces": sw.rail_rows(c.registry, c.access, user, current=c.workspace_id),
+    }
+
+
 HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "join": join,
     "card_put": card_put,
     "binding_put": binding_put,
     "snapshot_get": snapshot_get,
+    "hub_where": hub_where,
+    "closing_get": closing_get,
     "publish_out": publish_out,
     "route_out": route_out,
     "audit_get": audit_get,
@@ -454,6 +907,25 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "log_sync": log_sync,
     "share_put": share_put,
     "share_revoke": share_revoke,
+    "switch_ticket": switch_ticket,
+    "switch_redeem": switch_redeem,
+    "rail_get": rail_get,
+    "owner_get": owner_get,
+    "addon_request": addon_request,
+    "status_put": status_put,
+    "agent_events": agent_events,
+    "org_skills_get": org_skills_get,
+    "mcp_servers_get": mcp_servers_get,
+    "org_secrets_get": org_secrets_get,
+    "secret_use": secret_use,
+    "profile_put": profile_put,
+    "directory_get": directory_get,
+    "audience_get": audience_get,
+    "shared_get": shared_get,
+    "hook_put": hook_put,
+    "hook_revoke": hook_revoke,
+    "hook_pull": hook_pull,
+    "hook_ack": hook_ack,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

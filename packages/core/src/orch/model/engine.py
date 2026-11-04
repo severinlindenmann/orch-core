@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,11 +25,14 @@ from . import (
     breakglass,
     claims,
     edits,
+    followups_wire,
     gates,
     generations,
     identity,
     lifecycle,
     questions,
+    remote,
+    schedules_wire,
     source,
     tasks,
     visibility,
@@ -77,9 +81,6 @@ class Ctx:
     expected_genesis: str | None = None
     admit: bool = False  # pre-append: no host_sig yet, ws_seq must be the workspace head
     verb_events: Any = None  # operation name -> event types it emits (grant verbs are operation names, F1 10.1)
-    #: C8/D78: judge local person events in a joined full-mode position (``breakglass.local_refusal``). A host
-    #: configuration like ``hub_dev``: the Store always sets it; model-only tests opt in.
-    hub_only: bool = True
     hub_dev: bool = False  # C3b 15.3: the reader is a dev workspace (host configuration, never a field of an event)
 
 
@@ -150,7 +151,11 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
             sigs = getattr(ctx.verifier, "verify_custodial_sigs", None)
             if sigs is None or "sig" not in e or not sigs(e, workspace_id=core.ws.workspace_id, log=log):
                 return Refusal(Code.CHAIN_BROKEN, "the hub signatures do not verify")
-        elif e["actor"]["kind"] == "person" and (r := _person_sig_check(core, log, e, ctx, genesis)) is not None:
+        elif (
+            e["actor"]["kind"] == "person"
+            and not (e["type"] == "ticket.created" and "via" in e)
+            and (r := _person_sig_check(core, log, e, ctx, genesis)) is not None
+        ):
             return r
     if kind == "ticket":
         wsh = core.logs[WORKSPACE].seq if WORKSPACE in core.logs else 0
@@ -169,7 +174,12 @@ def _envelope_check(lc: LogCore, e: dict[str, Any]) -> Refusal | None:
     if e["id"] in lc.ids:
         return Refusal(Code.EVENT_DUPLICATE_ID, e["id"])
     based = e["based_on"]
-    if (e["seq"] == 1) != (based is None) or (based is not None and lc.heads.get(based, e["seq"]) >= e["seq"]):
+    anchor_set = e["type"] == "schedule.set" and e.get("target") == "new" and e["seq"] == 2
+    if (
+        not anchor_set
+        and (e["seq"] == 1) != (based is None)
+        or (based is not None and lc.heads.get(based, e["seq"]) >= e["seq"])
+    ):
         return Refusal(Code.EVENT_BAD_BASE, "based_on must be the head of an earlier event of this log")
     return None
 
@@ -186,12 +196,33 @@ def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     unattended = a["kind"] == "agent" and a.get("unattended") is True
     is_ws = log == WORKSPACE
     sc = Core(
-        ws=copy.deepcopy(core.ws) if (is_ws or unattended or "via" in a or _names_users(e)) else core.ws,
+        ws=copy.deepcopy(core.ws)
+        if (
+            is_ws
+            or unattended
+            or "via" in a
+            or _names_users(e)
+            or typ
+            in (
+                "followup.fired",
+                "followup.outcome",
+                "schedule.set",
+                "schedule.fired",
+                "schedule.outcome",
+                "schedule.cancelled",
+            )
+        )
+        else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
         created_at=dict(core.created_at) if typ == "ticket.created" else core.created_at,
         logs=core.logs,
     )
+    # the time this event is judged at (hub end dates, identity.role_of): on a COPY of the workspace core, never on the
+    # one an earlier State shares (a shallow copy is enough where the handler only reads it)
+    at_ms = ts(e["at"]) * 1000 if "at" in e else core.ws.at_ms  # (an event always has one; a bare test event may not)
+    sc.ws = dataclasses.replace(sc.ws, at_ms=at_ms) if sc.ws is core.ws else sc.ws
+    sc.ws.at_ms = at_ms
     if is_ws and typ in CROSS_TICKETS:
         sc.tickets = copy.deepcopy(core.tickets)
     elif not is_ws and log in core.tickets:
@@ -211,6 +242,16 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         "visibility.changed": lambda: visibility.changed(ws, t, e),
         "people.changed": lambda: lifecycle.people_changed(ws, t, e),
         "policy.changed": lambda: lifecycle.policy_changed(ws, t, e),
+        "schedule.set": lambda: schedules_wire.set_event(core, t, e),
+        "schedule.fired": lambda: schedules_wire.fired_event(core, t, e),
+        "schedule.outcome": lambda: schedules_wire.outcome_event(core, t, e),
+        "schedule.cancelled": lambda: schedules_wire.cancelled_event(core, t, e),
+        "followup.set": lambda: followups_wire.set_event(core, t, e),
+        "followup.fired": lambda: followups_wire.fired_event(core, t, e),
+        "followup.outcome": lambda: followups_wire.outcome_event(core, t, e),
+        "followup.cancelled": lambda: followups_wire.cancelled_event(core, t, e),
+        "followup.rescheduled": lambda: followups_wire.rescheduled_event(core, t, e),
+        "followup.restored": lambda: followups_wire.restored_event(core, t, e),
         "claim.taken": lambda: claims.taken(ws, t, e),
         "claim.released": lambda: claims.released(ws, t, e),
         "handoff.written": lambda: lifecycle.handoff(ws, t, e),
@@ -262,6 +303,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "grant.requested": lambda: workspace.grant_requested(ws, e),
         "grant.revoked": lambda: workspace.grant_revoked(ws, e),
         "device.excluded": lambda: workspace.device_excluded(core, e),
+        "addon.requested": lambda: workspace.addon_requested(ws, e),
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),
@@ -272,6 +314,16 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
             workspace.hub_owner_proof(ws, e, v, dev=hub_dev_of(core, ctx)) or workspace.hub_left(ws, e, core)
         ),
         "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.changed": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.device_added": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.disabled": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.device_removed": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.key_rotated": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.code_issued": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.code_burned": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.session_opened": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.session_closed": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.presence": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,
@@ -288,6 +340,8 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
         return None if not ws.created else Refusal(Code.GENESIS_INVALID, "the workspace already has a genesis")
     if not ws.created:
         return Refusal(Code.GENESIS_INVALID, "the first event of a workspace is workspace.created")
+    if e["type"] == "ticket.created" and "via" in e:
+        return schedules_wire.child_creation(core, log, e) or authz.freeze_check(core, log, e)
     if a["kind"] == "person" and "via" in a:
         if (r := authz.authorize_hub(core, log, e, ctx.verifier, dev=hub_dev_of(core, ctx))) is not None:
             return r
@@ -301,10 +355,10 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
     if a["kind"] == "person":
         if e["type"] in authz.HUB_ONLY:  # C10: these two exist only as hub-signed requests (hub protocol 8.8)
             return Refusal(Code.EVENT_BAD_ACTOR, f"{e['type']} is signed through a hub only")
-        if (r := authz.authorize_person(core, log, e, ctx.verifier, hub_only=ctx.hub_only)) is not None:
+        if (r := authz.authorize_person(core, log, e, ctx.verifier)) is not None:
             return r
     elif a["kind"] == "agent":
-        if ctx.hub_only and (r := breakglass.agent_refusal(ws, e)) is not None:  # C8: same choke point as people
+        if (r := breakglass.agent_refusal(ws, e)) is not None:  # I6: every joined hub mode
             return r
         if a.get("unattended") is True:
             if (r := authz.authorize_unattended(ws, t, e)) is not None:
@@ -336,7 +390,10 @@ def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Re
             return workspace.genesis(core, e, ctx.verifier, ctx.expected_genesis)
         return _workspace_handler(core, lc, e, ctx)
     if typ == "ticket.created":
-        return lifecycle.created(core, log, e)
+        result = lifecycle.created(core, log, e)
+        if result is None:
+            followups_wire.note_event(core.tickets[log], e)
+        return result
     assert t is not None
     before = generations.snapshot(ws, t)
     status_before = t.status
@@ -348,6 +405,10 @@ def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Re
         return Refusal(Code.AUTH_INVALID_EVENT, f"voided_gates should be {sorted(settled.voided)}")
     if typ in ("gate.approved", "verdict.given"):
         gates.after_decision(ws, t, e)
+    if e["actor"]["kind"] == "agent" and (gid := e["actor"].get("grant")) is not None:
+        if ws.grants[gid].parent is not None:
+            t.fu_sessions.setdefault(gid, e["actor"]["session"].split(".")[0])
+    followups_wire.note_event(t, e)
     claims.touch(ws, t, e)
     _note_workers(t, e)
     t.last_at = max(t.last_at, ts(e["at"]))

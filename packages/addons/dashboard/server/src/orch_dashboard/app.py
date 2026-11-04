@@ -13,25 +13,36 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import (
     activity_routes,
     adapters,
+    addon_reads,
     addon_routes,
     addon_switches,
     agents,
+    claude_trust_routes,
     click,
+    cosmetic_routes,
     focus_routes,
-    handoff,
+    followups,
     hub,
     hubapprove,
     market_routes,
+    network_routes,
+    org_routes,
     passkey_routes,
     phone,
+    profile_routes,
     reads,
+    remote_routes,
     riskack,
+    schedules,
     settings,
     shares,
-    signprefs,
+    signing,
+    spaces_routes,
     stepup_routes,
+    switch,
     terminals,
     testrun,
+    trust_routes,
     usage,
     widget_frame,
     workdirs,
@@ -43,9 +54,11 @@ from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
+from .hostlink import REQUEST_MEMO
 from .live import Live, SessionStream
-from .policy import LOOPBACK, loopback_policy
-from .security import Security
+from .policy import LOOPBACK, loopback_policy, remote_device_policy
+from .remote_device import RemoteDevices
+from .security import Security, log_internal
 from .wiki import routes as wiki_routes
 
 
@@ -63,7 +76,9 @@ SETTINGS_TABS = (
     "gates",
     "grants",
     "devices",
+    "profile",
     "hub",
+    "company",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
     "",  # Today
@@ -75,18 +90,19 @@ SPA_ROUTES = (
     "artifacts",
     "agents",
     "quick",
+    "spaces",
     "drop",
     "checklist",
     "feedback",
     "worktrees",
     "terminals",
     "explorer",
-    "wiki",
+    "wiki",  # redirects to the Wiki add-on page
     "addons",
     "shares",
     "activity",
     "usage",
-    "wiki",
+    "schedules",
     "focus",
     "focus/$ticket",
     "guide",  # ?page=<x> is a query: not part of the path
@@ -127,7 +143,25 @@ SPA_PATH = re.compile(
 
 
 # Every root-level file index.html references (public/ of the UI). A test checks the built index.html against this list.
-ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
+ROOT_FILES = frozenset({"favicon.svg", "loading.css", "theme-boot.js"})
+
+
+class RequestMemo:
+    """Gives every HTTP request its own empty memo (see hostlink.REQUEST_MEMO); it ends with the request."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        memo: dict = {}
+        token = REQUEST_MEMO.set(memo)
+        try:
+            return await self.app(scope, receive, send)
+        finally:
+            memo["closed"] = True  # a task that inherited this context must not keep reading the request's answers
+            REQUEST_MEMO.reset(token)
 
 
 def create_app(
@@ -140,6 +174,7 @@ def create_app(
     remote_problem=None,
     passkeys=None,
     alt_hosts=(),
+    remote_streams=False,
 ):
     """``remote``: the front listener's policy (`remote_policy`), or None when remote access is off. One app serves both
     listeners; the server that accepted the connection says which policy applies (`scope["orch_listener"]`, set by
@@ -154,7 +189,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app):
+        if (
+            remote_streams
+        ):  # R3 (#1591): the in-process adapter of remote sessions (no listener; only the host's frames)
+            app.state.remote_devices.start(asyncio.get_running_loop())
         yield
+        if remote_streams:
+            await asyncio.to_thread(app.state.remote_devices.stop)
         await live.close()
         gateway.close()
 
@@ -166,10 +207,20 @@ def create_app(
     app.state.live = live
     app.state.term_tickets = tickets
     app.state.remote_problem = remote_problem
-    app.state.policies = {p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []))}
+    app.state.remote_devices = RemoteDevices(app, gateway)
+    # the stream policy is always there: only the in-process stream adapter can name it (`scope["orch_listener"]`)
+    app.state.policies = {
+        p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []), remote_device_policy())
+    }
     app.add_middleware(
-        Security, auth=auth, policy=app.state.policies[LOOPBACK], registry=app.state.policies, router=app.router
+        Security,
+        auth=auth,
+        policy=app.state.policies[LOOPBACK],
+        registry=app.state.policies,
+        router=app.router,
+        presence=lambda workspace, digest: app.state.take_presence(workspace, digest),
     )
+    app.add_middleware(RequestMemo)
 
     # Passkey login and enrollment exist only where a remote policy does; `passkeys` is the store (tests pass a
     # temporary one), by default the person's own file. `app.state.enroll` mints an enrollment code (R1-7, R1-6).
@@ -183,11 +234,17 @@ def create_app(
 
     @app.exception_handler(HostError)
     async def host_error(request, exc):
-        return host_response(exc)
+        answer = host_response(exc)
+        if answer.status_code >= 500:
+            log_internal(exc)  # an `internal` answer: the type and frames in the log, never the message
+        return answer
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
-        return response("invalid.input", 400)  # never echo input or credentials
+        # never echo input or credentials; a review that could not be prepared says so in one fixed plain sentence
+        if request.url.path.endswith("/click/prepare"):
+            return response("invalid.input", 400, "That could not be used. Check it and try again.")
+        return response("invalid.input", 400)
 
     @app.get("/auth/probe")
     def probe(n: Annotated[str, Query(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]):
@@ -203,8 +260,7 @@ def create_app(
     @app.post("/auth/logout")
     def logout(request: Request):
         try:
-            app.state.cancel_session(request.state.token)  # an open sign request is cancelled with its session
-            app.state.cancel_clicks(request.state.token)
+            app.state.cancel_clicks(request.state.token)  # an open sign request is cancelled with its session
             tickets.forget(request.state.token)  # its unused browser tickets go with it
         finally:
             auth.logout(request.state.token)  # the session ends even if a cancel failed
@@ -223,9 +279,14 @@ def create_app(
     def head(ws: str = Depends(reads.workspace)):
         return {"sub_cursor": gateway.call(ws, "ticket.query", {"limit": 1})["sub_cursor"]}
 
+    def bound_only(request: Request, rows):
+        """A session opened by a hub switch sees only the workspace its ticket was for (H1)."""
+        bound = auth.bound_workspace(request.state.token)
+        return rows if bound is None else [ws for ws in rows if ws.id == bound]
+
     @app.get("/api/session")
     def session_info(request: Request):
-        workspaces = gateway.workspaces()
+        workspaces = bound_only(request, gateway.workspaces())
         return {
             # How this browser session was opened: "local" (a launch code from this computer; the page hides Log out).
             "login": auth.login_kind(request.state.token) or "unknown",
@@ -241,12 +302,21 @@ def create_app(
         }
 
     @app.get("/api/workspaces")
-    def workspaces():
-        return gateway.workspaces()
+    def workspaces(request: Request):
+        return bound_only(request, gateway.workspaces())
 
     @app.get("/api/host")
-    def host():
-        return gateway.host_info()
+    def host(request: Request):
+        info = gateway.host_info()
+        bound = auth.bound_workspace(request.state.token)
+        if bound is None:
+            return info
+        # A hub-made session knows ONE workspace: the dev marker, and only the alarms of that workspace.
+        out = {k: v for k, v in info.items() if k == "dev"}
+        alarms = [a for a in info.get("alarms", []) if a.get("workspace_id") == bound]
+        if alarms:
+            out["alarms"] = alarms
+        return out
 
     def identity_row(ws):
         link = gateway.enabled(ws)
@@ -258,8 +328,8 @@ def create_app(
         )
 
     @app.get("/api/me")
-    def me():
-        return [identity_row(ws.id) for ws in gateway.workspaces() if "identity" in ws.features]
+    def me(request: Request):
+        return [identity_row(ws.id) for ws in bound_only(request, gateway.workspaces()) if "identity" in ws.features]
 
     @app.get("/api/w/{ws}/identity")
     def identity(ws: str = Depends(reads.workspace)):
@@ -279,18 +349,26 @@ def create_app(
 
     register_setup(app, auth, setup_proxy or SetupProxy(state_dir() / "setup" / "setup.sock"), port)
     reads.register(app, gateway)
-    handoff.register(app, gateway)
+    signing.register(app, gateway)
     click.register(app, gateway)
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
+    remote_routes.register(app, gateway)
+    profile_routes.register(app, gateway)
+    network_routes.register(app, gateway)
+    org_routes.register(app, gateway)
+    spaces_routes.register(app, gateway)
+    switch.register(app, gateway, auth)
+    trust_routes.register(app, auth, gateway)
+    claude_trust_routes.register(app, gateway, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
-    signprefs.register(app, gateway)
     riskack.register(app, gateway)
     phone.register(app, gateway)
     addon_routes.register(app, gateway)
     market_routes.register(app, gateway)
+    cosmetic_routes.register(app, gateway)
     activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)
@@ -299,9 +377,12 @@ def create_app(
     focus_routes.register(app, gateway)
     workdirs.register(app, gateway)
     usage.register(app, gateway)
+    followups.register(app, gateway)
+    schedules.register(app, gateway)  # run 13: "My schedules" was never served (the page read a 404)
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)
     wiki_routes.register(app, gateway)
+    addon_reads.register(app, gateway)
     widget_frame.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 

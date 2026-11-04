@@ -1,18 +1,11 @@
-// The terminal hand-off (design 4, host contract v1.4 section 0.8.1): types, and the two hashes the person compares.
-//
-// The dashboard never signs and never holds a factor. It asks the host to prepare a sign request, shows the host's
-// `material` (never the cached ticket) with a fingerprint, and the person signs in a terminal with `orch sign CODE`.
-// The fingerprint is computed here exactly as `orch sign` computes it, from what the server sent:
-//   review_digest = "sha256:" + sha256(cj(material))
-//   fingerprint   = first 12 hex of sha256(cj({op, review_digest, events: [event without sig, actor.device, auth]}))
-// where `cj` is canonical JSON (RFC 8785 on the restricted subset: integers, ASCII keys). A request whose hashes do not
-// recompute is never shown as valid.
+// Shared signing action shapes and host material integrity checks.
 import { sha256Hex } from './sha256'
 
 /** An add-on a person can switch: built in or installed from a marketplace (the server checks the shape, the host knows the installed list). */
 export type AddonSwitchName = string
 export type HandoffAction =
-  | { action: 'market_grant'; name: string; staged: string }
+  | { action: 'market_update'; name: string; staged: string; digest: string; caps: string[] }
+  | { action: 'market_grant'; name: string; staged: string; grant: Record<string, unknown>; settings?: Record<string, unknown> }
   | { action: 'accept_criterion'; key: string; ac: string; note?: string }
   | { action: 'withdraw_acceptance'; key: string; ac: string; reason: string }
   | { action: 'mark_task_done'; key: string; task: string }
@@ -24,6 +17,14 @@ export type HandoffAction =
   | { action: 'label'; key: string; label: string }
   | { action: 'close'; key: string; resolution?: 'wont_do' | 'duplicate' | 'obsolete' | 'other'; duplicate_of?: string; message?: string }
   | { action: 'reopen'; key: string; message?: string }
+  /** Cancel a follow-up (Schedules, #720): its person or a manager; one click. */
+  | { action: 'followup_cancel'; key: string; id: string }
+  | { action: 'followup_reschedule'; key: string; id: string; when: string }
+  | { action: 'followup_undo'; key: string; id: string }
+  /** Schedule a run of a ticket (`schedule.add`, a click): once, or every day, week (weekdays, Monday = 0) or month (day 1..31). */
+  | ({ action: 'schedule_add'; brief: string; at: string; every?: 'day' | 'week' | 'month'; tz: string; weekdays?: number[]; day?: number; run_hours?: number } & ({ target?: 'existing'; key: string; title?: never } | { target: 'new'; title: string; key?: never }))
+  /** Cancel one of the person's schedules (`schedule.cancel`, one click). */
+  | { action: 'schedule_cancel'; key: string; id: string }
   /** Return unclaimed work to backlog or open (host `move`, H6b): owners and maintainers. */
   | { action: 'move'; key: string; to: 'backlog' | 'open'; reason?: string }
   /** A person's `new` carries the title and type only. Everything else is a follow-up hand-off (`details`, `section`). */
@@ -32,13 +33,15 @@ export type HandoffAction =
    * B11 (finding 9): a new ticket WITH its fields and written text on ONE review and ONE confirmation. The signer signs
    * `ticket.created`, the fields and one `ticket.updated` per written section, each checked against this intent.
    */
-  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] }; agent?: { hours: number }; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
+  | { action: 'new_sequence'; launch?: { harness: 'claude-code' | 'codex'; mode: string; model?: string }; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] }; agent?: { hours: number }; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
   /**
    * B12D (N3): an edit of an EXISTING ticket on ONE review and ONE confirmation: the changed sections (their new text), the
-   * criteria to change or add, the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
+   * criteria to change or add, a new `title` (only when it differs), the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
    * refuses the edit when the ticket has changed since.
    */
-  | { action: 'edit_sequence'; key: string; head_seq: number; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; tasks?: { edit: Record<string, { text?: string; verify?: string | null; proves?: string[] }>; add: { text: string; verify?: string; proves: string[] }[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>>; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
+  /** R11 P09: the requirements AND the plan of an existing ticket approved with ONE signature (two ordinary approvals). `head_seq` is the log head the page showed. */
+  | { action: 'approve_both'; key: string; head_seq: number }
+  | { action: 'edit_sequence'; key: string; head_seq: number; title?: string; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; tasks?: { edit: Record<string, { text?: string; verify?: string | null; proves?: string[] }>; add: { text: string; verify?: string; proves: string[] }[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>>; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
   /** `via: 'estimate'`: the Estimate box (size only, 'none' = not estimated); the server refuses it while the add-on is off. */
@@ -47,39 +50,41 @@ export type HandoffAction =
   | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
 
   /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
-  | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
-  /** The workspace icon (`settings.set` of `icon`, a click): an icon and a colour of the closed lists, or null for the automatic one. */
-  | { action: 'icon_set'; icon: { icon: string; colour: string } | null }
+  | { action: 'settings_set'; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
   /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
   | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
   /** Take one repository off the list. The folder and its files stay on disk. */
   | { action: 'repo_remove'; name: string }
   /** The workspace default policy of one gate (F1 5.7 `Policy`, exactly). The code gate: `not` has `assignees`, `independent` is true. */
   | { action: 'policy_set'; gate: 'requirements' | 'plan' | 'verify' | 'code'; policy: { approvers: string[]; count: number; not: string[]; applies: 'all' | 'off' | string[]; independent: boolean } }
-  /** The invitee's own public key (base64url, 65 bytes) and first device certificate (strict JSON text): their files, uploaded by the person. */
-  | { action: 'member_add'; name: string; role: 'owner' | 'maintainer' | 'member' | 'viewer'; pk: string; cert: string }
+  /**
+   * The invitee's own public key (base64url, 65 bytes), first device certificate and reader declaration (strict JSON text):
+   * their files, uploaded by the person. The declaration is required: the dashboard signs by one click only, and a
+   * One click workspace admits a new reader only with it (core `sign.convenience_readers`).
+   */
+  | { action: 'member_add'; name: string; role: 'owner' | 'maintainer' | 'member' | 'viewer'; pk: string; cert: string; reader_decl: string }
   | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
   | { action: 'member_remove'; person: string }
   /** #1198 C15: one click. Core refuses the device that signs and an owner's last working device (`device.lockout`, plain words). */
   | { action: 'device_remove'; device: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
-  /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
+  /** R2-2: turn a shipped add-on on (`addon.grant`) or off (`addon.disable`), one click each. */
   | { action: 'addon_grant'; name: AddonSwitchName }
   | { action: 'addon_disable'; name: AddonSwitchName }
   /** The remove sheet's "Also delete its data" (`addon.purge`). */
   | { action: 'addon_purge'; name: AddonSwitchName }
   /** One add-on's settings (`settings.set {addons: {name: value}}`); `null` removes them. */
   | { action: 'addon_settings'; name: AddonSwitchName; value: Record<string, unknown> | null }
-  /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
+  /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence), one click. */
   | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
-  /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
+  /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`), one click. */
   | { action: 'publish_setup'; server: string; share: string }
-  /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`). Terminal only. */
+  /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`), one click. */
   | { action: 'publish_share'; key: string; staged_id: string }
-  /** The runner grant, signed in the terminal where one click is not used (`orch sign` hands the secret to the runner). */
+  /** Apps (#1457): a person's signature over the exact words of one staged app release (`app.release`), one click. */
+  | { action: 'app_release'; key: string; staged_id: string }
+  /** The runner grant, deposited by the signer. */
   | { action: 'runner_grant'; hours: number; scope: 'workable' | 'all'; extend?: string }
-  /** pair/1 (contract v1.9): sign `relay.pair_device` (F1 `device.added`) for an offer whose certificate is in. */
-  | { action: 'pair_device'; offer: string }
 
 /** The hand-offs that follow a signed `new` for what it cannot carry. */
 export type FollowUpAction = Extract<HandoffAction, { action: 'details' | 'section' }>
@@ -212,9 +217,9 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
 
 /** kind -> [required, allowed]: core signer `_MATERIAL_KEYS` for these kinds (a server test keeps them equal). */
 const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
-  gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances']],
+  gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances', 'sequence']],
   question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
-  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants', 'market', 'deps', 'removed_device']],
+  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants', 'market', 'deps', 'removed_device', 'agent_access_until']],
 }
 /** The only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`). */
 const STATEMENT_OPS = ['ac.accept', 'ac.unaccept']
@@ -263,55 +268,6 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
     return false
   }
 }
-
-/** The word typed to confirm a ticket operation: the key as the host gives it, and the last 8 characters of the signed log's uid. */
-export const confirmWord = (key: string, uid: string): string => `${key}/${uid.slice(-8)}`
-
-/**
- * The word a terminal asks for when the request is one step of a sequence: `GRANT` when the reviewed intent includes
- * agent access (the signer's own `confirm_word`: the strongest step's word), else null (the ticket's own word applies).
- */
-export const sequenceWord = (material: Pick<HandoffMaterial, 'sequence'>): string | null => {
-  const intent = material.sequence?.intent as { agent?: unknown } | undefined
-  return intent && intent.agent !== null && intent.agent !== undefined ? 'GRANT' : null
-}
-
-/** The exact line the person runs. A code is 4+4 characters of the Crockford alphabet, so it is safe to put in a shell. */
-export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/
-/**
- * The word the signer asks for on a request that is not about a ticket: a member's person id for the member operations,
- * `GRANT.REVOKE` for a revoke, and `<PREFIX>~<WS8>/SETTINGS` or `<PREFIX>~<WS8>/POLICY` for the workspace settings and policy (stream
- * A's decision; WS8 = last 8 characters of the workspace id; the signer's header keeps the full id). `null` where this dashboard does not know the word.
- */
-export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>, workspace?: { prefix: string; id: string } | null): string | null {
-  // A sequence that gives agents access (Extend, Start again, setup): the terminal asks for GRANT, whatever the first step is.
-  const sequence = sequenceWord(request.material)
-  if (sequence) return sequence
-  if (request.material.ticket) return null
-  const intent = request.material.sequence?.intent
-  if (intent?.kind === 'addon_enable' && typeof intent.name === 'string') return workspace ? `${intent.name}~${workspace.id.slice(-8)}` : null
-  if (request.op === 'member.add' || request.op === 'member.role' || request.op === 'member.remove') {
-    const person = request.events[0]?.person
-    return typeof person === 'string' ? person : null
-  }
-  // Stream A: <PREFIX>~<WS8>/SETTINGS and <PREFIX>~<WS8>/POLICY, WS8 the last 8 characters of the workspace id.
-  if (request.op === 'settings.set' || request.op === 'policy.set') return workspace ? `${workspace.prefix}~${workspace.id.slice(-8)}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null
-  // R2-2: <name>~<WS8>, the add-on's name from the event the host prepared (core's signer.confirm_word builds the same word; src/test/confirm-words.json pins it).
-  if (request.op === 'addon.grant' || request.op === 'addon.purge') {
-    const name = request.events[0]?.name
-    return workspace && typeof name === 'string' ? `${name}~${workspace.id.slice(-8)}` : null
-  }
-  // Turning an add-on off: the terminal asks for the add-on's plain name (signer.confirm_word).
-  if (request.op === 'addon.disable') {
-    const name = request.events[0]?.name
-    return typeof name === 'string' ? name : null
-  }
-  // Agent access (Extend, Start again, a plain runner grant): the signer's word is GRANT (signer.confirm_word, op "grant").
-  if (request.op === 'grant') return 'GRANT'
-  return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
-}
-
-export const signCommand = (code: string): string => `orch sign ${code}`
 
 /** Codes of a refusal that mean the work is already done (design 4.3): no signature is needed. */
 export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused', 'addon.already'])

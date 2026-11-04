@@ -12,6 +12,11 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "orch"
 
 #: (file, function) -> (calls, how invariant I holds there)
 PATHS: dict[tuple[str, str], tuple[int, str]] = {
+    ("host/remote/__init__.py", "append_host"): (
+        1,
+        "exempt: a host (H) remote.* line (disabled, code_issued, device_removed, key_rotated) that only reduces "
+        "power; written under the store lock, no reader-gated content",
+    ),
     ("host/human.py", "append_signed"): (
         1,
         "checked: _readers_refusal under the store lock before the first append (human.finish, relay.submit, R6)",
@@ -33,11 +38,29 @@ PATHS: dict[tuple[str, str], tuple[int, str]] = {
         "exempt: orch import v1 builds a new workspace from v1 history, which has no convenience events",
     ),
     ("host/hubdeliver.py", "StoreLanding.land"): (
-        3,
+        4,
         "exempt: a hub-signed event is a custodial type only (authz.HUB_TYPES: never member, role or device add, "
         "never grant.issued) with auth hub, so it adds no reader and no convenience event; the other calls are the "
         "host's own hub.pinned ledger line and the host-actor grant.issued that answers an admitted grant.requested "
-        "(the model admits it only with that request: a grant adds no reader and no convenience event)",
+        "(the model admits it only with that request: a grant adds no reader and no convenience event), and the "
+        "host-actor addon.granted that answers an admitted addon.requested (FB15: the model admits it only with that "
+        "request, once per hand-off; an add-on grant adds no reader and no convenience event)",
+    ),
+    ("host/schedules.py", "ScheduleRunner._create_child"): (
+        1,
+        "exempt: the person-actor ticket.created of a new-ticket schedule's child, written by core after the host's "
+        "schedule.fired{child} (deterministic uid, recovery never mints twice); the model admits it only against the "
+        "live signed schedule.set (via), re-checks the person's role and device, and it adds no reader and no "
+        "convenience event",
+    ),
+    ("ops/human.py", "Human.run_many"): (
+        1,
+        "exempt: the signed schedule.add of a new-ticket schedule writes the anchor ticket.created and schedule.set "
+        "in one human action; both are person-signed and the model admits the pair together",
+    ),
+    ("host/followups.py", "FollowupRunner._append"): (
+        1,
+        "exempt: the host-actor followup.fired and followup.outcome lines; they add no reader and no convenience event",
     ),
 }
 

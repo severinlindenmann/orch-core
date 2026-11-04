@@ -45,6 +45,8 @@ class Hooks:
     )
     #: Raises ``grant.expired`` when the (well-formed) grant is expired, revoked or out of scope.
     grant_valid: Callable[[Context], None] = field(default=lambda ctx: None)
+    #: Whether this grant is the direct run grant of a schedule child; the model still judges every write.
+    schedule_close: Callable[[Context], bool] = field(default=lambda ctx: False)
     #: The grant's ``verbs``: ``"agent"`` (every agent operation) or the list of operation names it allows.
     grant_verbs: Callable[[Context], Any] = field(default=lambda ctx: "agent")
 
@@ -65,7 +67,7 @@ def _check_input(op: Operation, args: dict[str, Any], secrets: list[str]) -> Non
 
 
 def _check_who(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> None:
-    if op.who == "human":
+    if op.who == "human" and not (op.name == "close" and ctx.grant and hooks.schedule_close(ctx)):
         if not ctx.human_presence:
             raise OrchError("human_only", f"{op.cli}: human only")
         return
@@ -165,6 +167,34 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     return res
 
 
+def _addons_on(env: Mapping[str, str], workspace: Any, ctx: Context) -> dict[str, dict[str, Any]] | None:
+    """The add-ons that are on in the workspace of this call, as ``{name: grant fields}``, for ``help`` and
+    ``describe`` (which list an add-on's commands only while it is on). Read from the store in direct mode, from the
+    host's ``addon.list`` when the host serves the workspace. ``None`` (every command is listed) when there is no
+    workspace or it cannot be read: help must always answer."""
+    from orch import hostclient
+
+    try:
+        if workspace.root is None:
+            return None
+        target = hostclient.locate(env, workspace)
+        if target is None:
+            from orch.addons.install import as_addons
+
+            granted = as_addons(workspace.store.state.workspace.addons)
+            return {
+                n: {k: dict(v) for k, v in a.fields.items()} for n, a in granted.items() if a.enabled and not a.purged
+            }
+        rows = run_hosted(parser.parse(["addon", "list"]), ctx, target).data["addons"]
+        return {
+            r["name"]: r.get("fields") or {}
+            for r in rows
+            if r["state"] not in ("disabled", "purged", "not_granted", "paused")
+        }
+    except Exception:  # noqa: BLE001 - a workspace that cannot be read is no reason for help to fail
+        return None
+
+
 def run_hosted(parsed: parser.Parsed, ctx: Context, target: Any) -> Result:
     """The same call as a request to the host (H4b, :mod:`orch.hostclient`). The checks that need no store stay here
     (input, who, grant shape), so a bad call fails the same way in both modes and without a round trip; the stop rule,
@@ -173,7 +203,7 @@ def run_hosted(parsed: parser.Parsed, ctx: Context, target: Any) -> Result:
 
     op, args = parsed.op, parsed.args
     _check_input(op, args, _secrets(ctx.grant))
-    if op.who == "human" and not ctx.human_presence:
+    if op.who == "human" and not ctx.human_presence and not (op.name == "close" and ctx.grant):
         raise OrchError("human_only", f"{op.cli}: human only")
     if op.who != "human":
         if ctx.grant is not None and not _GRANT.fullmatch(ctx.grant):
@@ -289,6 +319,18 @@ def main(
         from orch.setup.flow import main as setup_main
 
         return setup_main(args[1:], env=env, out=out, err=err)
+    if args[:1] in (["stop"], ["start"], ["services"]):  # stop/start what orch runs here (orch.lifecycle)
+        from orch.lifecycle.cli import main as lifecycle_main
+
+        return lifecycle_main(args[1:], env=env, out=out, err=err, cmd=args[0])
+    if args[:1] == ["migrate"]:  # data across updates (orch.migrate): a person's command, not a registry op
+        from orch.migrate.cli import main as migrate_main
+
+        return migrate_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["update"]:  # orch itself, with its data (orch.update): a person's command, not a registry op
+        from orch.cli.update import main as update_main
+
+        return update_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["install"]:  # hub, relay and publish as background services of this person (run-9 fb 6)
         from orch.install.cli import main as install_main
 
@@ -337,6 +379,10 @@ def main(
         from orch.cli.space import main as space_main
 
         return space_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["org"]:  # company skills and MCP servers offered by the hub (M3 host): a host client
+        from orch.cli.org import main as org_main
+
+        return org_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["peer"]:  # ws->ws through the hub (V3 C12): a host client, not a registry op
         from orch.cli.peer import main as peer_main
 
@@ -345,10 +391,10 @@ def main(
         from orch.cli.publish import main as publish_main
 
         return publish_main(args[1:], env=env, out=out, err=err, now=now)
-    if args[:1] == ["sign"]:  # a hand-off signed at the person's terminal (H5b): a host client, not a registry op
-        from orch.host.handoff import main as sign_main
+    if args[:1] == ["app"]:  # shared apps, pages and forms (#1455): a host client, like publish
+        from orch.cli.app import main as app_main
 
-        return sign_main(args[1:], env=env, out=out, err=err)
+        return app_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:2] == ["quick", "start"]:  # B11 step (ii): a person's quick task on one review (a host client, like sign)
         from orch.host.quickstart import main as start_main
 
@@ -385,8 +431,13 @@ def main(
             stream.write(render.redact(text, secrets) + "\n")
 
         hosted = False
+        # The Stop hook must never block by its exit code (a harness treats exit 2 as "block", whatever
+        # stop_hook_active says): every failure of `instructions hook stop` is an exit 0 with no output.
+        is_stop = args[:3] == ["instructions", "hook", "stop"]
 
         def fail(e: OrchError, op: Operation | None) -> int:
+            if is_stop:
+                return 0
             envelope = render.error_envelope(e, op)
             if as_json:
                 emit(render.dumps(envelope), out)
@@ -430,7 +481,22 @@ def main(
             )
             from orch import hostclient
 
+            if op.name in ("help", "describe"):
+                ctx = dataclasses.replace(ctx, addons_on=_addons_on(env, workspace, ctx))
             target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
+            if (
+                target is None
+                and op.name not in ("help", "describe")  # import.v1 too: it would open the store directly
+                and ("ORCH_TICKET" in env or "ORCH_WORKDIR" in env)  # the host's launch markers, even when empty
+            ):
+                # W00: started by the orch host, so never a silent fallback to direct mode (an empty view of a fresh
+                # store and a new genesis pin); nothing is opened before this refusal. A correctness guard against a
+                # silent wrong view, NOT a security boundary: an agent controls its own environment.
+                raise OrchError(
+                    "host.unavailable",
+                    "cannot reach the orch host: " + hostclient.direct_reason(env, workspace),
+                    hint="the agent was started by the orch host but cannot reach it; stop it and start it again",
+                )
             if target is not None:
                 hosted = True
                 hostclient.forget_host()
@@ -442,11 +508,18 @@ def main(
             else:
                 res = run(parsed, ctx, records, hooks)
             # a hook outside a workspace is silent
-            if not (isinstance(res.data, dict) and res.data.get("silent") is True):
+            if (
+                is_stop
+                and op.name == "instructions.hook"
+                and isinstance(res.data, dict)
+                and isinstance(res.data.get("raw"), str)
+            ):
+                emit(res.data["raw"], out)  # the Stop hook answers the harness in its own JSON
+            elif not (isinstance(res.data, dict) and res.data.get("silent") is True):
                 emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
             if session and op.is_write and not parsed.dry_run and not hosted:
                 records.succeeded_write(session)
-            return res.exit
+            return 0 if is_stop else res.exit
         except OrchError as e:
             session = env.get("ORCH_SESSION") or None
             if op is not None and parsed is not None and not hosted:

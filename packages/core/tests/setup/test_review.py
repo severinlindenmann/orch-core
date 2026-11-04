@@ -13,13 +13,13 @@ from orch.setup.flow import SetupFlow
 from orch.setup.protocol import SetupError
 
 from .conftest import PROFILE, make_env, post
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 
 def to_review(flow, profile):
     post(flow, "profile", profile)
-    r = reveal(flow)
-    post(flow, "secrets/confirm", {"words": words_for(r)})
+    reveal(flow)
+    post(flow, "secrets/confirm", {"acknowledged": True})
     return post(flow, "review")[1]
 
 
@@ -47,7 +47,7 @@ def test_review_has_the_contract_fields_and_plain_rows(flow):
     ids = [i["id"] for i in out["items"]]
     assert ids == ["addon:dashboard", "addon:terminals", "addon:worktrees"]
     term = out["items"][1]
-    assert term["lines"][0] == "Turn on Terminals: it says it will open terminals on this computer, as you"
+    assert term["lines"][0] == "Turn on Command window: it says it will open terminals on this computer, as you"
     assert not any("capabilities" in line or "pty" in line for line in term["lines"])  # in words, not names
     assert any(
         "capabilities" in line and "pty" in line for line in term["details"]
@@ -76,6 +76,27 @@ def test_r2_long_agent_hours_and_a_runner_grant_need_no_typed_word(flow):
     grant = next(i for i in out["items"] if i["id"] == "runner_grant")
     assert "grant: set at signing" in grant["volatile"]
     assert any(rv.PLACEHOLDER in line for line in grant["lines"])
+
+
+def test_click_method_has_no_terminal_check_even_with_exec_addons_and_grant(flow):
+    prof = {
+        **PROFILE,
+        "method": "click",
+        "agent_grant": True,
+        "agent_hours": 72,
+        "addons": ["dashboard", "start-agent", "terminals", "worktrees"],
+    }
+    out = to_review(flow, prof)
+    assert out["tty_confirm"] is False and out["fingerprint"] is None
+    assert out["runner_grant"] is not None and out["digest"]
+    f2 = rev_flow(flow)
+    out2 = to_review(f2, {**prof, "agent_grant": False, "agent_hours": 8})
+    assert out2["tty_confirm"] is False and out2["fingerprint"] is None
+
+
+def test_terminal_method_keeps_the_terminal_check_for_exec_addons(flow):
+    out = to_review(flow, {**PROFILE, "method": "terminal", "addons": ["dashboard", "terminals"]})
+    assert out["tty_confirm"] is True and len(out["fingerprint"]) == 3
 
 
 def rev_flow(flow):
@@ -125,16 +146,6 @@ def test_digest_includes_the_manifest_hashes(tmp):
     doc = json.loads(builtin.manifest_bytes("terminals"))
     other = json.dumps({**doc, "version": "9.9.9"}).encode()
     assert digest(builtin.manifest_bytes("terminals")) != digest(other)
-
-
-def test_click_path_review_has_settings_and_the_risk(tmp):
-    f = SetupFlow(make_env(tmp))
-    f.launch(str(tmp.work))
-    out = to_review(f, {**PROFILE, "method": "click"})
-    assert out["risk"]["once"] is True and "Convenience signing" in out["risk"]["text"]
-    settings = out["items"][0]
-    assert settings["id"] == "settings" and any("sign_methods" in line for line in settings["lines"])
-    assert {"id": "custody", "text": "Approvals on this machine need one click, with no passphrase."} in out["flags"]
 
 
 def test_a_new_review_has_a_new_id_and_a_profile_post_voids_it(flow):

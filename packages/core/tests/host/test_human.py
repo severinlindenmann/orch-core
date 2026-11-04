@@ -85,7 +85,7 @@ def test_prepare_answers_the_prepared_contract(human, served):
     p = human.prepare("log", {"ref": key, "text": "hello"})
     assert set(p) == {"request", *INVARIANT, "events"}
     assert re.fullmatch(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}", p["request"]["id"])
-    assert p["request"]["code"] is None and p["request"]["state"] == "bound"
+    assert "code" not in p["request"] and p["request"]["state"] == "bound"
     assert re.fullmatch(r"[0-9a-f]{12}", p["fingerprint"])
     assert p["review_digest"] == review.review_digest(p["material"])
     assert p["origin"]["uid"] == UID and p["origin"]["pid"] == os.getpid() and p["origin"]["client"] == "test"
@@ -108,6 +108,33 @@ def test_dry_run_stores_nothing_and_has_no_request(human, served):
     assert err(human.c.req("human.get", {"request_id": "hr_" + "0" * 26}, dry_run=True)) == "invalid.input"
 
 
+def test_a_dry_run_without_signer_or_handoff_persists_nothing(human, served):
+    _, key = human.ticket()
+    before = list(logged(served, key))
+    pending_before = ok(human.c.req("human.pending", {}))["data"]
+    body = {"op": "log", "args": {"ref": key, "text": "only a look"}}
+    p = ok(human.c.req("human.prepare", body, dry_run=True))["data"]
+    assert p["request"] is None and p["events"][0]["text"] == "only a look"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []  # no request record
+    assert logged(served, key) == before  # no event
+    assert ok(human.c.req("human.pending", {}))["data"] == pending_before  # the request store is unchanged
+    # the same call for real still needs a signer (handoff:true is only the hub's add-on grant); never both
+    assert err(human.c.req("human.prepare", body)) == "invalid.input"
+    assert err(human.c.req("human.prepare", {**body, "handoff": True})) == "invalid.input"
+    dry = ok(human.c.req("human.prepare", {**body, "handoff": True}, dry_run=True))["data"]  # handoff:true + dry_run
+    assert dry["request"] is None and dry["events"][0]["actor"]["device"] is None
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+    assert ok(human.c.req("human.pending", {}))["data"] == pending_before and logged(served, key) == before
+    # the hub's own hand-off op as a dry run: refused (nothing staged to grant, as without handoff), stored nothing
+    grant = {"op": "addon.grant", "args": {"name": "wiki"}, "handoff": True}
+    assert err(human.c.req("human.prepare", grant, dry_run=True)) == "not_found"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+    assert ok(human.c.req("human.pending", {}))["data"] == pending_before
+    both = {**body, "signer": human.signer, "handoff": True}
+    assert err(human.c.req("human.prepare", both, dry_run=True)) == "invalid.input"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+
+
 def test_only_person_ops_are_prepared(human, served):
     _, key = human.ticket()
     for op in ("claim", "task.done", "show", "import.v1", "nonsense"):
@@ -115,6 +142,28 @@ def test_only_person_ops_are_prepared(human, served):
     assert err(human.c.req("human.prepare", {"op": "log", "args": {"ref": key, "text": "x"}})) == "invalid.input"
     both = {"op": "log", "args": {"ref": key, "text": "x"}, "signer": human.signer, "handoff": True}
     assert err(human.c.req("human.prepare", both)) == "invalid.input"
+
+
+def test_a_hand_off_is_stored_only_for_the_hubs_add_on_grant(human, served):
+    """FB15: ``handoff: true`` (no signer) stores an unbound request for ``addon.grant`` only, marked for the hub;
+    every other op is refused and stores nothing (it is prepared with a signer); a hand-off never takes a signer."""
+    _, key = human.ticket()
+    for op, args in (
+        ("log", {"ref": key, "text": "x"}),
+        ("verdict", {"ref": key, "outcome": "pass"}),
+        ("member.remove", {"person": human.person.ref}),
+        ("settings.set", {"set": {"grant_hours": 4}}),
+        ("grant", {"ref": key}),
+        ("addon.disable", {"name": "wiki"}),
+    ):
+        res = human.prepare_res(op, args, handoff=True)
+        assert err(res) == "invalid.input" and "add-on grant only" in res["error"]["message"], op
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+    grant = {"op": "addon.grant", "args": {"name": "wiki"}, "handoff": True}
+    assert err(human.c.req("human.prepare", {**grant, "signer": human.signer})) == "invalid.input"
+    handed = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)
+    assert handed["request"]["state"] == "prepared"
+    assert record(served, handed["request"]["id"])["hub_handoff"] is True
 
 
 def test_an_agent_and_a_grant_get_human_only(human, served):
@@ -128,10 +177,10 @@ def test_an_agent_and_a_grant_get_human_only(human, served):
 
 def test_every_state_transition_of_the_table(human, served):
     _, key = human.ticket()
-    # prepare with signer -> bound; with handoff -> prepared
+    # prepare with signer -> bound; with handoff (the hub's add-on grant, the one unbound prepare) -> prepared
     bound = human.prepare("log", {"ref": key, "text": "a"})
     assert bound["request"]["state"] == "bound"
-    handed = human.prepare("log", {"ref": key, "text": "b"}, handoff=True)
+    handed = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)
     assert handed["request"]["state"] == "prepared"
     assert handed["events"][0]["actor"]["device"] is None and handed["events"][0]["auth"] is None
     # submit on an unbound request: request_state
@@ -156,12 +205,12 @@ def test_every_state_transition_of_the_table(human, served):
     assert ok(human.c.req("human.cancel", {"request_id": bid}))["data"] == {"state": "cancelled"}
     assert ok(human.get(bid))["data"]["request"]["state"] == "cancelled"
     assert err(human.get(bid, signer=human.signer)) == "human.request_state"
-    p2 = human.prepare("log", {"ref": key, "text": "c"}, handoff=True)
+    p2 = human.prepare_unbound("log", {"ref": key, "text": "c"})
     assert ok(human.c.req("human.cancel", {"request_id": p2["request"]["id"]}))["data"] == {"state": "cancelled"}
     signed_bound = human.sign(bound)
     assert err(human.submit_res(bid, signed_bound.events)) == "human.request_state"
     # prepared and bound -> expired after 10 minutes
-    p3 = human.prepare("log", {"ref": key, "text": "d"}, handoff=True)
+    p3 = human.prepare_unbound("log", {"ref": key, "text": "d"})
     p4 = human.prepare("log", {"ref": key, "text": "e"})
     tick(served, 601)
     for rid in (p3["request"]["id"], p4["request"]["id"]):
@@ -189,7 +238,7 @@ def test_a_request_found_expired_at_append_is_refused_under_the_lock(human, serv
 
 def test_get_returns_every_invariant_byte_and_binding_changes_only_device_and_auth(human, served):
     _, key = human.ticket()
-    p = human.prepare("log", {"ref": key, "text": "hand off"}, handoff=True)
+    p = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)  # the one request prepared unbound
     rid = p["request"]["id"]
     plain = ok(human.get(rid))["data"]
     assert canon.dumps(plain) == canon.dumps(p)  # get without signer: byte identical
@@ -202,6 +251,35 @@ def test_get_returns_every_invariant_byte_and_binding_changes_only_device_and_au
         strip = lambda e: {**{k: v for k, v in e.items() if k != "auth"}, "actor": {**e["actor"], "device": None}}  # noqa: E731
         assert canon.dumps(strip(after)) == canon.dumps(strip(before))
     assert bound["request"]["state"] == "bound" and p["request"]["state"] == "prepared"
+
+
+def test_another_member_cannot_bind_a_hub_hand_off(human, served):
+    """The bind (human.get) holds the hand-off to the person who prepared it (the hub-named owner): a member who is
+    not that person, with their own valid device, is refused and the record stays unbound."""
+    quinn = served.lab.add_member()
+    rid = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)["request"]["id"]
+    before = record(served, rid)
+    assert before["hub_handoff"] is True and before["state"] == "prepared" and before["signer"] is None
+    assert err(human.get(rid, signer={"device": quinn.device, "auth": "passphrase"})) == "device.unknown"
+    after = record(served, rid)
+    assert after == before and after["prepared"]["events"][0]["actor"]["device"] is None  # nothing bound
+    assert ok(human.get(rid))["data"]["request"]["state"] == "prepared"
+    assert ok(human.get(rid, signer=human.signer))["data"]["request"]["state"] == "bound"  # the owner still binds
+
+
+def test_only_a_hub_hand_off_is_bound_at_get(human, served):
+    """An older stored unbound request (signer null, device null) that is not a hub hand-off is never bound."""
+    _, key = human.ticket()
+    old = human.prepare_unbound("log", {"ref": key, "text": "old"}, hub_handoff=False)
+    rid = old["request"]["id"]
+    before = record(served, rid)
+    assert before["state"] == "prepared" and before["signer"] is None and before["hub_handoff"] is False
+    res = human.get(rid, signer=human.signer)
+    assert err(res) == "invalid.input" and "not prepared here" in res["error"]["message"]
+    assert record(served, rid) == before and ok(human.get(rid))["data"]["request"]["state"] == "prepared"
+    assert err(human.submit_res(rid, [{**old["events"][0], "sig": "x"}])) == "human.request_state"
+    real = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)["request"]["id"]  # a real hand-off binds
+    assert ok(human.get(real, signer=human.signer))["data"]["request"]["state"] == "bound"
 
 
 # --- submit: mismatch, single use, replay precedence ----------------------------------------------------------------
@@ -507,15 +585,14 @@ def test_the_composite_prompt_fields_equal_describe_payload_of_the_signed_bytes(
             person=p.ref,
             device=device,
             workspace=lambda w: ("Acme", "DEMO") if w == s.wid else None,
-            confirm=lambda text, word: shown.append((text, word)) or True,
+            confirm=lambda text: shown.append(text) or True,
             show_secret=lambda t: None,
             idem=new_idem(),
         )
         assert res["key"] == key
-        ((text, word),) = shown
+        (text,) = shown
         assert (
-            word == f"{key}/{s.lab.ws.uid(key)[-8:]}"
-            and "in workspace Acme (DEMO)" in text  # the plain view first ...
+            "in workspace Acme (DEMO)" in text  # the plain view first ...
             and "self-declared" not in text
             and "workspace: Acme (DEMO)" in text.details  # ... the full review behind `d`
             and "self-declared, unverified" in text.details
@@ -536,7 +613,7 @@ def test_the_composite_cancels_and_signs_nothing_when_the_person_does_not_confir
     def call(op, args, files=None, idem=None):
         return ok(human.c.req(op, args, files=files, idem=idem))
 
-    with pytest.raises(signer.SignerRefused, match="not confirmed"):
+    with pytest.raises(__import__("orch.ops.errors", fromlist=["OrchError"]).OrchError, match="nothing was signed"):
         signer.run(
             call,
             "log",
@@ -547,7 +624,7 @@ def test_the_composite_cancels_and_signs_nothing_when_the_person_does_not_confir
             person=human.person.ref,
             device=human.person.device,
             workspace=lambda w: ("Acme", "DEMO"),
-            confirm=lambda text, word: False,
+            confirm=lambda text: False,
             show_secret=lambda t: None,
             idem=new_idem(),
         )
@@ -574,7 +651,7 @@ def test_the_composite_shows_the_grant_secret_only_after_the_commit(human, serve
         person=human.person.ref,
         device=human.person.device,
         workspace=lambda w: ("Acme", "DEMO"),
-        confirm=lambda text, word: word == "GRANT",
+        confirm=lambda text: True,
         show_secret=shown.append,
         idem=new_idem(),
     )

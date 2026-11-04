@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { primaryAction, primaryLabel, type Available } from './actions'
 
 const q = { id: 'Q1' } as Available['answer'][number]
-const none: Available = { approve: [], requestChanges: [], verdict: false, answer: [] }
+const none: Available = { approve: [], approveBoth: false, requestChanges: [], verdict: false, answer: [] }
 
 it('an open question is the primary action when nothing else needs the viewer (run 8, 6.3)', () => {
   const p = primaryAction({ ...none, answer: [q] })

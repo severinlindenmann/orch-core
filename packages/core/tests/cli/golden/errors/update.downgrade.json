@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.downgrade",
+    "message": "the release is older than the installed version",
+    "hint": "nothing to do",
+    "fix": {
+      "argv": [
+        "orch",
+        "update",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -47,7 +47,10 @@ def fail(code: str, message: str | None = None, exit: int = 9):
 def status(code: str) -> int:
     if code == "not_found":
         return 404
+    if code == "remote.presence_required":
+        return 428  # R3: this request needs a presence signature of the device first
     if code in {
+        "remote.bearer",  # R3: an outside bearer in a stream is refused, never stripped
         "usage",
         "invalid.input",
         "blob.invalid",
@@ -57,14 +60,16 @@ def status(code: str) -> int:
         return 400
     if code in {
         "human_only",
+        "session.readonly",
         "role.denied",
         "op.not_allowed",
         "peer.denied",
         "host.required",
-        "sign.hub_only",
         "market.actor_refused",
         "passkey.stepup_required",
         "passkey.invalid",
+        "switch.refused",
+        "remote.level",  # R3: not at this access level
     } or code.startswith("grant."):
         return 403
     if code in {"intent.done", "intent.expired"}:
@@ -103,8 +108,42 @@ def status(code: str) -> int:
     return 409
 
 
-def response(code: str, http: int):
-    return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
+def response(code: str, http: int, message: str | None = None):
+    """An error answer. `message` is a fixed plain sentence (never input, never a credential); without one the code
+    stands in for it."""
+    return JSONResponse(
+        {"ok": False, "error": {"code": code, "message": message or code, "retryable": False}}, status_code=http
+    )
+
+
+def presence_required_response(view_digest: str, template: str):
+    """R3 (contract 10.2c): the request needs a presence signature covering exactly this request. The client
+    recomputes `view_digest` from what it sent and refuses to prompt on a mismatch."""
+    body = {
+        "code": "remote.presence_required",
+        "message": "Confirm with your device first.",
+        "retryable": False,
+        "view_digest": view_digest,
+        "template": template,
+    }
+    return JSONResponse({"ok": False, "error": body}, status_code=428)
+
+
+def step_up_response(remote: bool):
+    """A hub-made (switch) session asked for more than reading. Structured, never a raw `remote.refused`: the page
+    shows a "Confirm it's you on this computer" step (or, for a session that came in from another computer, where the
+    change can be made) and then repeats the action."""
+    body = {
+        "code": "step_up_required",
+        "message": (
+            "Changes can be made on the computer this workspace runs on."
+            if remote
+            else "Confirm it's you on this computer to make this change."
+        ),
+        "retryable": False,
+        "step_up": {"where": "host" if remote else "this_computer"},
+    }
+    return JSONResponse({"ok": False, "error": body}, status_code=403)
 
 
 FIX_COMMAND_CODES = ("sign.convenience_readers",)
@@ -145,7 +184,6 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
         ),
         "devices": DEVICES,
     },
-    "sign.hub_only": {"reason": ("hub",)},  # V3 C11: full hub mode takes no local key
     # V3 G4: why a dependency environment was refused or no longer verifies (fixed words, as core's table)
     "market.env_failed": {
         "reason": (
@@ -179,6 +217,10 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     },
     # core C9 (#1198): why the owner proof of a hub step (join, switch to full, leave) was refused
     "hub.proof_invalid": {"reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")},
+    # R2: why the owner proof of a remote-access step (switch, enroll a device) was refused
+    "remote.proof_invalid": {
+        "reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")
+    },
     # core P5 (orch-v2-host 12.15): why the publish server said no
     "publish.server_refused": {
         "reason": (
@@ -190,6 +232,8 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
             "clock",
             "delegation",
             "rejected",
+            "hub_left",
+            "hub_moved",
         ),
     },
     # core D1 (orch-v2-host 11A.17): the Simulator dev gate's closed reason
@@ -352,12 +396,37 @@ TOP_KEYS = {
         lambda v, code: v is None or (isinstance(v, str) and len(v) <= 40 and TIME.fullmatch(v) is not None),
     ),
     "op": _on(INTENT_DONE, _match(OP, OP_MAX)),
+    # P06: the ticket a signed new-ticket request created: its key and title, plain, nothing else
+    "ticket": _on(
+        INTENT_DONE,
+        lambda v, code: isinstance(v, dict)
+        and set(v) == {"key", "title"}
+        and isinstance(v["key"], str)
+        and TICKET_KEY.fullmatch(v["key"]) is not None
+        and isinstance(v["title"], str)
+        and len(v["title"]) <= 400,
+    ),
     "summary": _on(INTENT_DONE, lambda v, code: isinstance(v, str) and len(v) <= SUMMARY_MAX),
     # a landed local commit rides on any push failure, host refusals included (core records/cli.py)
     "commit": _match(COMMIT, 64),
     # a bool says only that the message was replaced: on any code (the records child sets it for host codes too)
     "message_hidden": lambda v, code: isinstance(v, bool),
 }
+
+
+#: the codes whose closed reason core also puts at the start of the message (`"<reason>: ..."`, core `ops/readers.py`)
+MESSAGE_REASON_CODES = ("sign.convenience_readers", "sign.convenience_unavailable")
+MESSAGE_REASON = re.compile(r"([a-z_]{1,32}): ")
+
+
+def message_reason(code, message) -> str | None:
+    """The closed reason a convenience refusal names at the start of its message, when its `detail` has none (core's
+    `member.add` refusal carries it only there). Only a member of the code's closed set counts; the rest is dropped."""
+    if code not in MESSAGE_REASON_CODES or not isinstance(message, str):
+        return None
+    m = MESSAGE_REASON.match(message)
+    allowed = DETAIL_KEYS[code]["reason"]
+    return m.group(1) if m and m.group(1) in allowed else None
 
 
 def allowed_error(raw) -> dict | None:
@@ -373,6 +442,9 @@ def allowed_error(raw) -> dict | None:
             error[key] = raw[key]
     error.setdefault("retryable", False)
     detail = closed_detail(code, raw.get("detail"))
+    reason = message_reason(code, message)
+    if reason is not None and (detail is None or "reason" not in detail):
+        detail = {**(detail or {}), "reason": reason}
     if detail is not None:
         error["detail"] = detail
     # The host's `fix` stays out of the browser, as since M0 (it can carry argv and paths), except: a plain-text fix,

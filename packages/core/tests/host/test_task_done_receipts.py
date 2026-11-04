@@ -28,7 +28,9 @@ def receipt(**kw) -> dict:
 
 
 def started(served: Served, verify: str | None = CMD):
-    """A claimed ticket with task T1 started by the agent's session; (client, key, uid)."""
+    """A claimed ticket with task T1 started by the agent's session; (client, key, uid). The plan gate is off in this
+    workspace (r10-P02: an agent builds only after the plan is approved; these tests are about receipts)."""
+    served.lab.ws.plan_gate_off()
     uid, key = served.ticket("receipts")
     c, g = served.client(), served.grant
     ok(c.req("claim", {"ref": key}, grant=g, session=SESSION, idem=True))
@@ -171,6 +173,7 @@ COMMIT = "a" * 40
 
 def linked(served: Served, verify: str | None = CMD):
     """Like :func:`started`, on a ticket that links the registered repo ``proj``."""
+    served.lab.ws.plan_gate_off()
     uid, key = served.ticket("receipts")
     c, g = served.client(), served.grant
     served.append(lambda store: served.lab.ws.repo("proj"))
@@ -239,3 +242,16 @@ def test_a_dry_run_with_a_receipt_appends_nothing(served):
     )
     assert res["ok"] is True
     assert "task.done" not in types(served, uid)
+
+
+def test_r10_p02_the_host_refuses_a_task_start_while_the_plan_is_open_and_says_wait(served):
+    """r10-P02 (run10 AT-0006): the agent built before the plan was approved. The host refuses it and says wait."""
+    uid, key = served.ticket("plan open")
+    c, g = served.client(), served.grant
+    ok(c.req("claim", {"ref": key}, grant=g, session=SESSION, idem=True))
+    ok(c.req("task.add", {"ref": key, "text": "do it", "verify": CMD}, grant=g, session=SESSION, idem=True))
+    res = c.req("task.start", {"task": f"{key}/T1"}, grant=g, session=SESSION, idem=True)
+    e = res["error"]
+    assert e["code"] == "transition.refused" and "plan is not approved" in e["message"] and e["hint"] == "orch wait"
+    assert err(done(c, served, key, receipt())) == "transition.refused"
+    assert not {"task.started", "task.done", "artifact.added"} & set(types(served, uid))

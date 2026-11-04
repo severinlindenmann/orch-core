@@ -35,10 +35,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch import childenv
 from orch.host.errors import HostError
 from orch.posixmod import posixmod
 from orch.setup import osfront
 from orch.setup.oslauncher import LAUNCHER_PATH
+from orch.setup.tunnel import tunnel_line
 
 pwd = posixmod("pwd")
 
@@ -56,23 +58,6 @@ class Refused(Exception):
     def __init__(self, code: str, message: str, exit_: int = EXIT_REFUSED) -> None:
         super().__init__(message)
         self.code, self.exit = code, exit_
-
-
-class _Terminal:
-    """The person's own terminal (``/dev/tty``), never stdin, which an agent may hold. Tests replace it."""
-
-    def ask(self, prompt: str) -> str:
-        from orch.ops.workspace_init import Terminal
-
-        class _Ask(Terminal):
-            def ask(self, prompt: str) -> str:
-                return self._read(prompt, echo=True)
-
-        return _Ask().ask(prompt)
-
-
-# Seams: tests replace these; nothing else in the module touches the network, the clock or other programs.
-TERMINAL: Any = _Terminal()
 
 
 def _resolve(name: str) -> set[str]:
@@ -104,7 +89,9 @@ def _port_busy(port: int) -> bool:
 
 def _run(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Run ``argv`` with this terminal's stdin, stdout and stderr (sudo's password prompt, the dashboard's link)."""
-    return subprocess.run(list(argv), env=dict(env), check=False).returncode
+    from orch.childenv import sanitize
+
+    return subprocess.run(list(argv), env=sanitize(env, absolute_pythonpath=True), check=False).returncode
 
 
 def _sleep(seconds: float) -> None:
@@ -187,17 +174,19 @@ def _preconditions(env: Mapping[str, str]) -> None:
         )
 
 
-def _confirm(args: argparse.Namespace, out: TextIO, question: str) -> bool:
+def _approve(args: argparse.Namespace, out: TextIO, question: str) -> bool:
     if args.dry_run:
         out.write("Dry run: nothing was changed.\n")
         return False
     if args.yes:
         return True
+    from orch.ops.errors import OrchError
+    from orch.ops.human import review_prompt
+
     try:
-        answer = TERMINAL.ask(f"{question} [y/N] ")
-    except Exception as exc:  # noqa: BLE001 - no terminal: refuse (never stdin, which an agent may hold)
-        raise Refused("human_only", f"this needs your own terminal ({exc}); nothing was changed") from None
-    return answer.strip().lower() in ("y", "yes")
+        return review_prompt(question, verb="continue")  # sets up the HTTPS front: nothing is signed
+    except OrchError as exc:
+        raise Refused(exc.code, str(exc)) from None
 
 
 def _run_root(flags: list[str], env: Mapping[str, str]) -> int:
@@ -313,7 +302,7 @@ def _tunnel_lines(name: str, env: Mapping[str, str]) -> list[str]:
     return [
         "If you are locked out, the link ran out, or you prefer SSH, the SSH tunnel always works (no passkey needed).",
         "On your computer, run:",
-        f"  ssh -o ExitOnForwardFailure=yes -L {port}:127.0.0.1:{port} {_person()}@{name}",
+        "  " + tunnel_line(port, env, user=_person(), server=name),
         "Then, on the server (in that SSH session), run:  orch dashboard open --print-url",
         "and open the link it prints in your computer's browser.",
         "For a new sign-in link, run on the server:  orch remote reset",
@@ -376,7 +365,7 @@ def _enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: 
         "  print a one-time first sign-in link (works once, for 15 minutes); sudo asks the dashboard for it,\n"
         "  because only the administrator may\n\n"
     )
-    if not _confirm(args, out, "Make these changes?"):
+    if not _approve(args, out, "Make these changes?"):
         return 0 if args.dry_run else 1
     flags = ["--front-enable", "--person", person, "--name", args.name]
     for net in proxies:
@@ -463,7 +452,7 @@ def _disable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err:
     if not root_plan.ok:
         out.write("\nNothing was changed.\n")
         return 1
-    if not _confirm(args, out, "Take remote access away?"):
+    if not _approve(args, out, "Take remote access away?"):
         return 0 if args.dry_run else 1
     if have_file:
         with contextlib.suppress(FileNotFoundError):
@@ -514,7 +503,7 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     out.write("  stop the dashboard: every remote session ends and every open sign-in link dies\n")
     out.write("  delete every passkey (everybody has to add a passkey again)\n")
     out.write("  start the dashboard and print one new one-time link\n")
-    if not _confirm(args, out, "Drop every passkey and session?"):
+    if not _approve(args, out, "Drop every passkey and session?"):
         return 0 if args.dry_run else 1
     try:
         _stop_dashboard(env, err, directory)
@@ -535,6 +524,36 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     return 0 if rc == 0 else 1
 
 
+def client_env(env: Mapping[str, str]) -> dict[str, str]:
+    """The client holds the person's keys and runs as them: no loader variable reaches it, not even an absolute
+    ``PYTHONPATH`` (the dashboard launcher keeps those; the client does not need them). One sanitizer: ``childenv``."""
+    return childenv.sanitize(env)
+
+
+def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it
+    os.execve(argv[0], argv, childenv.sanitize(env))
+
+
+def _client(args: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO) -> int:
+    """``orch remote open``: start the remote client (``orch_dashboard.remote_client``, in the dashboard addon) and open
+    the person's browser at it. Same refusals as ``orch dashboard``: an agent's environment, an addon that is not
+    installed."""
+    from orch.cli import dashboard
+
+    refusal = dashboard.agent_refusal(list(args), env)
+    if refusal:
+        err.write(f"orch remote open: human_only: {refusal}\n")
+        return EXIT_REFUSED
+    env = client_env(env)  # one sanitized environment for the probe AND the exec
+    if not dashboard._module_installed(env):  # noqa: SLF001 - the launcher's own probe
+        err.write(f"orch remote open: {dashboard.INSTALL_HINT}\n")
+        return 1
+    out.flush()
+    err.flush()
+    _exec([sys.executable, "-P", "-m", "orch_dashboard.remote_client", *args], env)
+    return 1  # pragma: no cover - execve does not return
+
+
 def main(
     args: Sequence[str],
     *,
@@ -542,6 +561,14 @@ def main(
     out: TextIO,
     err: TextIO,
 ) -> int:
+    from orch.cli import remote_access
+
+    if args and args[0] in ("open", "client"):  # R5 (#1593): the remote client on THIS computer (the person's terminal)
+        return _client(args[1:], env=env, out=out, err=err)
+    if (
+        args and args[0] in remote_access.VERBS
+    ):  # R2 (#1590): remote access to the workspace itself, signed by the owner
+        return remote_access.main(args, env=env, out=out, err=err)
     try:
         ns = _parser().parse_args(list(args))
     except SystemExit as exc:

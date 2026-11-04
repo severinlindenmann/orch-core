@@ -124,8 +124,16 @@ On the page you answer, and orch waits for you each time:
    save them in a password manager: the passphrase unlocks every signature, and the 24 words are the only way back to
    your key if you lose this Mac or the passphrase. The page then asks for three of the words to check you wrote them
    down.
-3. **Review.** The page shows what you are about to create. Press Create. The Terminal shows three words that the page
-   must show too; if they match, type `yes` there.
+3. **Review.** The page shows what you are about to create. Press Create. With One click on this computer, setup just
+   runs: there is no terminal check. With Terminal approval, the Terminal shows three words that the page must show too;
+   if they match, press Enter there (do not type `yes`).
+
+**Setting up another computer over SSH:** when you run `orch setup` on a server you reached with `ssh`, the Terminal
+prints a ready `ssh -L ...` line for the setup page. Run that line on your own computer, then open the link. When setup
+is done, the last page says "One last step: connect to your workspace." and shows a second `ssh -L ...` line, for the
+workspace's own port. Copy it, run it on your own computer the same way as the first one, and leave it open. The page
+waits and opens your workspace by itself as soon as the connection is there. If the line shows `USER` or `SERVER`,
+put in the name and address you use to log in to that computer.
 
 **What you should see:** the page lists every step as done and the Terminal prints `workspace DEMO set up in <folder>`. The folder now
 has a hidden `.orch` folder plus `AGENTS.md`, `CLAUDE.md` and skill folders for your agents. Check:
@@ -359,9 +367,51 @@ orch dashboard --print-url   # a 127.0.0.1 link (open it within 30 seconds)
 `orch doctor` and `orch check` report `0` problems. If `orch doctor` reports problems, run `orch host doctor` and read what it names. When all is well it prints the host
 state (`host: answers on ...`, `workspace DEMO ... ok`) and ends with the line `ok`.
 
-## 11. Uninstall
+## 11. Stop and start orch
 
-In this order, so that nothing is left running:
+```bash
+orch services          # one table: what runs, what is stopped, what is installed
+orch stop              # inside a workspace folder: stop this workspace (its running agents end the normal way)
+orch stop all          # every workspace and every background service on this computer
+orch start all         # bring back exactly what is installed (orch start does the same outside a folder)
+```
+
+`orch stop all` stops the agent runner (it ends running agents first, then the host), the dashboard, the records timer
+and, if they are installed here, the hub, the relay and publish. They stay stopped, also after you restart the
+computer, until `orch start`. Nothing is removed: the units, your keys and your workspaces stay (`orch host prune`
+removes things). The host, runner and dashboard are shared by every workspace of the person, so `orch stop` in a
+folder ends only that workspace's agents while other workspaces are on this computer, and stops the shared services
+too when it is the only one. A host or dashboard you started by hand is not a service: orch names it and leaves it.
+Starting and stopping is a person's job; an agent is refused. Windows has no host, runner or records timer: only the
+installed parts and the dashboard are managed there.
+
+## 12. Uninstall
+
+One command takes orch off this computer, as if it had never been installed:
+
+```bash
+orch host prune --dry-run      # only show what it found, nothing is removed
+orch host prune                # show it, ask "Remove all of this? [y/N]", then remove it
+```
+
+It first prints everything it found on this computer, grouped, with paths and sizes: running services and login items,
+installed parts (hub, relay, publish, dashboard) and their data, the state folder (`~/.config/orch`: records, device keys
+of the key file store), the host's program copies (`~/.local/share/orch`), keys orch put in a macOS keychain, the
+trust entries it added to Claude Code's `.claude.json`, the orch-core plugin entries in Claude Code, accounts and system
+files made by the administrator setup on Linux (printed as commands when you are not root), and last the `orch` command
+itself (`uv tool uninstall orch-core`; on Windows the command is printed). Nothing is removed before you confirm.
+
+For each workspace it asks separately: "Also delete the folder ...? [y/N]" (default No). If you keep the folder, only
+orch's own files in it go (`.orch/`, `.orch-work/`, orch's skills under `.agents` and `.claude`, orch's lines in
+`AGENTS.md`, `CLAUDE.md` and `.gitignore`, orch's git worktrees); your files and your git history stay. For scripts:
+`--yes` skips the confirm but never includes workspace folders; `--workspaces keep|delete` answers the folder question for
+all workspaces. Prune refuses in the orch dev kit unless you pass `--i-know-dev`, and it is refused to agents.
+
+Prune can not remove what lives elsewhere: a hub membership, paired phones, relay registrations and published shares (it
+offers to run `orch hub leave` for a workspace on a hub when you answer interactively, and lists the rest at the end),
+browser data (saved passkeys, cookies), copies in backups, and the git history in your folders.
+
+The same, by hand, in this order, so that nothing is left running:
 
 ```bash
 orch dashboard stop            # close Mission Control

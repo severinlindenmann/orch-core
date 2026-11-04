@@ -68,7 +68,7 @@ def test_the_oracles_deterministic_ecdsa_is_rfc6979():
 # --- stored signatures verify -------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("which", ["ticket_event", "ws_event"])
+@pytest.mark.parametrize("which", ["ticket_event", "ws_event", "addon_event"])
 def test_stored_event_signatures_verify(which):
     c = S[which]
     e = c["event"]

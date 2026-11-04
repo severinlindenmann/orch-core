@@ -6,4 +6,5 @@ args:
   CMD  command, for example task done or task.done; leave out for the list
 errors:
   not_found (exit 2): orch describe lists the commands | fix: orch describe
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
 out: ok describe {target} / next: {next}

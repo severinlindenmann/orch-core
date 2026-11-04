@@ -63,7 +63,6 @@ __all__ = [
     "readers_error",
     "recheck_readers",
     "refuse_reader_op",
-    "refuse_full_mode_entry",
     "refuse_turn_on",
     "registered_entry",
     "set_enabled",
@@ -206,10 +205,6 @@ def risk_ack(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
     return ack if isinstance(ack, str) else None
 
 
-def _methods(service: Any) -> Any:
-    return service.store.state.workspace.settings.get("sign_methods")
-
-
 def _click_custody(service: Any) -> bool:
     """B6 (Opus round 2): one-click signing is possible here when the flag is on OR the person's key still sits in
     convenience custody (the dashboard's "Turn off" leaves it there). Fails closed: an unreadable selection counts."""
@@ -223,35 +218,6 @@ def _click_custody(service: Any) -> bool:
         return True
     # a custody transition in progress (either direction) counts too: the convenience copy may already exist
     return sel is not None and (sel.get("custody") == "convenience" or sel.get("transition") is not None)
-
-
-def refuse_click_removal(service: Any, op: str, events: list[dict[str, Any]]) -> None:
-    """B6 (Opus round 1, HIGH-2): a ``settings.set`` that takes ``click`` out of ``sign_methods`` is refused while
-    click-to-sign is on here: the owner's key is in convenience custody and the terminal path is closed (one signing
-    path per workspace), so the change would lock the honest signer out. The fix is named."""
-    if op != "settings.set" or not _click_custody(service):
-        return
-    for ev in events:
-        methods = (ev.get("set") or {}).get("sign_methods")
-        if methods is not None and "click" not in methods:
-            raise HostError(
-                "invalid.input",
-                "sign_methods cannot leave out click while click-to-sign is on for this workspace: the key is in "
-                "convenience custody",
-                hint="move the key back first: orch host convenience off --workspace W and "
-                "orch keys custody passphrase --workspace W --in-place",
-            )
-
-
-def refuse_excluded_click_custody(service: Any) -> HostError | None:
-    """B6 (Opus round 1, HIGH-2): while click-to-sign is on the device key is in convenience custody, and any process
-    running as the person can sign with it and write any ``auth`` label. So, whatever label an event carries, nothing
-    lands from this machine's person path while the workspace's ``sign_methods`` leaves ``click`` out. The custody
-    decides, not the self-declared label. (With the flag off, only the key's own custody protects it: see §0.8.6.)"""
-    methods = _methods(service)
-    if methods is not None and "click" not in methods and _click_custody(service):
-        return unavailable("disabled", [])
-    return None
 
 
 def flag_or_gate(service: Any) -> bool:
@@ -305,7 +271,6 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     try:
         with store.locked():
             store.refresh()
-            _refuse_full_mode(store, state_dir, wid, host_uid)
             mine = _own_device(state_dir, wid)
             found = why(store, state_dir, wid, host_uid, me or "", mine, gated=True)
     finally:
@@ -317,18 +282,6 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     raise HostError(err.code, err.message, hint=TURN_ON_ESCAPE, detail=err.detail)
 
 
-def _refuse_full_mode(store: Any, state_dir: Path, workspace_id: str, host_uid: int) -> None:
-    """V3 C11 (D78/D81): click-to-sign is not switched on in a workspace in full hub mode (or ``unknown``): the click
-    signer is refused at the append there, so the flag would only mislead. Called under the store lock."""
-    from types import SimpleNamespace
-
-    from . import hubops, hubsign
-
-    view = SimpleNamespace(store=store, state_dir=state_dir, workspace_id=workspace_id, host_uid=host_uid)
-    if hubops.signing_mode(view) in hubsign.HUB_ONLY:
-        raise hubsign.hub_only_error()
-
-
 def registered_entry(state_dir: Path, workspace_id: str, host_uid: int) -> dict[str, Any] | None:
     """The host registry entry of a workspace, or None when it is not registered on this host."""
     from .custody import read_json
@@ -338,23 +291,6 @@ def registered_entry(state_dir: Path, workspace_id: str, host_uid: int) -> dict[
         if entry.get("workspace_id") == workspace_id:
             return entry
     return None
-
-
-def refuse_full_mode_entry(state_dir: Path, entry: dict[str, Any], host_uid: int) -> None:
-    """V3 C11: moving the key into convenience custody (``orch keys custody convenience``) is refused in a workspace in
-    full hub mode (or ``unknown``): the key there must stay in passphrase custody. Fail closed on an unreadable log."""
-    from orch.store import Store, StoreError
-
-    try:
-        store = Store.open(entry["root"], expected_workspace_id=entry["workspace_id"], host_state_dir=None, load="lazy")
-    except (StoreError, OSError, KeyError) as exc:
-        raise HostError("host.unavailable", f"the workspace log could not be read ({type(exc).__name__})") from None
-    try:
-        with store.locked():
-            store.refresh()
-            _refuse_full_mode(store, state_dir, entry["workspace_id"], host_uid)
-    finally:
-        store.close()
 
 
 def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> dict[str, Any]:
@@ -416,9 +352,6 @@ def why(
 
     if not gated and not enabled(state_dir, workspace_id, host_uid):  # §11A.17.4: the dev gate stands in
         return ("idle", []) if idle_off(state_dir, workspace_id, host_uid) is not None else ("disabled", [])
-    methods = store.state.workspace.settings.get("sign_methods")
-    if not gated and methods is not None and "click" not in methods:  # B6: the workspace does not allow one click
-        return "disabled", []
     # ignore_relay: leaving the hub (hub.left) by click; a full-mode workspace is relay paired by definition, and only
     # that reason is waived (other_member, phone_device, reader_version stay)
     if not ignore_relay and _relay_paired(state_dir, workspace_id):
@@ -440,7 +373,7 @@ def reason(store: Any, state_dir: Path, workspace_id: str, host_uid: int, person
 
 _TEXT = {
     "disabled": "convenience signing is off for this workspace (orch host convenience on --workspace W; "
-    "and the workspace setting sign_methods must allow click)",
+    "turn on One click)",
     "relay_paired": "the workspace is paired with a relay, whose readers may not know convenience signatures",
     "other_member": "another member's reader (a core or a device) has not declared that it knows convenience "
     "signatures",
@@ -454,12 +387,12 @@ def unavailable(reason: str, devices: list[str], *, hours: int | None = None) ->
     """``sign.convenience_unavailable`` for ``reason`` (the message starts with it) and the readers it names. ``idle``
     names the limit in ``hours`` (C17)."""
     named = f" ({', '.join(devices)})" if devices else ""
-    hint = "sign in your terminal with orch sign CODE"
+    hint = "sign in your terminal with the action’s CLI command"
     if reason == "idle":
         return HostError(
             "sign.convenience_unavailable",
             f"idle: {_TEXT['idle'].format(hours=hours)}.",
-            hint="orch host convenience on --workspace W (or sign in your terminal with orch sign CODE meanwhile)",
+            hint="orch host convenience on --workspace W (or use the action’s CLI command meanwhile)",
             detail={"reason": "idle", "devices": []},  # the hours are in the message
         )
     if devices:

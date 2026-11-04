@@ -1,6 +1,8 @@
 // The browser side of the terminal WebSocket (contract section 12.6.6) and the page-side reply filter (12.6.7). Pure:
 // no React, no xterm. The page decides retry by the close code alone; it never re-requests the write lease by itself.
 
+import { remoteSocketProtocols } from '@/api/bootstrap'
+
 export interface Ready {
   start: number
   offset: number
@@ -90,7 +92,7 @@ export const MAX_INPUT = 65535
 const int = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
 
 /** Open the socket, present the ticket, and route the server's messages. Malformed messages are ignored. */
-export function connectTerm(ticket: string, h: TermHandlers, make: (url: string) => WebSocket = (u) => new WebSocket(u)): TermConnection {
+export function connectTerm(ticket: string, h: TermHandlers, make: (url: string) => WebSocket = (u) => new WebSocket(u, remoteSocketProtocols())): TermConnection {
   const sock = make(termUrl())
   sock.binaryType = 'arraybuffer'
   let end: TermEnd | null = null
@@ -173,7 +175,7 @@ export function endWords(code: number, end: TermEnd | null): string {
     case 'term.not_attachable': return 'This terminal can no longer be attached.'
     case 'not_visible': case 'person.removed': case 'op.not_allowed': case 'not_found': return 'You can no longer see this terminal.'
     case 'runner.stale': return 'The agent runner is from an older orch version. Restart it in your terminal: orch host enable.'
-    case 'runner.disabled': return 'Terminals are switched off for this workspace.'
+    case 'runner.disabled': return 'Command window is switched off for this workspace.'
     case 'ticket_invalid': return 'The terminal refused the attachment.'
     case 'overflow': return 'The terminal fell behind. Reconnecting…'
     case 'protocol': case 'invalid.input': return 'The terminal connection broke.'

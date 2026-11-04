@@ -8,21 +8,18 @@ documented test seam), so the macOS keychain is never opened. One workspace, one
 """
 
 import itertools
+import json
 import os
 import re
 import shutil
-import socket
 import subprocess
-import sys
 import time
 import uuid
-from pathlib import Path
 
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
-from orch.click.client import ClickClient
-from realhost_kit import Pty, Workspace, key_of, ready_requirements, short_run_root
+from realhost_kit import Workspace, key_of, ready_plan, ready_requirements, short_run_root
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
@@ -33,7 +30,6 @@ pytestmark = [
     pytest.mark.realhost,
     pytest.mark.skipif(os.name != "posix", reason="a real host needs unix sockets and a pty"),
 ]
-CHILD = str(Path(__file__).with_name("click_child.py"))
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 RETRIES = itertools.count(1)  # one counter for the whole module: every "fresh" prepare is its own intent
@@ -45,6 +41,12 @@ def seeding(ws: Workspace) -> dict:
         k = keys[name] = key_of(ws.agent("new", title, "--type", "feature", "--priority", "medium"))
         ws.agent("ac", "add", "It works", "--ref", k)
         ready_requirements(ws, k, f"{title}: do the described thing.")
+    # requirements and plan both written, nothing approved: the combined "Approve requirements and plan" card
+    k = keys["both"] = key_of(ws.agent("new", "Export the ledger", "--type", "feature", "--priority", "medium"))
+    ws.agent("ac", "add", "It exports", "--ref", k)
+    ready_requirements(ws, k, "Export the ledger as one file.")
+    ready_plan(ws, k)
+    ws.agent("task", "add", "Write the exporter", "--verify", "echo ok", "--proves", "AC1", "--ref", k)
     return keys
 
 
@@ -60,38 +62,15 @@ def world(tmp_path_factory):
     ws = Workspace(root / "w")
     try:
         keys = ws.bring_up(seeding)
-        run(ws, "host", "convenience", "on", "--workspace", ws.ws_id, "--state", str(ws.state))
-        # The real `orch keys custody convenience`, in a pty (it prompts for the passphrase once), with the file store.
-        convert = Pty(
-            [sys.executable, "-I", CHILD, "cli", "keys", "custody", "convenience", "--workspace", ws.ws_id],
-            ws.env(),
-            ws.root,
-            ws.rules(),
-            90,
-        ).run()
-        assert convert.code == 0, convert.output[-1500:]
+        # The real `orch host convenience on`, in a pty: since #1304 it moves the key into the One click key file in
+        # one step (the passphrase is typed once on the terminal) and then switches the flag on.
+        ws.convenience_on()
     except (RuntimeError, TimeoutError, OSError, AssertionError) as exc:
         ws.stop_host()
         shutil.rmtree(root, ignore_errors=True)
         pytest.skip(f"the real host cannot start here: {str(exc)[:400]}")
     children = []
-
-    def start(env):
-        parent, child = socket.socketpair()
-        n = child.fileno()
-        own = {**env, "HOME": str(ws.home), "XDG_CONFIG_HOME": str(ws.home / ".config")}
-        own["ORCH_HOST_RUN_DIR"] = str(ws.run)
-        proc = subprocess.Popen(
-            [sys.executable, "-I", CHILD, "signer", "--fd", str(n)],
-            pass_fds=(n,),
-            close_fds=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            env=own,
-        )
-        child.close()
-        children.append(proc)
-        return ClickClient(parent, proc)
+    start = ws.click_start(children)
 
     os.environ.pop("ORCH_DASHBOARD_CLICK", None)
     static = tmp_path_factory.mktemp("static")
@@ -101,7 +80,9 @@ def world(tmp_path_factory):
     os.environ["ORCH_HOST_RUN_DIR"] = str(ws.run)
     gateway = Gateway(ws.state, click=Signer(ws.state, start=start))
     auth = Auth()
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         launch = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers={"Origin": ORIGIN})
         token = launch.json()["token"]
         yield type(
@@ -218,9 +199,78 @@ def test_a_policy_op_signs_on_one_click_and_takes_no_word(world, click):
     assert view["view"]["confirm"] == {"kind": "click"}
     time.sleep(1.2)
     typed = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"], "word": "POLICY"})
-    assert typed.status_code == 400 or typed.status_code == 422  # contract 3: there is no word field
+    assert typed.status_code == 400 or typed.status_code == 422  # since contract 3: there is no word field
+    from orch.click.protocol import OP_TITLES, POLICY_RISK
+
+    # contract 4: policy.set is not a daily op, so it is marked (the page asks for the second press); the server signs
+    assert view["view"]["risk_lines"] == [POLICY_RISK] and view["view"]["headline"] == OP_TITLES["policy.set"]
     ok = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"]})
     assert ok.status_code == 200, ok.text
+
+
+def _signed(world, click, body):
+    """prepare, view and sign one action through the dashboard server; the View as shown."""
+    got = click.prepare(body)
+    assert got.status_code == 200, got.text
+    assert got.json()["confirm"] == "click"
+    rid = got.json()["request_id"]
+    view = click.post("view", {"request_id": rid})
+    assert view.status_code == 200, view.text
+    time.sleep(1.2)
+    done = click.post("sign", {"request_id": rid, "view_digest": view.json()["view_digest"]})
+    assert done.status_code == 200, done.text
+    assert done.json()["state"] == "submitted"
+    return view.json()["view"]
+
+
+def test_a_new_schedule_signs_on_one_click(world, click):
+    """Run 13 (owner e2e, blocking): Schedules > New schedule, a once-run 1.5 h ahead with the host's default run
+    hours, is shown and signed on one click. The View keeps the convenience-signing notice in `risk` (the server's
+    check) and carries the schedule's own risk as a line of the review."""
+    from datetime import UTC, datetime
+
+    from orch.ops.schedule import RISK as SCHEDULE_RISK
+
+    _signed(world, click, {"action": "addon_grant", "name": "schedules"})
+    at = datetime.fromtimestamp((int(time.time()) + 5400) // 60 * 60, UTC).strftime("%Y-%m-%d %H:%M")
+    body = {"action": "schedule_add", "key": world.keys["three"], "brief": "Write the report", "at": at, "tz": "UTC"}
+    shown = _signed(world, click, body)
+    assert shown["op"] == "schedule.add" and shown["risk"] == RISK and SCHEDULE_RISK in shown["lines"]
+    listed = world.client.get(f"/api/w/{world.ws.ws_id}/schedules", headers=click.headers(False))
+    assert listed.status_code == 200, listed.text
+    page = listed.json()
+    assert page["min_lead_s"] == 3600  # a real (DEMO) workspace: the form offers nothing earlier than an hour ahead
+    assert [(r["ticket"], r["brief"], r["state"], r["run_hours"]) for r in page["rows"]] == [
+        (world.keys["three"], "Write the report", "live", 8)
+    ]
+
+
+def test_a_new_ticket_schedule_signs_on_one_click(world, click):
+    """Run 14 (lead e2e, blocking): "A new ticket each run" prepares [ticket.created, schedule.set]; the signing check
+    expects exactly that pair, so the review is shown and one click signs the anchor and the schedule together."""
+    from datetime import UTC, datetime
+
+    got = click.prepare({"action": "addon_grant", "name": "schedules"})  # the world may have it on already
+    if got.status_code == 200:
+        _signed(world, click, {"action": "addon_grant", "name": "schedules"})
+    else:
+        assert got.json()["error"]["code"] == "addon.already"
+    at = datetime.fromtimestamp((int(time.time()) + 5400) // 60 * 60, UTC).strftime("%Y-%m-%d %H:%M")
+    body = {
+        "action": "schedule_add",
+        "target": "new",
+        "title": "Check the mail",
+        "brief": "Look at the inbox",
+        "at": at,
+        "tz": "UTC",
+    }
+    shown = _signed(world, click, body)
+    assert shown["op"] == "schedule.add" and any("NEW ticket every run" in line for line in shown["lines"])
+    listed = world.client.get(f"/api/w/{world.ws.ws_id}/schedules", headers=click.headers(False))
+    assert listed.status_code == 200, listed.text
+    rows = [r for r in listed.json()["rows"] if r["brief"] == "Look at the inbox"]
+    assert [(r["state"], r.get("target")) for r in rows] == [("live", "new")]
+    assert rows[0]["title"] == "Check the mail"  # the anchor ticket carries the literal title
 
 
 def test_cancel_cancels_on_the_host(world, click):
@@ -228,15 +278,6 @@ def test_cancel_cancels_on_the_host(world, click):
     res = click.post("cancel", {"request_id": got["request_id"]})
     assert res.status_code == 200 and res.json()["state"] == "cancelled"
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404
-
-
-def test_a_click_workspace_still_prepares_a_terminal_handoff(world, click):
-    """#1170: with the flag on, /handoff works (the code for `orch sign`)."""
-    res = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers())
-    assert res.status_code == 200, res.text
-    world.client.delete(
-        f"/api/w/{world.ws.ws_id}/handoff/{res.json()['id']}", headers=click.headers()
-    )  # leave none open
 
 
 def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):
@@ -249,12 +290,6 @@ def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):
         assert res.json()["error"]["reason"] == "disabled"
         card = click.workspace()
         assert "click" not in card["features"] and card["click"]["enabled"] is False
-        # Flag off: the terminal hand-off is the one path, and it works (the same action, the same intent function).
-        hand = world.client.post(
-            f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers()
-        )
-        assert hand.status_code == 200 and re.fullmatch(r"[0-9A-Z]{4}-[0-9A-Z]{4}", hand.json()["code"]), hand.text
-        world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{hand.json()['id']}", headers=click.headers())
     finally:
         run(ws, "host", "convenience", "on", "--workspace", ws.ws_id, "--state", str(ws.state))
     assert "click" in click.workspace()["features"]
@@ -268,7 +303,7 @@ def test_a_signer_that_dies_is_restarted_and_its_open_approvals_are_gone(world, 
     old.wait(5)
     world.gateway.click.last_spawn -= 10  # the respawn guard is for tight loops, not for this test
     res = click.post("view", {"request_id": got["request_id"]})
-    assert res.status_code == 409 and res.json()["error"]["reason"] == "not_prepared_here"  # terminal-only now
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "not_prepared_here"  # new signer
     assert world.gateway.click.client.proc.pid != pid and world.gateway.click.restarts == 1
     # And a new request works with the new signer.
     assert click.prepare(approve(world, "three")).status_code == 200
@@ -406,3 +441,16 @@ def test_a_different_view_for_an_already_signed_request_is_already_signed(world,
     assert _head(click, world) == after
     # The server did not cancel or forget anything because of it: the request's state still reads submitted.
     assert click.post("state", {"request_id": rid}).json()["state"] == "submitted"
+
+
+def test_approve_both_prepares_and_shows_both_texts_against_the_real_host(world, click):
+    """The combined card (R11 P09) once answered 500 `internal` on a real host: unit tests used hand-built reads."""
+    key = world.keys["both"]
+    seq = click.ticket(key)["head"]["seq"]
+    prepared = click.prepare({"action": "approve_both", "key": key, "head_seq": seq})
+    assert prepared.status_code == 200, prepared.text
+    got = prepared.json()
+    view = click.post("view", {"request_id": got["request_id"]})
+    assert view.status_code == 200, view.text
+    shown = json.dumps(view.json()["view"])
+    assert "Export the ledger as one file." in shown and "One module, streamed output." in shown

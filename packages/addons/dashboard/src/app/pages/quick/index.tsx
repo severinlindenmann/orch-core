@@ -223,7 +223,6 @@ export function QuickPage() {
           anchor={closing.at}
           action={(({ at: _at, ...a }) => a)(closing)}
           doneToast={closing.action === 'details' ? `${closing.key} is a normal ticket now` : `${closing.key} is closed`}
-          autoStart
           onClose={() => setClosing(null)}
           onSettled={(phase) => phase === 'done' && void qc.invalidateQueries({ queryKey: ['quick', ws] })}
         />

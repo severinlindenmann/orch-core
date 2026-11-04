@@ -41,6 +41,13 @@ function open(first: ActivityPage, more?: ActivityPage) {
 }
 
 describe('Activity page (real host)', () => {
+  it('W15: an empty Ticket filter does not look like a ticket key (it reads "Any ticket")', async () => {
+    open(page([row('1')]))
+    const box = await screen.findByLabelText('Ticket', {}, T)
+    expect((box as HTMLInputElement).value).toBe('')
+    expect(box.getAttribute('placeholder')).toBe('Any ticket')
+    expect(box.getAttribute('placeholder')).not.toMatch(/-\d{4}/)
+  })
   it('groups by local day, says it in words and links the ticket', async () => {
     open(page([row('1', { actor: { kind: 'agent', id: 'claude-code', for_name: 'Severin' }, did: 'moved the ticket from open to done', type: 'status.changed' }), row('2', { at: iso(1), did: 'created the ticket' })]))
     expect(await screen.findByRole('heading', { name: /^Today ·/ }, T)).toBeInTheDocument()
@@ -55,9 +62,15 @@ describe('Activity page (real host)', () => {
   it('sends the chosen filters to the server and starts again from the first page', async () => {
     const { spy, view } = open(page([row('1')]))
     await screen.findAllByTestId('activity-row', {}, T)
-    await view.user.selectOptions(screen.getByLabelText('What'), 'reviews')
+    // The filters are Dropdowns (radix Select): open the combobox, press the option.
+    const choose = async (label: string, option: string) => {
+      await view.user.click(screen.getByRole('combobox', { name: label }))
+      await view.user.click(await screen.findByRole('option', { name: option }))
+      await waitFor(() => expect(screen.getByRole('combobox', { name: label })).toHaveTextContent(option))
+    }
+    await choose('What', 'Reviews')
     await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.any(String), { group: 'reviews' }))
-    await view.user.selectOptions(screen.getByLabelText('Who'), 'agents')
+    await choose('Who', 'Agents only')
     await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.any(String), { group: 'reviews', who: 'agents' }))
     await view.user.type(screen.getByLabelText('Ticket'), 'demo-0002')
     await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.any(String), { group: 'reviews', who: 'agents', ticket: 'DEMO-0002' }))

@@ -8,7 +8,7 @@ it.each(['dialog', 'sheet', 'popover'] as const)('%s keeps actions outside the s
   vi.stubGlobal('matchMedia', () => ({ matches: mode !== 'sheet', addEventListener: vi.fn(), removeEventListener: vi.fn() }))
   render(<SignShell anchor={mode === 'popover' ? document.body : null} open title="Allow access" showClose onDismiss={vi.fn()} onOpenAutoFocus={e => e.preventDefault()}>
     <p>Access lasts one day.</p>
-    <details><summary>Show exactly what is signed</summary><p>{'Signed text. '.repeat(500)}</p></details>
+    <details><summary>What you sign</summary><p>{'Signed text. '.repeat(500)}</p></details>
     <section><SignFooter><div className={STICKY_FOOTER}><button>Cancel</button><button>Sign</button></div></SignFooter></section>
   </SignShell>)
   expect(screen.getAllByRole('heading', { name: 'Allow access' })).toHaveLength(1)
@@ -18,9 +18,17 @@ it.each(['dialog', 'sheet', 'popover'] as const)('%s keeps actions outside the s
   expect(cancel.closest('[data-sign-scroll]')).toBeNull()
   expect(slot.parentElement).toHaveClass('flex', 'flex-col', 'overflow-hidden')
   expect(slot.parentElement?.querySelector('[data-sign-scroll]')).toHaveClass('min-h-0', 'overflow-y-auto')
-  expect(screen.getByText('Show exactly what is signed').closest('details')).not.toHaveAttribute('open')
-  fireEvent.click(screen.getByText('Show exactly what is signed'))
+  expect(screen.getByText('What you sign').closest('details')).not.toHaveAttribute('open')
+  fireEvent.click(screen.getByText('What you sign'))
   expect(cancel).toBeVisible()
   expect(screen.getByRole('button', { name: 'Sign' })).toBeVisible()
   expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+})
+
+it('an anchor that is no longer in the page falls to the centred dialog, never a corner popover (r12-P11)', () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  const gone = document.createElement('button') // the button was removed from the page (a list that re-rendered)
+  render(<SignShell anchor={gone} open title="Share files" showClose onDismiss={vi.fn()} onOpenAutoFocus={e => e.preventDefault()}><p>Files</p></SignShell>)
+  expect(document.querySelector('[data-sign-sheet]')).not.toBeNull()
+  expect(document.querySelector('[data-sign-popover]')).toBeNull()
 })

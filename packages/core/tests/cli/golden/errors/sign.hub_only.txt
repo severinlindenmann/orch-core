@@ -1,1 +1,0 @@
-err sign.hub_only this workspace is joined to a hub in full mode: approve on your phone or in the hub · retry:false · next: approve in the hub or on your phone; to leave the hub (break-glass): orch hub leave · fix: orch hub status

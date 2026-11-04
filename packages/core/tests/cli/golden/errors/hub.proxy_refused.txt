@@ -1,0 +1,1 @@
+err hub.proxy_refused the company proxy refused the connection to the hub · retry:false · next: ask your IT team to allow the hub's address through the proxy · fix: orch hub network

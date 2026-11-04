@@ -8,7 +8,7 @@ from orch.cli.meta import overview
 from orch.ops.workflows import WORKFLOWS
 
 MAX_DESCRIBE_LINES = 38
-MAX_DESCRIBE_BYTES = 2500
+MAX_DESCRIBE_BYTES = 2650  # addon.grant lists the market refusals of its staged install (D3)
 MAX_HELP_LINES = 10
 MAX_HELP_BYTES = 800
 MAX_OVERVIEW_LINES = 8

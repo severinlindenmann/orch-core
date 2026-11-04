@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { api } from './prodApi'
+import { api, onWorkspaceNotReady } from './prodApi'
 import { ApiError } from './types'
 import board from '@/test/fixtures/server-m2/board-page.json'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
@@ -63,7 +63,6 @@ it('keeps the host\'s error code, status and hint', async () => {
 
 it('answers neutrally where a page needs an answer and refuses every action', async () => {
   vi.stubGlobal('fetch', vi.fn())
-  expect(await api.getAddons()).toEqual([])
   expect(await api.getAgents(ws)).toEqual([])
   expect(await api.getAddonDecisions(ws)).toEqual([])
   expect(await api.listGrants(ws)).toEqual([])
@@ -150,4 +149,37 @@ it('sends a sealed hub backup key with the sign call, and nothing sealed otherwi
   await api.signClick(ws, 'hr_1', d)
   const bodies = (answers.mock.calls as unknown as [string, RequestInit][]).map((c) => JSON.parse(String(c[1].body)))
   expect(bodies).toEqual([{ request_id: 'hr_1', view_digest: d, sealed: { 'hub.backup_key': env } }, { request_id: 'hr_1', view_digest: d }])
+})
+
+it('reads the add-on packages the server serves, and refuses add-on actions it does not serve', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => (url === '/api/workspaces' ? Response.json([{ id: 'a'.repeat(32), host_state: 'ok', features: ['addons'] }, { id: 'b'.repeat(32), host_state: 'ok', features: [] }]) : Response.json([{ name: 'wiki' }]))))
+  expect(await api.getAddons()).toEqual([{ name: 'wiki' }])
+  expect(fetch).toHaveBeenCalledWith(`/api/w/${'a'.repeat(32)}/addons`, expect.anything())
+  expect(fetch).not.toHaveBeenCalledWith(`/api/w/${'b'.repeat(32)}/addons`, expect.anything())
+  expect(await api.getAddonState(ws, 'wiki')).toEqual({})
+  vi.stubGlobal('fetch', vi.fn())
+  await expect(api.runAddonAction(ws, 'wiki', 'delete')).rejects.toMatchObject({ code: 'op.unsupported' })
+  expect(fetch).not.toHaveBeenCalled()
+})
+
+it('a workspace read refused with addon.disabled tells the listener once and still throws, without a retry', async () => {
+  const fetcher = vi.fn(async () => Response.json({ ok: false, error: { code: 'addon.disabled', message: 'x', retryable: false } }, { status: 409 }))
+  vi.stubGlobal('fetch', fetcher)
+  const heard = vi.fn()
+  const off = onWorkspaceNotReady(heard)
+  const [a, b] = await Promise.allSettled([api.listBoard(ws), api.listBoard(ws)])
+  off()
+  expect(a.status).toBe('rejected')
+  expect(b.status).toBe('rejected')
+  expect(heard).toHaveBeenCalledTimes(1) // two parallel reads, one refresh
+  expect(fetcher).toHaveBeenCalledTimes(2)
+})
+
+it('other refusals do not touch the workspace list', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: false, error: { code: 'not_found', message: 'x', retryable: false } }, { status: 404 })))
+  const heard = vi.fn()
+  const off = onWorkspaceNotReady(heard)
+  await api.listBoard(ws).catch(() => undefined)
+  off()
+  expect(heard).not.toHaveBeenCalled()
 })

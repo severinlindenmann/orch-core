@@ -40,20 +40,23 @@ describe('orange guard (orange is reserved for addons)', () => {
     }
     expect(hits).toEqual([])
   })
-  it('no --chart-* token resolves to the addon orange', () => {
+  it('no --chart-* token resolves to the addon orange (in any theme)', () => {
     const css = readFileSync(resolvePath(process.cwd(), 'src/styles/tokens.css'), 'utf8')
-    const tokens = new Map([...css.matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].replace(/\/\*.*?\*\//g, '').trim().toLowerCase()]))
+    // every definition, not just the last: the light theme (#421) redefines both --addon and the chart tokens
+    const defs = [...css.matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].replace(/\/\*.*?\*\//g, '').trim().toLowerCase()] as const)
+    const first = new Map<string, string>()
+    for (const [k, v] of defs) if (!first.has(k)) first.set(k, v)
     const resolve = (v: string, depth = 0): string => {
       const m = /^var\(--([a-z0-9-]+)\)$/.exec(v)
-      return m && depth < 10 && tokens.has(m[1]) ? resolve(tokens.get(m[1])!, depth + 1) : v
+      return m && depth < 10 && first.has(m[1]) ? resolve(first.get(m[1])!, depth + 1) : v
     }
-    const orange = resolve('var(--addon)')
-    expect(orange).toBe('#f07a2e')
-    const charts = [...tokens.keys()].filter((k) => /^chart-\d+$/.test(k))
-    expect(charts.length).toBeGreaterThanOrEqual(4)
-    for (const k of charts) {
-      const v = resolve(tokens.get(k)!)
-      expect(v, k).not.toBe(orange)
+    const oranges = new Set(defs.filter(([k]) => k === 'addon').map(([, v]) => resolve(v)))
+    expect(resolve('var(--addon)')).toBe('#f07a2e') // the default (dark) addon orange
+    const charts = defs.filter(([k]) => /^chart-\d+$/.test(k))
+    expect(new Set(charts.map(([k]) => k)).size).toBeGreaterThanOrEqual(4)
+    for (const [k, raw] of charts) {
+      const v = resolve(raw)
+      expect(oranges.has(v), `${k}=${v}`).toBe(false)
       expect(v, k).not.toMatch(/240,\s*122,\s*46/)
     }
   })

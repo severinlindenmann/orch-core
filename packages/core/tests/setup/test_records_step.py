@@ -12,7 +12,7 @@ from tests.host.test_records_sync import home, w  # noqa: F401 - fixtures
 from .conftest import post
 from .fakes import FakePorts, names
 from .test_create import AGENT, fake_signer, run_ok, setup_flow  # noqa: F401 - fake_signer: the signing stand-ins
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 WITH_RECORDS = {**AGENT, "records": True}
 
@@ -27,16 +27,16 @@ def test_records_must_be_a_boolean_and_absent_means_no(flow):
 def test_the_review_names_the_records_consent_and_binds_it_to_the_digest(tmp):
     f = setup_flow(tmp, FakePorts())
     post(f, "profile", WITH_RECORDS)
-    r = reveal(f)
-    post(f, "secrets/confirm", {"words": words_for(r)})
+    reveal(f)
+    post(f, "secrets/confirm", {"acknowledged": True})
     rv = post(f, "review")[1]
     flag = next(x for x in rv["flags"] if x["id"] == "records")
     assert flag["text"] == RECORDS_TEXT
     assert "orch records" not in flag["text"] and "git" not in flag["text"].lower() and "never uploaded" in flag["text"]
     g = setup_flow(tmp, FakePorts())
     post(g, "profile", AGENT)
-    r2 = reveal(g)
-    post(g, "secrets/confirm", {"words": words_for(r2)})
+    reveal(g)
+    post(g, "secrets/confirm", {"acknowledged": True})
     assert post(g, "review")[1]["digest"] != rv["digest"]
 
 
@@ -50,11 +50,11 @@ def test_the_run_sets_up_records_last_and_only_when_consented(tmp):
     assert "records_setup" not in names(ports) and all(x["id"] != "records" for x in rv["flags"])
 
 
-def test_a_records_failure_is_a_retry_item_with_the_command_and_setup_still_finishes(tmp):
+def test_a_records_failure_is_a_retry_item_with_the_command_and_setup_is_not_ready(tmp):
     ports = FakePorts()
     ports.fail_records = True
     f, ports, p, _ = run_ok(tmp, WITH_RECORDS, ports=ports)
-    assert p["done"] is True and p["error"] is None
+    assert p["done"] is False and p["error"]["code"] == "steps.failed" and p["error"]["finishable"] is True
     assert "records" in p["retry"] and "orch records init" in p["reasons"]["records"]
     assert next(s for s in p["steps"] if s["id"] == "records")["status"] == "failed"
 
@@ -126,3 +126,34 @@ def test_the_real_port_in_a_records_root_nested_in_the_project_repo_is_a_retry_i
     assert (r.store / ".git").read_text() == "gitdir: ../.git\n"  # untouched
     for unit in (".config/systemd/user", "Library/LaunchAgents"):
         assert not (r.home / unit).exists()
+
+
+def test_w01_a_records_failure_from_a_missing_service_manager_is_plain_words_not_an_oserror(tmp):
+    ports = FakePorts()
+    ports.blocked = ["io.orch.host"]  # what a Mac without a working launchctl may report
+
+    def fail(*_a):
+        ports.log.append(("records_setup",))
+        raise OSError("launchctl bootstrap gui/501: Input/output error")
+
+    ports.records_setup = fail
+    f, ports, p, _ = run_ok(tmp, WITH_RECORDS, ports=ports)
+    why = p["reasons"]["records"]
+    assert "OSError" not in why and "service manager" in why and "orch records init" in why
+    shown = "".join(ports.terminal.shown)
+    assert "OSError" not in shown
+    # W01: not the macOS Login Items advice: the failure is the service manager, not a switch in System Settings
+    assert p["error"]["code"] == "steps.failed" and "Login Items" not in p["error"]["message"]
+    assert "service manager" in p["error"]["message"] and p["error"]["finishable"] is True
+    assert "launchctl" in p["error"]["details"]
+
+
+def test_w01_a_records_failure_without_a_message_never_shows_a_bare_class_name(tmp):
+    ports = FakePorts()
+
+    def fail(*_a):
+        raise RuntimeError()
+
+    ports.records_setup = fail
+    _, _, p, _ = run_ok(tmp, WITH_RECORDS, ports=ports)
+    assert "RuntimeError" not in p["reasons"]["records"] and "could not be set up" in p["reasons"]["records"]

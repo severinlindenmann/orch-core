@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -13,17 +14,16 @@ import pytest
 from orch import worktree_cli
 from orch.gitread.client import PinStore
 from orch.layout import Layout
-from tests.ops.helpers import Cli
+from tests.ops.helpers import Cli, Ws
 
 LINKS = 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}'
 
 
-@pytest.fixture
-def d(ws, cli, monkeypatch):
+def _build(ws, cli, setenv):
     home = ws.tmp / "home"
     home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("ORCH_NO_SERVICE_MANAGER", "1")
+    setenv("HOME", str(home))
+    setenv("ORCH_NO_SERVICE_MANAGER", "1")
     repo = ws.repo()
     ws.git("checkout", "-q", "-b", "main")  # feat/x is free for a worktree
     r = cli("new", "A ticket", "-m", "text")
@@ -48,6 +48,35 @@ def d(ws, cli, monkeypatch):
 
     return type("D", (), {"ws": ws, "repo": repo, "key": key, "other": other, "nob": nob, "run": staticmethod(run),
                           "person": person, "agent": cli})  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def _scene(tmp_path_factory):
+    """The workspace, the repository and the three tickets, built once per module (a copy of the files is kept)."""
+    live = tmp_path_factory.mktemp("wtd")
+    pristine = tmp_path_factory.mktemp("wtd-pristine") / "files"
+    w = Ws(live)
+    w.bootstrap()
+    with pytest.MonkeyPatch.context() as mp:
+        built = _build(w, Cli(w), mp.setenv)
+    w.store.close()
+    w.store.fs.close()  # the root fd too: the files are replaced under it for every test
+    w.store = None
+    shutil.copytree(live, pristine, symlinks=True)
+    yield built, live, pristine, w.clock[0]
+
+
+@pytest.fixture
+def d(_scene, monkeypatch):
+    """The module's scene with its files put back (a test creates worktrees, claims, edits): the paths stay the same,
+    because the repository's path is in the signed settings."""
+    built, live, pristine, clock = _scene
+    shutil.rmtree(live)
+    shutil.copytree(pristine, live, symlinks=True)
+    built.ws.clock[0] = clock
+    monkeypatch.setenv("HOME", str(live / "home"))
+    monkeypatch.setenv("ORCH_NO_SERVICE_MANAGER", "1")
+    return built
 
 
 def wt(d):

@@ -599,17 +599,18 @@ def test_down_reports_a_removal_error_instead_of_a_traceback(dp, scratch, monkey
 
 
 @pytest.mark.parametrize(
-    ("prompt", "typed"),
+    "prompt",
     [
-        ("Type 8cee1b06/GENESIS and Enter to continue; anything else stops: ", "8cee1b06/GENESIS"),  # genesis pin
-        ("Type ABCD-1234 to continue to the passphrase; anything else stops: ", "ABCD-1234"),
-        ("Type ABCD-1234 to continue (d = details): ", "ABCD-1234"),
+        "Press Enter to sign, any other key cancels.\n",
+        "Press Enter to sign, d for details, any other key cancels.\n",
+        "Press Enter to continue, any other key cancels.\n",
     ],
 )
-def test_review_prompts_are_answered(dp, prompt, typed):
+def test_review_prompts_are_answered_with_enter_alone(dp, monkeypatch, prompt):
+    monkeypatch.setattr(dp.time, "sleep", lambda s: None)
     ctx = SimpleNamespace(passphrase="pw")
     typed_back = [r.fn(m) for r in dp.passphrase_responders(ctx) if (m := r.pattern.search(prompt))]
-    assert typed_back == [typed]
+    assert typed_back == [""]  # run_pty adds the Enter
 
 
 def test_store_dir_follows_the_orch_subfolder(dp, scratch):

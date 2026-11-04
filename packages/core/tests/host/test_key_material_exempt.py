@@ -247,3 +247,58 @@ def test_grant_shapes_and_the_presented_secret_are_never_exempt_in_a_key_field()
         call.check_secret_structured(json.dumps(cert), "device_cert")
     with pytest.raises(OrchError):
         Call(Context(env={}), "member.add").check_secret_structured(json.dumps(cert_doc(rng, sig=GRANT)), "device_cert")
+
+
+# -- #1475: the hub card, the hub-owner proof and the share plan digest are key material too ---------------------
+
+
+def _put(tree: dict, path: tuple, value: object) -> None:
+    for step in path[:-1]:
+        tree = tree.setdefault(step, {})
+    tree[path[-1]] = value
+
+
+@pytest.mark.parametrize(
+    ("op", "prefix", "path", "n"),
+    [
+        *(
+            (op, pre, path, n)
+            for op, pre in (("hub.connect", ()), ("human.prepare", ("args",)))
+            for path, n in (
+                (("hub_card", "o", "hk_root_pub"), 65),
+                (("hub_card", "o", "hxk_pub"), 65),
+                (("hub_card", "o", "tls_spki_sha256"), 32),
+                (("hub_card", "op_cert", "o", "hk_op_pub"), 65),
+                (("hub_card", "op_cert", "sig"), 64),
+                (("hub_card", "sig"), 64),
+            )
+        ),
+        ("share.rule_add", (), ("expect",), 32),
+        ("share.rule_remove", (), ("expect",), 32),
+        ("share.sync", (), ("expect",), 32),
+    ],
+)
+def test_1475_listed_key_fields_may_hold_a_token_shaped_run_and_free_text_may_not(op, prefix, path, n):
+    rng = random.Random(1475)
+    value = forced(n, rng)
+    args: dict = {}
+    _put(args, (*prefix, *path), value)
+    assert not secret_in_request({"op": op, "args": args})
+    # the same run at another place, or in a value of another length, is still refused
+    other: dict = {}
+    _put(other, (*prefix, *path[:-1], "note"), value)
+    assert secret_in_request({"op": op, "args": other})
+    longer: dict = {}
+    _put(longer, (*prefix, *path), value + "AAAA")
+    assert secret_in_request({"op": op, "args": longer})
+
+
+def test_1475_the_owner_proof_of_a_hub_joined_event_is_key_material():
+    rng = random.Random(1475)
+    ev = {
+        "hk_root_pub": forced(65, rng),
+        "owner_proof": {"o": {"payload": {"hk_root_pub": forced(65, rng)}}, "sig": forced(64, rng)},
+    }
+    assert not secret_in_request({"op": "human.submit", "args": {"events": [ev]}})
+    ev["owner_proof"]["o"]["payload"]["title"] = TOKEN
+    assert secret_in_request({"op": "human.submit", "args": {"events": [ev]}})

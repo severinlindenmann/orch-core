@@ -1,0 +1,10 @@
+ok describe schedule.show
+Show a schedule and its signed brief.
+usage: orch schedule show ID
+who: read · emits: -
+args:
+  ID  schedule ID
+errors:
+  not_found (exit 2): orch list
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
+out: ok {key} schedule {id}

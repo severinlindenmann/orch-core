@@ -75,6 +75,9 @@ class TestKey:
         return self._sk.sign(msg)
 
 
+# The TEST root has its own id, distinct from the production root's `root-1`, so both can be embedded together.
+# Its seed is still derived from the name "root-1" (the public seed rule), so the key itself is unchanged.
+TEST_ROOT_ID = "test-root-1"
 ROOT = TestKey("root-1")  # the trusted TEST root
 ROGUE_ROOT = TestKey("root-9")  # a root nobody trusts
 RK3 = TestKey("rk-3")  # current core release key, serial 3
@@ -115,14 +118,14 @@ SIGNER = {"rk-3": RK3, "rk-1": RK1, "rk-4": RK4, "rk-5": RK5, "rk-6": RK6, "ck-1
 REVOCATIONS = {"format": "orch.revocations/1", "min_serial": 2, "revoked": [4], "issued_at": "2026-10-20T00:00:00Z"}
 
 
-def key_cert(key_id: str, *, root: TestKey = ROOT, root_key_id: str = "root-1", raw: bytes | None = None) -> dict:
+def key_cert(key_id: str, *, root: TestKey = ROOT, root_key_id: str = TEST_ROOT_ID, raw: bytes | None = None) -> dict:
     body = jcs(CERTS[key_id]) if raw is None else raw
     return {"cert": b64(body), "root_key_id": root_key_id, "sig": b64(root.sign(CERT_DOMAIN + body))}
 
 
 def revocations(*, doc: dict | None = None, signer: TestKey = ROOT) -> dict:
     body = jcs(REVOCATIONS if doc is None else doc)
-    return {"doc": b64(body), "root_key_id": "root-1", "sig": b64(signer.sign(REVOCATIONS_DOMAIN + body))}
+    return {"doc": b64(body), "root_key_id": TEST_ROOT_ID, "sig": b64(signer.sign(REVOCATIONS_DOMAIN + body))}
 
 
 def envelope(
@@ -151,9 +154,14 @@ def text(env: dict[str, Any]) -> str:
 
 # --- payloads -----------------------------------------------------------------------------------------------------
 
+ROLES = ("core", "dashboard", "hub", "relay", "publish", "constraints")  # the file list of one release
+
 FILE_BYTES = {
     "core": b"TEST orch-core wheel bytes (not a real wheel)\n",
     "dashboard": b"TEST orch-dashboard wheel bytes (not a real wheel)\n",
+    "hub": b"TEST orch-hub wheel bytes (not a real wheel)\n",
+    "relay": b"TEST orch-relay wheel bytes (not a real wheel)\n",
+    "publish": b"TEST orch-publish wheel bytes (not a real wheel)\n",
     "constraints": b"cryptography==46.0.3\njsonschema==4.26.0\nsegno==1.6.6\n",
 }
 
@@ -162,6 +170,9 @@ def file_names(version: str) -> dict[str, str]:
     return {
         "core": f"orch_core-{version}-py3-none-any.whl",
         "dashboard": f"orch_dashboard-{version}-py3-none-any.whl",
+        "hub": f"orch_hub-{version}-py3-none-any.whl",
+        "relay": f"orch_relay-{version}-py3-none-any.whl",
+        "publish": f"orch_publish-{version}-py3-none-any.whl",
         "constraints": "constraints.txt",
     }
 
@@ -185,7 +196,7 @@ def manifest(channel: str, seq: int, **over: Any) -> dict[str, Any]:
                 "size": len(FILE_BYTES[role]),
                 "url": f"https://github.com/severinlindenmann/orch-core/releases/download/v{version}/{names[role]}",
             }
-            for role in ("core", "dashboard", "constraints")
+            for role in ROLES
         ],
         "changelog": "TEST release. Wiki add-on: page links; fix terminal resize.",
         "min_from": "2.0.0.dev1",
@@ -239,7 +250,7 @@ def files_for(m: dict[str, Any], mutate: dict[str, bytes] | None = None) -> list
 
 # --- cases --------------------------------------------------------------------------------------------------------
 
-STATE = {"trusted_roots": ["root-1"], "seq_seen": 41, "revocations_issued_at": "2026-10-20T00:00:00Z"}
+STATE = {"trusted_roots": [TEST_ROOT_ID], "seq_seen": 41, "revocations_issued_at": "2026-10-20T00:00:00Z"}
 
 
 def case(name: str, pins: str, env: str, reason: str, *, purpose="core", channel="develop", state=None, files=None):
@@ -417,6 +428,58 @@ def core_cases() -> list[dict[str, Any]]:
             "malformed",
         )
     )
+
+    # the manifest file list (roles: core dashboard hub relay publish constraints)
+    def listed(mutate):  # a manifest whose file list was changed by ``mutate(files)``
+        m = manifest("develop", 42)
+        mutate(m["files"])
+        return text(envelope(jcs(m)))
+
+    def dup_role(fs):
+        fs[3]["role"] = "hub"  # the relay entry claims the hub role
+
+    def unknown_role(fs):
+        fs[3]["role"] = "installer"
+
+    def no_core(fs):
+        del fs[0]
+
+    def no_constraints(fs):
+        del fs[-1]
+
+    def case_names(fs):
+        fs[1]["name"] = fs[0]["name"].upper()  # collides on a case-insensitive file system (APFS, NTFS)
+
+    def seven_files(fs):
+        fs.append({**fs[0], "name": "extra-" + fs[0]["name"]})  # more than the 6 roles
+
+    def role_not_string(fs):
+        fs[3]["role"] = 5
+
+    for name, pins, mutate in (
+        ("malformed_case_colliding_names", "two file names that differ only in case", case_names),
+        ("malformed_more_than_six_files", "seven file entries (one role twice)", seven_files),
+        ("malformed_role_not_a_string", "a file entry whose role is an integer", role_not_string),
+        ("malformed_duplicate_role", "two file entries with the role hub", dup_role),
+        ("malformed_unknown_role", "a file entry with a role that is not in the role set", unknown_role),
+        ("malformed_missing_core", "the file list has no core wheel", no_core),
+        ("malformed_missing_constraints", "the file list has no hash-locked constraints file", no_constraints),
+    ):
+        add(case(name, pins, listed(mutate), "malformed"))
+    small = manifest("develop", 42)
+    small["files"] = [f for f in small["files"] if f["role"] in ("core", "constraints")]
+    add(
+        accept(
+            case(
+                "ok_core_and_constraints_only",
+                "a release whose file list holds only the mandatory roles (core, constraints)",
+                text(envelope(jcs(small))),
+                "ok",
+                files=files_for(small),
+            ),
+            small,
+        )
+    )
     add(
         case(
             "malformed_wrong_alg",
@@ -438,7 +501,7 @@ def core_cases() -> list[dict[str, Any]]:
     add(
         case(
             "bad_cert_sig",
-            "certificate claims root-1 but is signed by another key",
+            "certificate claims test-root-1 but is signed by another key",
             text(envelope(dev_b, cert=key_cert("rk-3", root=ROGUE_ROOT))),
             "bad_cert_sig",
         )
@@ -446,7 +509,7 @@ def core_cases() -> list[dict[str, Any]]:
     add(
         case(
             "bad_revocations_sig",
-            "revocation list claims root-1 but is signed by the release key",
+            "revocation list claims test-root-1 but is signed by the release key",
             text(envelope(dev_b, revs=revocations(signer=RK3))),
             "bad_revocations_sig",
         )
@@ -658,7 +721,7 @@ def keys_doc() -> dict[str, Any]:
         "test_only": True,
         "seed_rule": 'sha256(b"orch-release TEST key <name>; never trust outside tests")',
         "keys": {k.name: {"seed_hex_TEST_ONLY": k.seed.hex(), "public_key": b64(k.public)} for k in KEYS},
-        "trusted_roots": {"root-1": b64(ROOT.public)},
+        "trusted_roots": {TEST_ROOT_ID: b64(ROOT.public)},
         "certs": CERTS,
         "revocations": REVOCATIONS,
         "domains": {

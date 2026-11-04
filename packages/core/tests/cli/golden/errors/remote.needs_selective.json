@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.needs_selective",
+    "message": "remote access needs the hub in selective mode, or no hub",
+    "hint": "leave the hub or run it in selective mode, then turn remote access on",
+    "fix": {
+      "argv": [
+        "orch",
+        "hub",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -2,7 +2,6 @@
 
 Real admitted hub lines (``World.try_`` -> ``admit``) with the fake verifier for the crypto (the real signatures are in
 tests/hub/test_c3b_vectors). Covers: gates and counting, the effective role (min of local and hub), the roster,
-questions, lifecycle, channel revocations voiding open decisions, ``sign_methods`` ``hub``, the D66 factor floor, and
 the D59 end to end (a worker's hub id, a leave, a second hub, the aliased person's approval refused)."""
 
 from __future__ import annotations
@@ -311,16 +310,6 @@ def test_a_hub_actor_releases_a_claim_by_the_ticket_owner_or_manager_rule(w):
     w.fill(u)
     a = w.claim(u, "mara")  # mara is aliased: in full mode an unaliased member's agents hold no live claim (#1133)
     assert hub(w, u, "claim.released", session=a["session"], reason="released") is None
-
-
-# --- sign_methods hub and the D66 factor floor -------------------------------------------------------------------
-
-
-def test_sign_methods_without_hub_refuses_every_hub_event(w, uid):
-    w.settings(sign_methods=["terminal", "click"])
-    assert decide(w, uid).code == Code.SIGN_METHOD
-    w.settings(sign_methods=["terminal", "hub"])
-    assert decide(w, uid) is None
 
 
 def test_the_factor_floor_is_one_function_and_replay_applies_it(w, uid):

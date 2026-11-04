@@ -31,7 +31,7 @@ export default defineConfig(({ command }) => ({
     // The server's CSP is `style-src 'self'`: a <style> element with text, or a style="" attribute, is blocked (B11 34).
     // Three libraries inject one anyway (react-style-singleton for the scroll lock of every modal dialog, and xterm's
     // DOM renderer for its two per-terminal rules). Their css goes into constructable stylesheets instead (src/lib/cssom.ts),
-    // which the CSP allows; the element they would have used becomes a <span>, because even an empty <style> is blocked. Each replacement must
+    // which the CSP allows (xterm's per-cell style attributes become el.style writes); the element they would have used becomes a <span>, because even an empty <style> is blocked. Each replacement must
     // match exactly once: a library update that moves the code fails the build instead of silently re-opening the hole.
     name: 'csp-no-inline-style',
     transform(code, id) {
@@ -46,6 +46,10 @@ export default defineConfig(({ command }) => ({
         swap('this._dimensionsStyleElement=this._document.createElement("style")', 'this._dimensionsStyleElement=this._document.createElement("span")')
         swap('this._themeStyleElement.textContent=t', `${set}(this._themeStyleElement,t)`)
         swap('this._dimensionsStyleElement.textContent=t', `${set}(this._dimensionsStyleElement,t)`)
+        // The DOM renderer also colours single cells (min-contrast, 256/RGB colours) with setAttribute("style", ...), which the CSP
+        // blocks (one violation per cell, hence dozens in the console). The same declarations through the CSSOM (el.style) are allowed.
+        swap('e.setAttribute("style",`${e.getAttribute("style")||""}${t};`)', 'e.style.cssText=`${e.style.cssText||""}${t};`')
+        if (code.includes('setAttribute("style"')) throw new Error(`csp-no-inline-style: ${id} still sets a style attribute: update vite.config.ts`)
         styleHooks.add('xterm')
         return { code, map: null }
       }
@@ -86,6 +90,7 @@ export default defineConfig(({ command }) => ({
       // Focus mode's demo data (mock host only) is swapped for empty stubs in the production build, like the api module.
       ...(command === 'build' ? [
         { find: /^@\/mocks\/addons\/focus\/demo$/, replacement: path.resolve(import.meta.dirname, './src/api/focusDemo.prod.ts') },
+        { find: /^@\/mocks\/addons\/focus\/live$/, replacement: path.resolve(import.meta.dirname, './src/api/focusLive.prod.ts') },
         { find: /^@\/mocks\/addons\/focus\/(?:sources|source-extract)\.json$/, replacement: path.resolve(import.meta.dirname, './src/api/focusJson.prod.ts') },
       ] : []),
       { find: '@', replacement: path.resolve(import.meta.dirname, './src') },
@@ -93,6 +98,8 @@ export default defineConfig(({ command }) => ({
   },
   build: {
     rolldownOptions: {
+      // Two pages: the dashboard, and the remote client's own screens (served by orch_dashboard.remote_client on 127.0.0.1).
+      input: { main: path.resolve(import.meta.dirname, 'index.html'), 'remote-client': path.resolve(import.meta.dirname, 'remote-client.html') },
       output: {
         // Stable vendor chunks: the entry stays small and the framework code caches across page-chunk changes.
         codeSplitting: {

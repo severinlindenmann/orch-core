@@ -124,3 +124,47 @@ running as the same UID can read or write the stored file directly until the per
 
 **8.5 Reserved ids.** `github`, `landing` and `model-routing` are reserved for the official marketplace
 (`orch.market.constants.OFFICIAL_IDS`); another marketplace that lists one is refused with `market.reserved_id`.
+
+**8.6 `events` (API 1.2, #718).** An add-on can declare the events it can report to a waiting follow-up
+(`orch follow-up --on <addon>.<kind>:<ref>`). `events` is a list of at most 8 of `{kind, title, statuses, ref, poll}`:
+`kind` is `word.word` (up to three words, `[a-z][a-z0-9_]*`), unique; `title` is 1 to 40 plain printable characters
+the person reads when granting; `statuses` are 1 to 4 distinct tokens the add-on may report; `ref.format` is one of the
+closed formats `int` (1 to 19 digits), `slug`, `owner_repo_number` (`owner:repo:123`) and `hex40`; `poll.interval_s` is
+60 to 3600. Anything else is refused. The manifest needs `api` excluding 1.1 and the `network` capability. The host
+polls only while a follow-up waits on the event, with the runner method `events.poll` (needs `network`), params exactly
+`{kind, ref, settings}`; the answer is exactly `{"state": "pending" | "done" | "failed"}`, and `done` carries
+`"status"`, one of the declared statuses. The event is `{source: "addon", kind: "<addon>.<kind>", ref, status, at}`
+with `at` from the host clock. A follow-up binds with `orch follow-up --on <addon>.<kind>:<ref> [--on-status <status>]`; the ref is checked
+against the declared format when it is set and before every poll, and the add-on asked is the one before the FIRST dot
+of the kind. By default any declared status wakes it. Budgets: each ref at its own interval (doubling after a failure, up
+to an hour), at most 5 refs per add-on per tick, 60 calls per add-on and 200 per host per hour; a source whose polls
+fail three times in a row is marked failed (closed code) and the follow-up's deadline wakes it (`addon_silent`). One
+trigger per follow-up. With `--on-status`, a `done` with another status does not wake the follow-up: it keeps waiting for
+its deadline (`addon_silent`; the agent can look at the result then). An answer that fails the closed shape counts as one
+of the three failures like a crash or a timeout. The ref is chosen by the agent that sets the follow-up (accepted risk:
+an agent can make the add-on, and the person's stored key, look up any ref of the declared format; the budgets above
+bound the cost, and the add-on only ever sees its own kind and that ref). An add-on only says that something finished; the agent verifies the result itself. The declaration is signed in `addon.granted` (`events`, flat: `kind`, `title`,
+`statuses`, `ref` format, `interval_s`).
+
+## 9. Commands and fields of an add-on at the CLI (AP D5, steps 1 and 1b)
+
+**9.1 Availability.** A core operation that belongs to an add-on is declared `operation(..., addon="<name>")` (today
+`quick list` for `quick`; `follow-up`, `follow-up list|show|cancel` and `webhook new` for `schedules`). The add-on is
+*on* while it is granted, enabled and not purged. The one check lives in `orch.ops.runtime.guarded`, so the CLI, the
+host and batches share it: while the add-on is off the operation fails with `addon.off` (exit 3, `retry:false`, "the
+`<name>` add-on is off in this workspace", hint "tell the person; do not work around it"). The older per-add-on codes
+`quick.off` and `followup.off` are gone. `orch new --label quick` and `orch set REF labels=quick` (a new quick task) and
+`orch quick add` answer `addon.off` too.
+
+`orch help`, `orch help <workflow>` and `orch describe` list such an operation only while its add-on is on; bare
+`orch help` and `orch describe` show them in an `Add-on commands` group, a workflow with no visible step is hidden, and
+`orch describe <op>` / `orch help <workflow>` of an off add-on answer `addon.off`. Without a workspace everything is
+listed. In host mode the CLI reads the state from the host's `addon.list` (its rows carry the grant's `fields`).
+
+**9.2 Fields.** `orch set REF <addon>.<field>=VALUE` sets an add-on field of a ticket. The add-on must be on
+(`addon.off`); the field, its type and limits and `set_by` are the **grant's**, checked with the rules replay applies
+(`orch.model.addon_rules`); the write is an ordinary `ticket.updated` setting `ticket.addons.<addon>.<field>`, so no
+event type or signed shape is new. VALUE is parsed by the field type: string and text as written, integer as digits,
+boolean as `true` or `false`, enum as one of its values, string_list comma separated; `none` clears the field (so the text `none` cannot be stored; grants have no required fields). Every list item, enum and person value is cleaned as one line; a person must be a member. Availability is checked again under the lock before the append. An unknown field is
+`invalid.input`, a field whose `set_by` excludes the agent is `invalid.input` ("not settable by this actor (set_by)"). `orch describe <addon>.<field>` prints the
+type, limits, `set_by` and gate from the grant.

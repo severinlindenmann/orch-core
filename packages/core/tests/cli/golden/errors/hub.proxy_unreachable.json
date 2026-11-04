@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.proxy_unreachable",
+    "message": "the company proxy could not be reached",
+    "hint": "check the proxy address: orch hub network",
+    "fix": {
+      "argv": [
+        "orch",
+        "hub",
+        "network"
+      ]
+    },
+    "retryable": true
+  }
+}

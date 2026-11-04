@@ -1,0 +1,1 @@
+err remote.no_pending no device is waiting to be added · retry:false · next: make a new code and add the device again · fix: orch status

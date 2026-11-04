@@ -192,9 +192,13 @@ describe('Artifacts page: viewer states', () => {
     expect(within(sheet).queryByRole('link')).toBeNull()
   })
   it('a failed load offers Try again', async () => {
-    const real = api.getTicket
-    const spy = vi.spyOn(api, 'getTicket').mockRejectedValueOnce(new ApiError(500, { code: 'internal', message: 'Boom', retryable: true }))
-    spy.mockImplementation(real)
+    // Fail only the viewer's first read of this artifact's ticket: other screens (Today's attention) read tickets too.
+    const real = api.getTicket.bind(api)
+    let failed = false
+    vi.spyOn(api, 'getTicket').mockImplementation(async (key: string, ...rest: unknown[]) => {
+      if (!failed && key === 'DEMO-0043') { failed = true; throw new ApiError(500, { code: 'internal', message: 'Boom', retryable: true }) }
+      return (real as (...a: unknown[]) => ReturnType<typeof api.getTicket>)(key, ...rest)
+    })
     const { user } = renderApp('/artifacts')
     await user.click(await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T))
     const sheet = await screen.findByRole('dialog', {}, T)

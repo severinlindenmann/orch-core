@@ -164,11 +164,11 @@ export function ArtifactsPage() {
         )}
         <span className="flex-1" />
         <ToggleGroup type="single" value={view ?? 'list'} onValueChange={(v) => v && chooseView(v as View)} variant="outline" size="sm" aria-label="Layout">
-          <ToggleGroupItem value="list" aria-label="List" className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+          <ToggleGroupItem value="list" aria-label="List" className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
             <List className="size-3.5" />
             List
           </ToggleGroupItem>
-          <ToggleGroupItem value="grid" aria-label="Grid" className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+          <ToggleGroupItem value="grid" aria-label="Grid" className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text">
             <LayoutGrid className="size-3.5" />
             Grid
           </ToggleGroupItem>

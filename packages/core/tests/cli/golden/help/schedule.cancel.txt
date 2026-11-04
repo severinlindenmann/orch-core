@@ -1,0 +1,5 @@
+Cancel future runs; existing-ticket run grants also end.
+usage: orch schedule cancel ID [--dry-run]
+  ID  schedule ID
+  --dry-run  say what would happen, append nothing
+more: orch describe schedule.cancel

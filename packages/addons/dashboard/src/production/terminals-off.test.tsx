@@ -11,7 +11,7 @@ const state = useFakeHost(() => [workspace({ id: 'a'.repeat(32), features: [...R
 
 it('has no Terminals entry and asks the server nothing for the page', async () => {
   show('/w/DEMO/terminals')
-  await waitFor(() => expect(screen.queryByRole('heading', { name: 'Terminals' })).not.toBeInTheDocument(), { timeout: 5000 })
-  expect(screen.queryByRole('link', { name: 'Terminals' })).toBeNull()
+  await waitFor(() => expect(screen.queryByRole('heading', { name: 'Command window' })).not.toBeInTheDocument(), { timeout: 5000 })
+  expect(screen.queryByRole('link', { name: 'Command window' })).toBeNull()
   expect(state.host.calls.filter((c) => c.path.includes('/runs'))).toEqual([])
 })

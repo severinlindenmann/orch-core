@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { CLICK_RISK, unknownOutcome } from '@/api/click'
@@ -15,7 +15,12 @@ function Probe({ ws, onRun }: { ws: string; onRun: (r: ReturnType<typeof useClic
   return <p>{run.phase}{run.leftUnsettled ? ' left' : ''}{run.switched ? ' switched' : ''}</p>
 }
 
-afterEach(() => vi.restoreAllMocks())
+// Unmounting with a request open cancels it one tick later (useClickSign): let that land on this test's spies, not the next one's.
+afterEach(async () => {
+  cleanup()
+  await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+  vi.restoreAllMocks()
+})
 
 describe('switching workspace', () => {
   const setup = async () => {
@@ -41,6 +46,22 @@ describe('switching workspace', () => {
     t.rerender('b'.repeat(32))
     await waitFor(() => expect(screen.getByText(/switched/)).toBeInTheDocument())
     expect(t.cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('C2: cancelling tombstones the request before the answer; another press increments retry', async () => {
+    const t = await setup()
+    const sign = vi.spyOn(api, 'signClick')
+    let finish!: () => void
+    t.cancel.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ id: REQ, state: 'cancelled' }) }))
+    let cancellation!: Promise<void>
+    act(() => { cancellation = t.run().cancel() })
+    await act(async () => { await t.run().sign() })
+    expect(sign).not.toHaveBeenCalled()
+    expect(t.run().phase).toBe('cancelled')
+    await act(async () => { finish(); await cancellation })
+    await act(async () => { await t.run().again({ action: 'approve', key: 'DEMO-1', gate: 'plan' }) })
+    expect(api.prepareClick).toHaveBeenLastCalledWith('a'.repeat(32), { action: 'approve', key: 'DEMO-1', gate: 'plan' }, 1)
+    expect(sign).not.toHaveBeenCalled()
   })
 
   it('while the outcome is unknown cancels nothing and claims nothing', async () => {

@@ -17,6 +17,7 @@ import base64
 import binascii
 import os
 import re
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -25,19 +26,28 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch.hubclient.wire import REMOTE_PROOF_OPS
 
 from . import sealed
 from . import view as views
 from .passkeys import action_digest
+from .presence import Presence, b64_exact, digest_bytes
+from .presence import check as presence_check
 from .protocol import (
     CONTRACT,
+    CONTRACT_MISMATCH,
     DEPOSIT_MAX_HOURS,
     DEPOSIT_REASONS,
     FEATURES,
     HASH,
+    HOLD_OPS,
     IDEM,
     OP_NAME,
     REASONS,
+    REMOTE_KIND_REFUSED,
+    REMOTE_NO_STREAM,
+    REMOTE_PRESENCE_INVALID,
+    REMOTE_PRESENCE_REQUIRED,
     REQ,
     ROTATE_OP,
     ROTATE_PURPOSES,
@@ -48,15 +58,19 @@ from .protocol import (
     refused,
 )
 from .records import RecordError, Records, is_claim
+from .remote_kinds import ALLOWED, PRESENCE, REFUSED, SIGNER_OPS, classify, secret_arg, sequence_class, strictest
 from .stepup import Stepups
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
 
+#: R2: the remote power changes; their owner proof always carries the typed backup key (never the kept person key)
+_REMOTE_PROOF_OPS = frozenset(REMOTE_PROOF_OPS)
 KEY_ID = "dk"
 #: the ops a passkey step-up is for, and those whose call names a request (host spec §0.8.6 10.5)
 STEPUP_OPS = frozenset({"custody_on", "custody_off", "rotate", "runner", "sign", "github_token"})
 STEPUP_REQUEST_OPS = frozenset({"custody_off", "rotate", "sign", "github_token"})
 MAX_APPROVALS = 16
+LEASE_S = 5.0  # the hold lease: a 2 s renewal plus the longest signer IPC (fail closed, never late)
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
 PER_HOUR = 600
@@ -142,6 +156,8 @@ class Approval:
     deadline: float  # monotonic
     expires_at: str
     files: dict[str, Any] | None
+    session: str | None = None
+    hold_allowed: bool = False
     view_digest: str | None = None
     built_at: float | None = None
     signed: list[dict[str, Any]] | None = None  # exact signed events, kept until a terminal answer
@@ -197,6 +213,7 @@ class ClickSigner:
         records: Records | None = None,
         sessions: Any = None,
         stepups: Stepups | None = None,
+        streams: Callable[[dict[str, Any], str], dict[str, Any]] | None = None,
     ) -> None:
         self.state = Path(state_dir)
         self.uid = os.getuid() if uid is None else uid
@@ -219,6 +236,9 @@ class ClickSigner:
         self._rotations: dict[tuple[str, str], Rotation] = {}
         #: #1198 C16: (workspace, request id) -> (recipient, view digest, deadline) for one sealed GitHub token
         self._token_offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
+        self.lock = threading.RLock()
+        self.holds: dict[tuple[str, str], dict[str, Any]] = {}
+        self.leases: dict[str, tuple[float, float]] = {}  # session -> (monotonic until, wall set)
         self.busy = False
         #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
         #: (sealed-field contract §3)
@@ -237,19 +257,23 @@ class ClickSigner:
         self.sessions = sessions if sessions is not None else Sessions(self.state, wall=wall)
         #: #1198 R1-6: the passkey step-up nonces and the check of a remote session's assertion
         self.stepups = stepups if stepups is not None else Stepups(self.state, mono)
+        #: R3 (#1591): the facts of a remote-device stream come from the host (``remote.stream``), never from the
+        #: caller; a seam for tests. The presence nonces and batches of the streams this signer serves (memory only)
+        self._streams = streams or self._host_stream
+        self.presence = Presence(wall)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
         self.problem_at: dict[str, float] = {}
 
     # -- seams ---------------------------------------------------------------------------------------------------------
     def _default_workspaces(self) -> list[dict[str, Any]]:
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
 
         return _own_workspaces(self.state, self.uid, None)
 
     def _default_connect(self, entry: dict[str, Any]) -> Any:
         from orch.host.client import Connection, Pin
-        from orch.host.handoff import _socket
+        from orch.host.signer_registry import _socket
 
         wid = entry["workspace_id"]
         path = _socket(None, self.state, int(entry["host_uid"]), wid)
@@ -442,7 +466,7 @@ class ClickSigner:
             raise ClickError("invalid.input", "request_id is a request id")
         approval = self.approvals.get((entry["workspace_id"], rid))
         if approval is None:
-            raise refused("not_prepared_here", "this signer did not prepare that request; use orch sign CODE")
+            raise refused("not_prepared_here", "this signer did not prepare that request; prepare this action again")
         return entry, approval
 
     def _expired(self, approval: Approval) -> bool:
@@ -455,7 +479,10 @@ class ClickSigner:
         (#1198 C10) is read without the signer until the owner proof exists (``proof``): then ``human.get`` checks the
         proof at the bind, and a One-click signer without one is refused there (``hub.proof_invalid``)."""
         body: dict[str, Any] = {"request_id": approval.request_id}
-        if approval.seal is None or proof is not None:
+        launch = ((approval.prepared.get("material") or {}).get("sequence") or {}).get("intent", {}).get("launch")
+        # D2 is bound at prepare. On resume its first request is already submitted and cannot be rebound;
+        # read it as-is, compare the immutable binding, and recheck custody and each remaining step at sign time.
+        if not launch and (approval.seal is None or proof is not None):
             body["signer"] = {"device": device, "auth": "convenience"}
         if proof is not None:
             body["owner_proof"] = dict(proof)
@@ -520,11 +547,10 @@ class ClickSigner:
             if seq is not None or files or deposit:
                 raise ClickError("invalid.input", "a hub step takes no sequence, files or deposit")
         elif op_class(op, args=inner) == "terminal":
-            raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
-        if len(self.approvals) >= MAX_APPROVALS:
-            self._sweep()
-            if len(self.approvals) >= MAX_APPROVALS:
-                raise ClickError("rate.limited", "too many open sign requests", retry_after_ms=10_000, retryable=True)
+            raise refused("terminal_only", f"{op} is signed in the terminal")
+        self._sweep()
+        if sum(self.holds.get(k, {}).get("state") != "held" for k in self.approvals) >= MAX_APPROVALS:
+            raise ClickError("rate.limited", "too many open sign requests", retry_after_ms=10_000, retryable=True)
         self.records.prune()
         _, sel = self._convenience(entry)
         device = sel["device"]
@@ -572,13 +598,26 @@ class ClickSigner:
                 deadline=self.mono() + left,
                 expires_at=expires_at,
                 files=files or None,
+                session=args.get("session"),
+                hold_allowed=op in HOLD_OPS
+                and seq is None
+                and not (prepared.get("material") or {}).get("sequence")
+                and (
+                    op != "set"
+                    or (
+                        bool(inner.get("pairs"))
+                        and all(pair.split("=", 1)[0] in {"priority", "size", "labels"} for pair in inner["pairs"])
+                    )
+                ),
                 deposit=deposit,
                 reveal=reveal,
                 reveal_pk=reveal_key,
                 seal=sealed.Recipient("in", workspace_id=entry["workspace_id"], request_id=rid)
                 if op in SEALED_OPS
                 else None,
-                vault=op in SEALED_OPS and self._vault(entry),
+                vault=op in SEALED_OPS
+                and op not in _REMOTE_PROOF_OPS
+                and self._vault(entry),  # remote: always the typed key
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
@@ -707,15 +746,23 @@ class ClickSigner:
 
         return {"path": {"blob": upload(_Conn(), data, None)}}
 
-    def _sequence_kind(self, entry: dict[str, Any], intent: Mapping[str, Any]) -> str:
+    def _sequence_kind(
+        self, entry: dict[str, Any], intent: Mapping[str, Any], view: Mapping[str, Any] | None = None
+    ) -> str:
         """The confirmation of a sequence (always ``click``, else ``terminal_only``). Its own rule, not part of any
-        confirmation class: a sequence that ends in a grant to the runner needs dashboard execution on this machine."""
+        confirmation class: a grant sequence requires a risk View in press mode and dashboard execution."""
         from orch.host import sequence
 
         if sequence.confirm_kind(intent) == "terminal":
-            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
-        if sequence.has_grant(intent) and not self._execution(entry):
-            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal")
+        if sequence.has_grant(intent):
+            if not self._execution(entry):
+                raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+            # Prepare checks execution; once built, the review and sign paths require the risk/press View too.
+            if view is not None and (
+                view["op"] != "grant" or not view["risk_lines"] or view["confirm"].get("mode") != "press"
+            ):
+                raise refused("check_failed", "a grant sequence requires a risk View in press mode")
         return "click"
 
     def _sequence_ok(
@@ -759,7 +806,7 @@ class ClickSigner:
             artifacts = "checked" if approval.files else "unseen"
         elif approval.images:
             artifacts = "checked"  # the pasted screenshots of a sequence: this signer holds the bytes and compared them
-        return views.build(
+        built = views.build(
             prepared,
             self._names(entry),
             device=device,
@@ -771,15 +818,102 @@ class ClickSigner:
             if approval.seal is None or approval.vault
             else (approval.seal.public, SEALED_OPS[approval.op]),
         )
+        meta = (prepared.get("material") or {}).get("sequence")
+        if meta:
+            self._sequence_kind(entry, meta["intent"], built)
+        approval.hold_allowed = approval.hold_allowed and not built["risk_lines"]
+        built["hold_allowed"] = approval.hold_allowed
+        return built
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        if self.busy:
-            raise refused("busy", "another signature is in progress")
-        self.busy = True
-        try:
-            return self._sign(args)
-        finally:
-            self.busy = False
+        with self.lock:
+            delay = args.get("delay_s", 0)
+            if type(delay) is not int or delay not in (0, 10):
+                raise ClickError("invalid.input", "delay_s is 0 or 10")
+            key = (args.get("workspace_id"), args.get("request_id"))
+            if key in self.holds:
+                hold = self.holds[key]
+                if args.get("session") != hold["session"]:
+                    raise ClickError("hold.session", "only the preparing session may use this hold")
+                if args.get("view_digest") != hold["args"].get("view_digest"):
+                    raise refused("view_changed", "that is not the review held by this signer")
+                if hold["state"] == "submitted":
+                    return self._sign(args)
+                if hold["state"] != "held":
+                    raise ClickError("hold.ended", "this hold ended; it is never retried")
+                return self.hold_status(args)
+            if delay:
+                approval = self.approvals.get(key)
+                record = self._record(*key) if approval is None else None
+                if (approval is not None and not approval.hold_allowed) or (record and record["op"] not in HOLD_OPS):
+                    raise ClickError("hold.not_allowed", "this operation cannot be held")
+            if self.busy:
+                raise refused("busy", "another signature is in progress")
+            self.busy = True
+            try:
+                return self._sign(args, enqueue=bool(delay))
+            finally:
+                self.busy = False
+
+    def hold_status(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        key = (args.get("workspace_id"), args.get("request_id"))
+        hold = self.holds.get(key)
+        if hold is None:
+            # A restart loses unsigned holds, but never labels a durable sign claim as not sent.
+            rec = self._record(*key)
+            state = "submitted" if rec and rec.get("result") is not None else "unknown" if rec else "not_sent"
+            return {"state": state}
+        if args.get("session") != hold["session"]:
+            raise ClickError("hold.session", "only the preparing session may use this hold")
+        return {
+            "state": hold["state"],
+            "deadline_ms": int(hold["deadline_wall"] * 1000),
+            **({"reason": hold["reason"]} if "reason" in hold else {}),
+        }
+
+    def run_holds(self) -> None:
+        """Called by the channel loop even with no browser connected. One FIFO per workspace.
+
+        Cancel and signing share the lock. A refusal is terminal; no delayed request is retried.
+        """
+        with self.lock:
+            self._sweep()
+            blocked = set()
+            for key, hold in list(self.holds.items()):
+                if hold["state"] != "held" or key[0] in blocked:
+                    continue
+                if self.mono() < hold["deadline"]:
+                    blocked.add(key[0])
+                    continue
+                if not self.lease_fresh(hold["session"]):
+                    hold.update(state="cancelled", reason="session", finished_at=self.wall())
+                    approval = self.approvals.get(key)
+                    if approval:
+                        self._drop(approval)
+                    continue
+                self.busy = True
+                try:
+                    if self.mono() - hold["deadline"] > 30 or abs(self.wall() - hold["deadline_wall"]) > 30:
+                        raise ClickError("hold.late", "not sent: deadline missed")
+                    self._sign(hold["args"])
+                    hold["state"] = "submitted"
+                except Exception:  # a claim may exist even if the host answer was lost
+                    try:
+                        claimed = key in self._attempted or self._record(*key) is not None
+                    except ClickError:
+                        claimed = True  # cannot read the durable record: never claim it was not sent
+                    hold["state"] = "unknown" if claimed else "not_sent"
+                    if hold["state"] == "not_sent":
+                        approval = self.approvals.get(key)
+                        if approval:
+                            self._drop(approval)
+                        try:
+                            self._call(self._entry(key[0]), "human.cancel", {"request_id": key[1]})
+                        except ClickError:
+                            pass  # the host expires it if offline; the unsigned intent is already gone
+                finally:
+                    hold["finished_at"] = self.wall()
+                    self.busy = False
 
     def _record(self, workspace_id: str, request_id: str) -> dict[str, Any] | None:
         try:
@@ -787,7 +921,7 @@ class ClickSigner:
         except RecordError as exc:
             raise refused("record_unavailable", f"{exc}; this signer does not sign that request again") from None
 
-    def _sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
+    def _sign(self, args: Mapping[str, Any], *, enqueue: bool = False) -> dict[str, Any]:
         entry = self._entry(args.get("workspace_id"))
         rid = args.get("request_id")
         if type(rid) is not str or not REQ.fullmatch(rid):
@@ -802,6 +936,10 @@ class ClickSigner:
             held = self.approvals.get((entry["workspace_id"], rid))
             return res if held is None else self._revealed(held, reveal_key, res)
         entry, approval = self._approval(args)
+        if enqueue and not approval.hold_allowed:
+            raise ClickError("hold.not_allowed", "this operation cannot be held")
+        if enqueue and (not approval.session or args.get("session") != approval.session):
+            raise ClickError("hold.session", "only the preparing session may hold this request")
         if approval.signed is not None:  # the in-memory guard stays, also when the record was lost
             if vd != approval.view_digest:
                 raise refused("already_signed", "this request was already signed for another review")
@@ -839,6 +977,22 @@ class ClickSigner:
             raise refused("view_changed", "the review changed since it was shown (a check or the registry); view again")
         if approval.deposit and not self._execution(entry):  # switched off since prepare: nothing is claimed or signed
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        if enqueue:
+            if _epoch(approval.expires_at) - self.wall() < 40:
+                raise ClickError("hold.expiring", "the host request must live for delay plus 30 seconds")
+            person = self._person(entry)
+            if sum(h["state"] == "held" and h["person"] == person for h in self.holds.values()) >= 20:
+                raise ClickError("hold.full", "at most 20 held intents per person")
+            self.holds[(approval.workspace_id, rid)] = {
+                "state": "held",
+                "deadline": self.mono() + 10,
+                "deadline_wall": self.wall() + 10,
+                "person": person,
+                "session": approval.session,
+                "args": dict(args),
+            }
+            self.session_alive({"session": approval.session})
+            return self.hold_status(args)
         self._key_ready(entry, backend)  # before every claim, on every sign path (single, sequence, deposit, reveal)
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
         proof = None
@@ -964,7 +1118,7 @@ class ClickSigner:
         )
         kind = self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
         if approval.kind != kind:  # the approval recorded at prepare must be the class the host-side intent has now
-            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal")
         driver = sequence.Driver(
             port,
             self.sessions,
@@ -978,22 +1132,24 @@ class ClickSigner:
             live = driver.resumable()
         except sequence.SessionError as exc:
             raise refused("record_unavailable", f"{exc}; nothing was signed") from None
-        if live is not None:
+        if live is not None and not (
+            intent.get("launch") and live["steps"] and live["steps"][0]["request_id"] == approval.request_id
+        ):
             # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
             if intent["kind"] == sequence.ADDON:  # no ticket
                 raise refused(
                     "resumable",
                     "Turning this add-on on was started from this review and is not finished. Finish it in your "
-                    "terminal (orch sign); nothing is signed here.",
+                    "terminal; nothing is signed here.",
                 )
             key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
             raise refused(
                 "resumable",
-                f"{key} was started from this review and is not finished. Finish it in your terminal (orch sign) "
+                f"{key} was started from this review and is not finished. Finish it in your terminal "
                 "or on the ticket page; nothing is signed here.",
             )
         try:
-            out = driver.run(stored)
+            out = driver.run(None if live is not None else stored)
         except sequence.Aborted as exc:
             self._note("sequence_aborted", workspace=wid, request=approval.request_id, landed=exc.landed)
             where = ""
@@ -1004,21 +1160,33 @@ class ClickSigner:
                     held = None
                 name = f" {held['ticket']['key']}" if held and held.get("ticket") else ""
                 where = f" {exc.landed} of {exc.total} signatures landed; the ticket{name} stays a draft."
+                if intent["kind"] == sequence.GATES:  # the first approval landed, the second did not
+                    where = " The requirements are approved; the plan waits for you."
                 if intent["kind"] == sequence.ADDON:  # no ticket: the settings stay and the add-on stays off
                     where = (
                         f" {exc.landed} of {exc.total} signatures landed; the settings stay and the add-on stays off."
                     )
             if exc.resumable:
+                if intent.get("launch"):
+                    # The sequence's durable per-step claims retain the signed bytes for replay. Unlike a lone
+                    # request, this attempt may resume; Driver refuses missing/changed/unsigned claims.
+                    self._attempted.discard((wid, approval.request_id))
                 unfinished = where.replace(" stays a draft", " is not finished")
                 if intent["kind"] == sequence.ADDON:  # the last answer was lost: whether it is on is not known
                     unfinished = (
                         f" {exc.landed} of {exc.total} signatures landed; whether the add-on is on is not known yet."
                     )
+                if intent.get("launch"):
+                    raise refused(
+                        "resumable",
+                        f"The host did not confirm the last signature.{unfinished} "
+                        "Retry this request to finish the same ticket.",
+                    ) from None
                 page = "" if intent["kind"] == sequence.ADDON else " or on the ticket page"
                 raise refused(
                     "resumable",
                     f"The host did not confirm the last signature.{unfinished} "
-                    f"Finish it in your terminal (orch sign){page}; nothing more is signed here.",
+                    f"Finish it in your terminal{page}; nothing more is signed here.",
                 ) from None
             raise refused("stopped", f"{exc.reason}.{where}") from None
         except sequence.SessionError as exc:
@@ -1127,6 +1295,8 @@ class ClickSigner:
         from orch.custody.personkey import PersonMismatch, TypedCodeSource
         from orch.host import signer as host_signer
 
+        if envelope is None and approval.op in _REMOTE_PROOF_OPS:  # a remote power change always needs the typed key
+            raise ClickError("invalid.input", "this review needs the backup key sealed for this request")
         if envelope is None:  # the person key kept by setup (run-9 feedback 6): no backup key typed
             from orch.custody import pkvault
             from orch.custody.base import CustodyError
@@ -1365,14 +1535,70 @@ class ClickSigner:
         self._note("uncertain", workspace=approval.workspace_id, request=approval.request_id, code=exc.code)
         raise refused("uncertain", f"{exc.code}; the request is {state}") from None
 
+    def session_alive(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Renew the dashboard session lease; registration also renews it."""
+        session = args.get("session")
+        if not isinstance(session, str) or not session:
+            raise ClickError("invalid.input", "session is required")
+        with self.lock:
+            self.leases = {s: v for s, v in self.leases.items() if v[0] > self.mono()}
+            self.leases[session] = (self.mono() + LEASE_S, self.wall())
+        return {"state": "alive"}
+
+    def lease_fresh(self, session: str) -> bool:
+        """Fresh only if BOTH clocks agree: the monotonic clock stops during a suspend, the wall clock does not, so a
+        lid closed with a hold pending never makes the lease look alive on wake (fail closed on any clock jump)."""
+        got = self.leases.get(session)
+        return got is not None and self.mono() < got[0] and abs(self.wall() - got[1]) < LEASE_S
+
+    def cancel_holds(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Forget every unsigned hold of a session, without waiting on the host."""
+        session = args.get("session")
+        if not isinstance(session, str) or not session:
+            raise ClickError("invalid.input", "session is required")
+        with self.lock:
+            self.leases.pop(session, None)
+            for key, hold in list(self.holds.items()):
+                if hold["session"] != session or hold["state"] != "held":
+                    continue
+                approval = self.approvals.get(key)
+                if key in self._attempted or (approval is not None and approval.signed is not None):
+                    continue
+                hold["state"] = "cancelled"
+                hold["finished_at"] = self.wall()
+                if approval is not None:
+                    self._drop(approval)
+        return {"state": "cancelled"}
+
     def cancel(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        entry, approval = self._approval(args)
-        self._drop(approval)  # first: no sign can start on it any more
-        res = self._call(entry, "human.cancel", {"request_id": approval.request_id})
-        self._note("cancelled", workspace=approval.workspace_id, request=approval.request_id)
-        return {"state": res["data"]["state"]}
+        with self.lock:
+            key = (args.get("workspace_id"), args.get("request_id"))
+            hold = self.holds.get(key)
+            if hold is not None:
+                if args.get("session") != hold["session"]:
+                    raise ClickError("hold.session", "only the preparing session may cancel")
+                if hold["state"] in {"submitted", "unknown"}:
+                    return {"state": "already_signed"}
+                if hold["state"] != "held":
+                    return {"state": "cancelled"}
+                hold["state"] = "cancelled"
+                hold["finished_at"] = self.wall()
+            entry, approval = self._approval(args)
+            if approval.signed is not None or key in self._attempted:
+                return {"state": "already_signed"}
+            self._drop(approval)
+            try:
+                res = self._call(entry, "human.cancel", {"request_id": approval.request_id})
+            except ClickError:
+                if hold is None:
+                    raise
+                res = {"data": {"state": "cancelled"}}  # unsigned intent is gone even if host is offline
+            self._note("cancelled", workspace=approval.workspace_id, request=approval.request_id)
+            return {"state": res["data"]["state"]}
 
     def status(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        if args.get("request_id"):
+            return self.hold_status(args)
         from orch import __version__ as core
         from orch.custody.select import status
 
@@ -1865,7 +2091,7 @@ class ClickSigner:
                     {},
                     say=lambda _t: None,
                     pk_factory=lambda **kw: TypedCodeSource(code, **kw),
-                    confirm=lambda _text, _word: True,  # the click on the review above
+                    confirm=lambda _text: True,  # the click on the review above
                     now_ms=lambda: int(self.wall() * 1000),
                     call=lambda op, a, **kw: self._call(entry, op, a, **kw),
                     fresh=fresh,
@@ -2091,6 +2317,12 @@ class ClickSigner:
             approval.seal.close()
 
     def _sweep(self) -> None:
+        for key, hold in list(self.holds.items()):
+            if hold["state"] != "held" and self.wall() - hold["finished_at"] >= 60:
+                del self.holds[key]
+                approval = self.approvals.get(key)
+                if approval is not None:
+                    self._drop(approval)
         for key, a in list(self.approvals.items()):
             if self._expired(a) or a.result is not None:
                 self.approvals.pop(key, None)
@@ -2099,6 +2331,7 @@ class ClickSigner:
         # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
+        self.holds.clear()
         for rec, _, _ in (*self._offers.values(), *self._token_offers.values()):
             rec.close()
         self._offers.clear()
@@ -2154,9 +2387,232 @@ class ClickSigner:
             return wid, digest if type(digest) is str else None, op, rid if type(rid) is str else None
         return None
 
+    def _refuse_remote_kind(self, op: str, args: Mapping[str, Any]) -> None:
+        """R2 (#1590, design note 2): when the call carries ``remote: true``, every ``remote.*`` kind is refused before
+        anything else: ``prepare`` of one, and ``view`` / ``sign`` / ``cancel`` of a request that is one. The route gate
+        of the dashboard refuses them too; this is the signer's own check, so a server that skipped it gets no
+        signature. Remote access is changed at this computer only."""
+        name = args.get("op") if op == "prepare" else None
+        if name is None and op in ("view", "sign", "cancel"):
+            approval = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
+            name = approval.op if approval is not None else None
+            if name is None:  # swept from memory: the durable record still names the op
+                try:
+                    rec = self.records.get(args.get("workspace_id"), args.get("request_id"))
+                except (RecordError, TypeError, ValueError):
+                    rec = None
+                name = rec.get("op") if isinstance(rec, dict) else None
+        if isinstance(name, str) and name.startswith("remote."):
+            self._note("refused", workspace=args.get("workspace_id"), code="remote_kind")
+            raise refused("terminal_only", "remote access is changed at this computer, never from a remote session")
+
+    # -- R3 (#1591): calls from a remote-device stream --------------------------------------------------------------
+    _STREAM_IDENTITY = ("hh", "level", "person", "device_id", "presence_pub", "presence_kind")
+    _PRESENCE_OPS = ("presence_nonce", "presence", "presence_take")
+    _LEVELS = ("view", "work", "terminals")
+
+    def _host_stream(self, entry: dict[str, Any], stream_id: str) -> dict[str, Any]:
+        """The facts of an open stream, from the host over this signer's own connection (``remote.stream``): the
+        stream's workspace, device, person, level, handshake hash ``hh`` (b64u), the device's presence key and kind, and
+        the held FIDO2 counter. A closed or unknown stream is ``remote.no_stream``."""
+        return dict(self._call(entry, "remote.stream", {"stream_id": stream_id})["data"])
+
+    def _stream_refuse(self, entry: dict[str, Any] | None, why: str, **kw: Any) -> ClickError:
+        """The one refusal of a stream call: a static text, the reason only in the signer log."""
+        self._note("refused", workspace=None if entry is None else entry["workspace_id"], code=f"remote_{why}", **kw)
+        return ClickError(REMOTE_KIND_REFUSED, "This cannot be done from a remote session.")
+
+    def _stream_facts(self, entry: dict[str, Any], stream_id: str) -> dict[str, Any]:
+        try:
+            facts = self._streams(entry, stream_id)
+        except ClickError as exc:
+            if exc.code == REMOTE_NO_STREAM:
+                self.presence.drop(stream_id)
+            raise
+        try:
+            if (
+                not isinstance(facts, Mapping)
+                or facts.get("workspace_id") != entry["workspace_id"]
+                or facts.get("level") not in self._LEVELS
+                or facts.get("presence_kind") not in ("platform", "fido2")
+                or type(facts.get("counter")) is not int
+                or facts["counter"] < 0
+                or type(facts.get("device_id")) is not str
+            ):
+                raise ValueError("shape")
+            hh = b64_exact(facts.get("hh"), 32)
+            out = {k: facts[k] for k in ("workspace_id", "device_id", "person", "level", "presence_kind", "counter")}
+            out["presence_pub"], out["hh"] = str(facts["presence_pub"]), hh
+        except Exception:  # noqa: BLE001 - a host answer that is not the shape is a refusal, never a guess
+            self.presence.drop(stream_id)
+            raise self._stream_refuse(entry, "facts") from None
+        if out["person"] != self._person(entry):  # the device's person must be the person this signer signs as
+            raise self._stream_refuse(entry, "person")
+        return out
+
+    def _approval_class(self, args: Mapping[str, Any]) -> str:
+        """The class of the request a ``view`` / ``sign`` / ``cancel`` names: its op, its mode and every step of its
+        sequence, from the approval this signer holds (or the durable record's op once swept: that is a replay)."""
+        wid, rid = args.get("workspace_id"), args.get("request_id")
+        approval = self.approvals.get((wid, rid))
+        if approval is not None:
+            op = getattr(approval, "op", None)
+            if getattr(approval, "seal", None) is not None:
+                return REFUSED  # a sealed secret (hub / remote steps)
+            cls = classify(
+                op, {"deposit": getattr(approval, "deposit", False), "reveal": getattr(approval, "reveal", False)}
+            )
+            meta = (getattr(approval, "prepared", None) or {}).get("material") or {}
+            seq = meta.get("sequence") if isinstance(meta, Mapping) else None
+            if seq:
+                cls = strictest(cls, sequence_class(seq.get("intent") or {}))
+            return cls
+        try:
+            rec = self.records.get(wid, rid)
+        except (RecordError, TypeError, ValueError):
+            rec = None
+        if isinstance(rec, dict):
+            return classify(rec.get("op"), {"reveal": rec.get("op") == "grant"})
+        return ALLOWED  # nothing known: the op itself answers not_prepared_here
+
+    def _prepare_class(self, op: str, args: Mapping[str, Any]) -> str:
+        """The class of a ``prepare``: the op as asked (a plain ``grant`` is always shown in the page or deposited, so
+        never a stream's) and, for a sequence, its strictest step."""
+        seq, inner = args.get("sequence"), args.get("args")
+        flags = {"deposit": args.get("deposit"), "reveal_key": args.get("reveal_key"), "args": inner}
+        flags["reveal"] = op == "grant" and not args.get("deposit") and seq is None
+        cls = classify(op, flags)
+        if seq is not None:
+            cls = strictest(cls, sequence_class(seq.get("intent") or {}) if isinstance(seq, Mapping) else REFUSED)
+        return cls
+
+    def _stream_call(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """The one branch for a call that comes from a remote-device stream (design I2, I5, I6). The dashboard supplies
+        the stream id only; the device, person, level and ``hh`` are the host's (``remote.stream``), asked now, every
+        call. Anything not listed is refused."""
+        if args.get("remote") is not True:
+            raise ClickError("invalid.input", "a stream call comes with remote: true")
+        sid = args["stream"]
+        if type(sid) is not str or not WS_ID.fullmatch(sid):
+            raise ClickError("invalid.input", "stream is a stream id")
+        args = {k: v for k, v in args.items() if k not in ("remote", "stream")}
+        if any(k in args for k in self._STREAM_IDENTITY):
+            raise ClickError("invalid.input", "a stream call names no device, person, level or handshake")
+        entry = self._entry(args.get("workspace_id"))
+        facts = self._stream_facts(entry, sid)
+        level = facts["level"]
+        if op in self._PRESENCE_OPS:
+            if level == "view":
+                raise self._stream_refuse(entry, "level", op=op)
+            return self._presence_op(entry, sid, facts, op, args)
+        if secret_arg(args) or SIGNER_OPS.get(op, REFUSED) == REFUSED:
+            raise self._stream_refuse(entry, "kind", op=op)
+        if op == "sign" and (type(args.get("delay_s", 0)) is not int or args.get("delay_s", 0) != 0):
+            # a held sign (delay_s) is a terminal/dashboard-session feature: refuse before any presence is taken
+            raise self._stream_refuse(entry, "kind", op=op)
+        if op in ("prepare", "sign", "stash") and level == "view":
+            raise self._stream_refuse(entry, "level", op=op)
+        take: bytes | None = None
+        if op == "prepare":
+            if self._prepare_class(str(args.get("op")), args) == REFUSED:
+                raise self._stream_refuse(entry, "kind", op=str(args.get("op"))[:40])
+        elif op in ("view", "sign", "cancel"):
+            cls = self._approval_class(args)
+            if cls == REFUSED:
+                raise self._stream_refuse(entry, "kind", op=op)
+            if op == "sign" and cls == PRESENCE:
+                # the digest must be the review this signer built, checked BEFORE any presence is touched
+                vd = args.get("view_digest")
+                approval = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
+                known = getattr(approval, "view_digest", None)
+                if type(vd) is not str or not HASH.fullmatch(vd) or known is None or vd != known:
+                    raise ClickError("invalid.input", "view_digest is the digest of the review")
+                take = digest_bytes(vd)
+        if op == "status":
+            return self._stream_status(entry, args)
+        if take is None:
+            return self._dispatch(op, args)
+        batch = self.presence.take(sid, take)
+        if batch is None:
+            self._note("refused", workspace=entry["workspace_id"], code="remote_presence_required")
+            raise ClickError(REMOTE_PRESENCE_REQUIRED, "Confirm on your device first.")
+        try:
+            return self._dispatch(op, args)
+        except BaseException:
+            # give the presence back unless a signature may exist: a refused or failed sign consumes nothing
+            held = self.approvals.get((args.get("workspace_id"), args.get("request_id")))
+            if held is not None and held.signed is None and (held.workspace_id, held.request_id) not in self._attempted:
+                self.presence.give_back(sid, batch, take)
+            raise
+
+    def _stream_status(self, entry: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        """``status`` over a stream: this stream's workspace only, never the person's other workspaces."""
+        if args.get("request_id"):
+            return self.hold_status(args)
+        from orch import __version__ as core
+
+        return {"core": str(core), "contract": CONTRACT, "features": list(FEATURES), "workspaces": [self._row(entry)]}
+
+    def _presence_op(
+        self, entry: dict[str, Any], sid: str, facts: dict[str, Any], op: str, args: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        wid = entry["workspace_id"]
+        if op == "presence_nonce":
+            if set(args) != {"workspace_id"}:
+                raise ClickError("invalid.input", "presence_nonce takes the workspace")
+            return {"nonce": base64.urlsafe_b64encode(self.presence.issue(sid)).rstrip(b"=").decode()}
+        if op == "presence_take":
+            if set(args) != {"workspace_id", "digest"}:
+                raise ClickError("invalid.input", "presence_take takes the workspace and a digest")
+            try:
+                digest = digest_bytes(args["digest"])
+            except Exception:  # noqa: BLE001
+                raise ClickError("invalid.input", "digest is sha256:<hex>") from None
+            if not self.presence.take(sid, digest):
+                self._note("refused", workspace=wid, code="remote_presence_required")
+                raise ClickError(REMOTE_PRESENCE_REQUIRED, "Confirm on your device first.")
+            return {"ok": True}
+        if set(args) != {"workspace_id", "nonce", "digests", "assertion"} or type(args["digests"]) is not list:
+            raise ClickError("invalid.input", "presence takes the workspace, nonce, digests and assertion")
+        try:
+            nonce = b64_exact(args["nonce"], 32)
+            digests = [digest_bytes(d) for d in args["digests"]]
+        except Exception:  # noqa: BLE001
+            raise ClickError("invalid.input", "nonce is 32 bytes and digests are sha256:<hex>") from None
+        issued, now = self.presence.consume(sid, nonce)  # single use, even when the assertion below fails
+        try:
+            count = presence_check(
+                facts, wid, facts["hh"], nonce, digests, args["assertion"], facts["counter"], issued=issued, now_ms=now
+            )
+        except Exception as exc:  # noqa: BLE001 - HubRefused (the contract's code) or a malformed value
+            self._note("refused", workspace=wid, code=f"remote_presence_{getattr(exc, 'code', 'malformed')}")
+            raise ClickError(REMOTE_PRESENCE_INVALID, "That confirmation did not work. Try again.") from None
+        try:  # the host's counter CAS and its H line (never the signature); a replayed counter is not accepted
+            self._call(
+                entry,
+                "remote.presence_used",
+                {"stream_id": sid, "device_id": facts["device_id"], "count": count, "n": len(digests)},
+            )
+        except ClickError as exc:
+            if exc.code == "remote.presence_replay":
+                raise ClickError(REMOTE_PRESENCE_INVALID, "That confirmation did not work. Try again.") from None
+            raise
+        self.presence.store(sid, issued[nonce], digests)
+        return {"ok": True, "n": len(digests)}
+
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
+        if "contract" in args:
+            # run 13 C3: a client may announce the contract it speaks; another one (strictly: True, 4.0 and "4" are
+            # not 4) is refused before anything else, so it never sees, nor signs, a View it would read otherwise
+            announced = args["contract"]
+            if type(announced) is not int or announced != CONTRACT:
+                self._note("refused", workspace=args.get("workspace_id"), code=CONTRACT_MISMATCH)
+                raise ClickError(CONTRACT_MISMATCH, f"this signer speaks click contract {CONTRACT}; update the client")
+            args = {k: v for k, v in args.items() if k != "contract"}
+        if "stream" in args:
+            return self._stream_call(op, args)  # R3 (#1591): a call from a remote-device stream
         if "remote" in args or "stepup" in args:
             # #1198 R1-6: the server says the session is a remote one and relays its assertion. The signer decides
             # from the op and the arguments whether this call needs it, and checks it before anything else.
@@ -2164,6 +2620,7 @@ class ClickSigner:
                 raise ClickError("invalid.input", "stepup comes with remote: true")
             proof = args.get("stepup")
             args = {k: v for k, v in args.items() if k not in ("remote", "stepup")}
+            self._refuse_remote_kind(op, args)  # R2 (#1590): a remote session never prepares or signs remote access
             target = self._stepup_target(op, args)
             if target is not None:
                 try:
@@ -2171,6 +2628,9 @@ class ClickSigner:
                 except ClickError as exc:
                     self._note("refused", workspace=args.get("workspace_id"), code=exc.code)
                     raise
+        return self._dispatch(op, args)
+
+    def _dispatch(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if op == "stepup":
             return self.stepup(args)
         fn = {
@@ -2178,6 +2638,8 @@ class ClickSigner:
             "view": self.view,
             "sign": self.sign,
             "cancel": self.cancel,
+            "cancel_holds": self.cancel_holds,
+            "session_alive": self.session_alive,
             "custody_on": self.custody_on,
             "custody_off": self.custody_off,
             "rotate": self.rotate,

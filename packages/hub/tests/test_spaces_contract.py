@@ -93,6 +93,7 @@ def test_link_ops_have_exact_bodies():
             mode="selective",
             pub=G.K.pub["wsk_a"],
             now_ms=G.NOW,
+            exporter=G.LINK_EXPORTER,
         )
         with pytest.raises(H.Refused) as e:
             H.verify_link(
@@ -103,6 +104,7 @@ def test_link_ops_have_exact_bodies():
                 mode="full",
                 pub=G.K.pub["wsk_a"],
                 now_ms=G.NOW,
+                exporter=G.LINK_EXPORTER,
             )
         assert e.value.code == "malformed"
     assert unb64u(b64u(b"x")) == b"x"

@@ -11,6 +11,7 @@ import { ApiError } from '@/api/types'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { reloginItems } from '@/api/attention'
+import { needsLine } from './index'
 
 const T = { timeout: 6000 }
 const busy = { setup: (s: typeof mockStore) => s.reset('busy', true) }
@@ -22,6 +23,14 @@ describe('Today: a calm, grouped queue', () => {
     sessionStorage.clear()
   })
 
+  it('counts follow-ups once: never "to look at" twice, "Nothing needs you" only when both are 0', () => {
+    expect(needsLine(0, 2)).toBe('2 follow-ups to look at')
+    expect(needsLine(0, 1)).toBe('1 follow-up to look at')
+    expect(needsLine(3, 2)).toBe('3 need you · 2 follow-ups to look at')
+    expect(needsLine(3, 0)).toBe('3 need you')
+    expect(needsLine(0, 0)).toBe('Nothing needs you')
+  })
+
   it('says in one line what needs you and how many agents work, from the shared attention numbers', async () => {
     renderApp('/', { viewer: 'p_sev' })
     const line = await screen.findByText(/· (?:\d+ need you|Nothing needs you) · \d+ agents? working$/, {}, T)
@@ -31,6 +40,26 @@ describe('Today: a calm, grouped queue', () => {
     const relogin = reloginItems(mockStore.conn.connections(ws)).length
     expect(relogin).toBeGreaterThan(0)
     expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + relogin)
+  })
+
+  it('R12 P03: the requirements approval is held back while the agent writes the plan (quiet line, not counted), and comes back when it stops', async () => {
+    const real = api.getTicket.bind(api)
+    let working = true
+    const spy = vi.spyOn(api, 'getTicket').mockImplementation(async (key: string, ws?: string) => {
+      const t = await real(key, ws)
+      if (key !== 'DEMO-0047') return t
+      return { ...t, claim: working ? ({ agent: 'a', for: 'p_sev', session: 's', since: t.updated_at, expires: '2099-01-01T00:00:00Z', live: true } as never) : null, gates: { ...t.gates, plan: { ...t.gates.plan, missing: ['plan'] } } }
+    })
+    renderApp('/', { viewer: 'p_sev' })
+    const ws = mockStore.workspaces[0].id
+    expect(await screen.findByTestId('card-writing:DEMO-0047', {}, T)).toHaveTextContent('The agent is writing the plan')
+    expect(screen.queryByTestId('card-approval:DEMO-0047:requirements')).toBeNull()
+    const line = await screen.findByText(/· (?:\d+ need you|Nothing needs you) · \d+ agents? working$/, {}, T)
+    const n = Number(/· (\d+) need you/.exec(line.textContent!)?.[1] ?? 0)
+    const relogin = reloginItems(mockStore.conn.connections(ws)).length
+    expect(n).toBe(mockStore.needsYou(ws).length - 1 + mockStore.addonDecisions(ws).length + relogin) // the held-back item is not counted
+    working = false
+    spy.mockRestore()
   })
 
   it('opens the first blocking question; picking an option posts nothing, "Send answer" opens core\'s dialog', async () => {
@@ -63,10 +92,14 @@ describe('Today: a calm, grouped queue', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     const verdicts = await group(/^Verdicts · \d+/)
     await user.click(within(verdicts).getByRole('button', { name: 'Give verdict' }))
-    const dialog = await screen.findByRole('dialog', { name: /Verify/ })
+    const dialog = await screen.findByRole('dialog', { name: /Give verdict/ })
     expect(within(dialog).getByRole('radio', { name: /Pass/ })).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(within(verdicts).getByRole('link', { name: 'Evidence' })).toBeInTheDocument()
+    const toggle = within(verdicts).getByRole('button', { name: /Verdict needed/ })
+    if (toggle.getAttribute('aria-expanded') === 'false') await user.click(toggle)
+    expect(verdicts).toHaveTextContent(/Checked \d+ of \d+ requirements?/)
+    expect(verdicts).not.toHaveTextContent(/evidenced/)
     expect(screen.queryByRole('button', { name: 'Done' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Changes' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Copy hash' })).toBeNull()

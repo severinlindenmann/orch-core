@@ -63,14 +63,79 @@ class Human:
     def prepare(self, op: str, args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         return ok(self.prepare_res(op, args, **kw))["data"]
 
+    def prepare_unbound(self, op: str, args: dict[str, Any], *, hub_handoff: bool = True, **kw: Any) -> dict[str, Any]:
+        """A request in state ``prepared`` (no device yet), for tests of the host's binding at ``human.get``.
+
+        ``human.prepare`` stores an unbound request only for a hub hand-off (``addon.grant``); every other op is bound
+        at prepare. So this prepares the request bound to this person's device through the real ``human.prepare``
+        (every prepare-time check runs) and takes the binding off the stored record on the workspace thread: the
+        events' ``actor.device`` and ``auth`` back to ``null``, ``state: prepared``, ``signer: null``, exactly what the
+        binding then fills in. The fingerprint and review digest never cover those fields. Returns ``human.get``'s
+        view of the unbound request. ``hub_handoff`` (default: marked, so the host binds it) is the stored mark of a hub
+        hand-off; ``hub_handoff=False`` crafts an older unbound request that the host never binds. Test-only:
+        production has no way to unbind a request."""
+        rid = self.prepare(op, args, **kw)["request"]["id"]
+        service = self.served.service
+
+        def unbind() -> None:
+            record = service.requests.read(rid)
+            for ev in record["prepared"]["events"]:
+                ev["actor"]["device"], ev["auth"] = None, None
+            service.requests.write({**record, "state": "prepared", "signer": None, "hub_handoff": hub_handoff})
+
+        service.submit(unbind).result()
+        return ok(self.get(rid))["data"]
+
     def check(self, prepared: dict[str, Any], **kw: Any) -> None:
-        signer.check(
-            prepared,
-            workspace_id=self.served.wid,
-            person=kw.pop("person", self.person.ref),
-            device=kw.pop("device", self.person.device),
-            auth=kw.pop("auth", "passphrase"),
-        )
+        try:
+            signer.check(
+                prepared,
+                workspace_id=self.served.wid,
+                person=kw.pop("person", self.person.ref),
+                device=kw.pop("device", self.person.device),
+                auth=kw.pop("auth", "passphrase"),
+            )
+        except signer.SignerRefused as exc:
+            if "review_digest does not match" in str(exc):
+                self._trace_digest(prepared)  # #1823: show which part of the material moved (test helper only)
+            raise
+
+    def _trace_digest(self, prepared: dict[str, Any]) -> None:
+        """#1823: the signer saw material whose digest is not the host's ``review_digest``. Print, for this test run
+        only, the canonical bytes of what the signer got and of the request the host stored, and the top-level and
+        per-review-block keys that differ, so one CI recurrence names the field. Never in product code: review
+        material can carry personal data."""
+        from orch import canon
+        from orch.host import review
+
+        got = prepared.get("material") or {}
+        rid = (prepared.get("request") or {}).get("id")
+        stored: Any = None
+        try:
+            if rid:
+                service = self.served.service
+                rec = service.submit(lambda: service.requests.read(rid)).result()  # on the workspace thread
+                stored = (rec or {}).get("prepared", {}).get("material")
+        except Exception as e:  # noqa: BLE001 - diagnostics only
+            stored = f"<unreadable: {type(e).__name__}>"
+        lines = [
+            "#1823 review_digest trace",
+            f"  host review_digest   = {prepared.get('review_digest')}",
+            f"  digest(received)     = {review.review_digest(got)}",
+        ]
+        if isinstance(stored, dict):
+            lines.append(f"  digest(stored record) = {review.review_digest(stored)}")
+            diff = sorted(k for k in set(got) | set(stored) if canon.dumps(got.get(k)) != canon.dumps(stored.get(k)))
+            lines.append(f"  top-level keys that differ (received vs stored): {diff}")
+            for i, (a, b) in enumerate(zip(got.get("review") or [], stored.get("review") or [], strict=False)):
+                d = sorted(k for k in set(a) | set(b) if canon.dumps(a.get(k)) != canon.dumps(b.get(k)))
+                if d:
+                    lines.append(f"  review[{i}] keys that differ: {d}")
+            lines.append("  stored canonical: " + canon.dumps(stored).decode("utf-8", "replace"))
+        else:
+            lines.append(f"  stored record: {stored!r}")
+        lines.append("  received canonical: " + canon.dumps(got).decode("utf-8", "replace"))
+        print("\n".join(lines))
 
     def owner_proof(self, prepared: dict[str, Any], **over: Any) -> dict[str, Any]:
         """#1198 C9: the owner proof the terminal would make with the owner's backup key (here: the test person's
@@ -91,7 +156,11 @@ class Human:
     def sign(self, prepared: dict[str, Any], *, proof: Any = "auto") -> signer.Signed:
         self.check(prepared)
         if proof == "auto":
-            proof = self.owner_proof(prepared) if prepared["op"] in ("hub.join", "hub.mode", "hub.leave") else None
+            proof = (
+                self.owner_proof(prepared)
+                if prepared["op"] in ("hub.join", "hub.mode", "hub.leave", "remote.set", "remote.device_confirm")
+                else None
+            )
         return signer.sign(prepared, backend=self.backend, key_id="dk", workspace_id=self.served.wid, owner_proof=proof)
 
     def submit_res(self, request_id: str, events: list[dict[str, Any]], idem: str | bool = True) -> dict[str, Any]:

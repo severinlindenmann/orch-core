@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { ApiError } from '@/api/types'
 import { Raw } from '@/components/sign/visible'
 import { newIdem } from '@/api/runs'
@@ -46,6 +47,6 @@ function Connect({ ws, card, onClose }: { ws: string; card: string; onClose: () 
   return <div className="space-y-3" data-testid="hub-full-stage">
     {state === 'working' && <p role="status">Signed. Telling the hub…</p>}
     {state === 'done' && <><p role="status" data-testid="hub-full-done">The hub can now read everything in this workspace.</p><div className="flex justify-end"><Action id="hub-full-close" onClick={onClose}>Close</Action></div></>}
-    {state === 'failed' && <div role="alert" className="space-y-2"><p className="text-danger">Couldn't switch. Try again.</p><details><summary>Technical details</summary><p><Raw>{why}</Raw></p></details><div className="flex justify-end gap-2"><Action id="hub-full-close" onClick={onClose}>Cancel</Action><Action id="hub-full-retry" onClick={run}>Try again</Action></div></div>}
+    {state === 'failed' && <div role="alert" className="space-y-2"><p className="text-danger">Couldn't switch. Try again.</p><InfoDrawer><p><Raw>{why}</Raw></p></InfoDrawer><div className="flex justify-end gap-2"><Action id="hub-full-close" onClick={onClose}>Cancel</Action><Action id="hub-full-retry" onClick={run}>Try again</Action></div></div>}
   </div>
 }

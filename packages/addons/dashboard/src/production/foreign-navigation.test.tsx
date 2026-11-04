@@ -45,7 +45,20 @@ it('never joins the token channel, ignores offers, clears inherited storage and 
   render(<Shell />)
   expect(screen.getByText('This page was opened from another site.')).toBeInTheDocument()
   expect(screen.getByText('orch-dashboard open')).toBeInTheDocument()
-  expect(screen.getByText(/or a bookmark/)).toBeInTheDocument()
+  expect(screen.getByText(/or use a bookmark/)).toBeInTheDocument()
+  // P01: plain words first; every command sits inside the Details fold
+  expect(screen.getByText(/Sign in again from the hub or from the link on the computer where orch runs/)).toBeInTheDocument()
+  document.querySelectorAll('code').forEach((c) => expect(c.closest('details')).not.toBeNull())
+})
+
+it('P01: the no-session page says how to sign in again in plain words, the command only under Details', () => {
+  render(<Shell />)
+  expect(screen.getByText('Open your dashboard')).toBeInTheDocument()
+  expect(screen.getByText(/Sign in again from the hub/)).toBeInTheDocument()
+  expect(document.querySelectorAll('main > p code').length).toBe(0)
+  const codes = document.querySelectorAll('code')
+  expect(codes.length).toBeGreaterThan(0)
+  codes.forEach((c) => expect(c.closest('details')).not.toBeNull())
 })
 
 it('exchanges the private launcher fragment without opening the token channel', async () => {

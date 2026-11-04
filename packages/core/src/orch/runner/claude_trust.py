@@ -15,7 +15,9 @@ entry is that single folder, whose only external import is the workspace's ``AGE
 
 **Consent.** The owner agreed when creating the workspace: ``orch setup`` / setup writes the marker
 ``<root>/.orch/claude-trust`` (:func:`record_consent`). Without it (an older workspace, or a folder that merely
-looks like one) nothing is written.
+looks like one) nothing is written. The same marker is also written later, by the dashboard's sign card for a
+Claude Code start (``POST /api/w/{ws}/claude-trust``, owner on a local session only, ``claude_folder.grant_consent``);
+the guards below are the same whichever way the consent arrived.
 
 **Only for isolated launches.** The runner calls this only for a launch that carries ``--setting-sources user
 --strict-mcp-config`` (a ticket work folder, see :func:`orch.host.launch.launch_argv`); worktree, repo and root launches
@@ -393,7 +395,16 @@ def _write(
                 and (now.st_ino, now.st_mtime_ns, now.st_size) != (before.st_ino, before.st_mtime_ns, before.st_size)
             ):
                 raise _Changed  # Claude Code wrote it meanwhile: do not overwrite
-            os.replace(tmp, cfg)
+            if before is None:
+                # the file was missing: a truly exclusive create. link() fails if Claude Code made it meanwhile,
+                # even without taking its lock (a replace would overwrite it)
+                try:
+                    os.link(tmp, cfg)
+                except FileExistsError:
+                    raise _Changed from None
+                os.unlink(tmp)
+            else:
+                os.replace(tmp, cfg)
             _fsync_dir(cfg.parent)
         except _Changed:
             with contextlib.suppress(OSError):

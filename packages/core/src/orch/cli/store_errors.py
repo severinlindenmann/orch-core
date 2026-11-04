@@ -26,8 +26,8 @@ _INTERNAL = (
 ).split()
 _REFUSED = (  # an event the model refused: the request is what is wrong
     "sig.invalid freeze.active member.unknown member.exists members.last_owner device.unknown device.exists "
-    "device.invalid device.scope sign.method device.cert grant.terms grant.exists grant.unknown unattended.denied "
-    "settings.invalid hub.invalid hub.cert_invalid hub.unknown_snapshot hub.foreign_user hub.denied "
+    "device.invalid device.scope device.cert grant.terms grant.exists grant.unknown unattended.denied "
+    "settings.invalid hub.invalid remote.invalid hub.cert_invalid hub.unknown_snapshot hub.foreign_user hub.denied "
     "addon.unknown addon.field_unknown addon.value_invalid "
     "ticket.exists ticket.bad_reference submit.incomplete people.invalid "
     "path.protected body.unknown_section body.unknown_artifact repo.unknown gate.no_eligible gate.incomplete "
@@ -42,7 +42,6 @@ TABLE: dict[str, str] = {
     **dict.fromkeys(_REFUSED, "invalid.input"),
     "store.busy": "retry.later",
     "members.stale": "members.stale",
-    "sign.hub_only": "sign.hub_only",  # C8: the model rule (D78) keeps C11's code
     "sign.key_exposed": "sign.key_exposed",  # #1097
     "quota.unattended": "quota.unattended",
     "gate.stale": "gate.stale",
@@ -61,6 +60,7 @@ TABLE: dict[str, str] = {
     "status.transition": "transition.refused",
     "gate.status": "transition.refused",
     "task.state": "transition.refused",
+    "task.plan_open": "transition.refused",  # r10-P02: an agent builds only after the plan is approved
     "ticket.state": "transition.refused",
     "claim.exists": "claim.held",
     "claim.not_holder": "claim.held",
@@ -85,4 +85,6 @@ def to_orch_error(e: StoreError, declared: Collection[str] = ()) -> OrchError:
     if mapped not in GLOBAL_ERRORS and mapped not in declared:
         mapped = "internal" if code_for(e.code) == "internal" else "invalid.input"
     detail = f"{e.code}: {e.detail}" if e.detail else e.code
+    if e.code == "task.plan_open" and mapped == "transition.refused":  # r10-P02: the next step is to wait
+        return OrchError(mapped, detail[:320], hint="orch wait", fix=["orch", "wait"])
     return OrchError(mapped, detail[:320])  # the legacy-store refusal lists the old files

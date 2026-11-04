@@ -1,6 +1,6 @@
 # A10 real-host helper for market-real.spec.ts (dev sandbox workspace with the S13 test marketplace; needs ~/orch-dev/.worktrees/s13 kit state in ~/orch-dev/state/s13).
-# Run it with: <server venv python> -I e2e/market-real-env.py up|link|sign|cli|down BASE  (ORCH_CORE_DIR = this checkout)
-"""A10 real-host env: dev sandbox workspace + dashboard addon + the S13 test marketplace added. up|link|sign|cli|down BASE."""
+# Run it with: <server venv python> -I e2e/market-real-env.py up|link|cli|down BASE  (ORCH_CORE_DIR = this checkout)
+"""A10 real-host env: dev sandbox workspace + dashboard addon + the S13 test marketplace added. up|link|cli|down BASE."""
 import json, os, signal, subprocess, sys
 from pathlib import Path
 
@@ -91,8 +91,6 @@ def main():
     if cmd == "link":
         run = Pty([sys.executable, "-m", "orch_dashboard", "open", *sys.argv[3:4], "--print-url"], denv(ws), ws.root, [], 40).run()
         print(next((l.strip() for l in run.output.splitlines() if l.startswith("http://")), run.output)); return
-    if cmd == "sign":
-        print(ws.sign(sys.argv[3])[-600:]); return
     if cmd == "cli":
         if sys.argv[3] not in ("human", "agent"):
             sys.exit("cli takes only human or agent")

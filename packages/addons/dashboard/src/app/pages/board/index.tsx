@@ -29,7 +29,7 @@ import { noteRect } from '@/lib/motion'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { BoardColumnsSkeleton } from '../skeletons'
 import { useWorkspace } from '@/app/workspace'
-import { usePageHeader } from '@/app/shell/ShellUi'
+import { usePageHeader, useShellActions } from '@/app/shell/ShellUi'
 import { useSlot } from '@/addon-ui'
 import { AddonLanes, laneId } from './AddonLane'
 import { BOARD_COL_MIN, BOARD_RAIL, boardColumnsWidth, railedColumns } from './autoRail'
@@ -37,6 +37,7 @@ import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { EpicLanes, statusOfDrop } from './EpicLanes'
 import { groupByEpic, hasEpics, laneOf, movedAt } from './grouping'
 import { ListView } from './ListView'
+import { ScheduledGroup, ScheduledKeysProvider, splitScheduled, useScheduledKeys } from './scheduled'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar } from './Toolbar'
 import { useBoardUrlState } from './urlState'
@@ -145,7 +146,7 @@ function Column({
         {visible.length === 0 ? (
           <div className="flex flex-col items-center gap-1 px-2 py-8 text-center text-[12px] text-text-faint">
             <p>Nothing here</p>
-            {filtering ? <p>No {STATUS_LABEL[status].toLowerCase()} tickets match the filters.</p> : status === 'backlog' && <p>Create a ticket (c)</p>}
+            {filtering ? <p>No {STATUS_LABEL[status].toLowerCase()} tickets match the filters.</p> : status === 'backlog' && <p>Create a ticket</p>}
           </div>
         ) : (
           visible.map((t) => <TicketCard key={t.key} ticket={t} people={people} me={me} task={tasks.get(t.key)} canMove={canMove} display={display} onOpen={onOpen} onMove={onMove} />)
@@ -177,6 +178,8 @@ export function BoardPage() {
   const [handoffMove, setHandoffMove] = useState<{ key: string; to: 'backlog' | 'open' } | null>(null)
   const role = useRole()
   const canMove = can(role, 'ticket.move')
+  const canCreate = can(role, 'ticket.create')
+  const { openNewTicket } = useShellActions()
   const boardRef = useRef<HTMLDivElement>(null)
   const lanes = useSlot('board.lane')
   const refocus = useRef<{ key: string; status: Status } | null>(null)
@@ -199,16 +202,19 @@ export function BoardPage() {
 
   const filtered = useMemo(() => applyFilters(tickets, filters, me?.person), [tickets, filters, me])
   const filtering = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)
+  // A ticket with a repeating schedule that sits in Open is not open work: it waits for its next run (own "Scheduled" group).
+  const scheduledKeys = useScheduledKeys()
   // Grouped by epic (the default) when this workspace has epics: epics are lane headers, not cards.
   const grouped = display.group === 'epic' && hasEpics(tickets)
   const epicKeys = useMemo(() => new Set(tickets.filter((t) => t.type === 'epic').map((t) => t.key)), [tickets])
-  const groups = useMemo(() => groupByEpic(tickets, filtered, filtering), [tickets, filtered, filtering])
+  const { scheduled, rest: onBoard } = useMemo(() => splitScheduled(filtered, scheduledKeys, grouped), [filtered, scheduledKeys, grouped])
+  const groups = useMemo(() => groupByEpic(tickets, onBoard, filtering), [tickets, onBoard, filtering])
   const byStatus = useMemo(() => {
     const m = new Map<Status, TicketSummary[]>(STATUSES.map((s) => [s, []]))
-    for (const t of filtered) if (!grouped || t.type !== 'epic') m.get(t.status)?.push(t)
+    for (const t of onBoard) if (!grouped || t.type !== 'epic') m.get(t.status)?.push(t)
     for (const list of m.values()) list.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     return m
-  }, [filtered, grouped])
+  }, [onBoard, grouped])
 
   // A narrow page area (N11): columns narrow to BOARD_COL_MIN, then more of them become rails until the board fits.
   // The person's own collapsed columns stay rails; a column they open from an automatic rail stays open (this visit).
@@ -339,6 +345,7 @@ export function BoardPage() {
   }
 
   return (
+    <ScheduledKeysProvider value={scheduledKeys}>
     <div ref={frame} className="flex h-full min-h-0 flex-col gap-4">
       <h1 className="sr-only">Board</h1>
       <Toolbar
@@ -370,6 +377,13 @@ export function BoardPage() {
         <LoadFailed what="the board" onRetry={() => void meQ.refetch()} />
       ) : isPending || !me ? (
         <BoardColumnsSkeleton />
+      ) : tickets.length === 0 && canCreate ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border px-6 py-16 text-center" data-testid="board-empty">
+          <p className="text-[15px] font-medium text-text">No tickets yet</p>
+          <Button size="lg" data-testid="first-task" onClick={openNewTicket}>
+            Give your AI helper a task
+          </Button>
+        </div>
       ) : view === 'list' ? (
         <ListView tickets={filtered} people={people} onOpen={open} />
       ) : (
@@ -430,6 +444,7 @@ export function BoardPage() {
               <AddonLanes railed={railed} onExpand={(id) => setRail(id, false)} />
             </div>
           )}
+          <ScheduledGroup tickets={scheduled} people={people} onOpen={open} />
           {/* No dnd-kit drop animation: it would fly back to the old column first. The card settles by FLIP in TicketCard. */}
           <DragOverlay dropAnimation={null}>
             {dragging ? (
@@ -445,7 +460,6 @@ export function BoardPage() {
           title={`Move ${handoffMove.key} to ${STATUS_LABEL[handoffMove.to]}`}
           ws={wsId}
           action={{ action: 'move', key: handoffMove.key, to: handoffMove.to }}
-          autoStart
           onSettled={() => {
             void qc.invalidateQueries({ queryKey: ['board'] })
             void qc.invalidateQueries({ queryKey: ['ticket'] })
@@ -454,5 +468,6 @@ export function BoardPage() {
         />
       )}
     </div>
+    </ScheduledKeysProvider>
   )
 }

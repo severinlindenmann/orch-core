@@ -42,6 +42,25 @@ SAMPLES = {
     "hub.space_proposal": G4.proposal()["o"],
     "share.item": G4.share_item()["o"],
     "hub.owner_proof": G.owner_proof()["o"],
+    "hub.release_narrow": {
+        **G.hdr("hub.release_narrow"),
+        "hub_id": G.HUB_ID,
+        "workspace_id": G.WS_A,
+        "target": "share",
+        "id": G.WS_B,
+        "action": "revoke",
+        "ts_ms": NOW,
+        "nonce": G.nonce32("narrow"),
+    },
+    "hub.app_pass": {
+        **G.hdr("hub.app_pass"),
+        "hub_id": G.HUB_ID,
+        "workspace_id": G.WS_A,
+        "app_id": G.WS_B,
+        "audience": "company",
+        "nonce": G.nonce32("pass"),
+        "exp_ms": NOW + 30_000,
+    },
     "link.w2h": G.link("snapshot_get", {})["o"],
     "link.h2w": G.link("route_in", {"envelope": "eA"}, direction="h2w", key="hk_op")["o"],
 }
@@ -57,6 +76,8 @@ ALLOWED = {
         "hub.audit",
         "hub.space_proposal",
         "hub.api_origin",
+        "hub.release_narrow",
+        "hub.app_pass",
         "link.h2w",
     },
     KS.UkSigner: set(),
@@ -75,6 +96,7 @@ KEY = {
     KS.PersonSigner: "pk_alice",
 }
 EVERY_LABEL = sorted(H.L.values())
+EXPORTER = b"\x07" * 32
 
 
 def signer(cls):
@@ -85,15 +107,34 @@ def signer(cls):
 @pytest.mark.parametrize("name", sorted(SAMPLES))
 def test_each_signer_signs_only_its_kinds(cls, name):
     s, o = signer(cls), SAMPLES[name]
+    link = o["kind"] == "hub.link"
+    sign = (lambda x: s.sign_link(x, EXPORTER)) if link else s.sign_object
     if name in ALLOWED[cls]:
-        out = s.sign_object(o)
-        label = H.link_label(o["dir"]) if o["kind"] == "hub.link" else H.L[H.LABEL_OF_KIND[o["kind"]]]
-        assert S.verify(s.public, unb64u(out["sig"], 64), label + H.cj(o))
+        out = sign(o)
+        label = H.link_label(o["dir"]) if link else H.L[H.LABEL_OF_KIND[o["kind"]]]
+        body = EXPORTER + H.cj(o) if link else H.cj(o)
+        assert S.verify(s.public, unb64u(out["sig"], 64), label + body)
         others = [lab for lab in EVERY_LABEL if lab != label]
-        assert not any(S.verify(s.public, unb64u(out["sig"], 64), lab + H.cj(o)) for lab in others)
+        assert not any(S.verify(s.public, unb64u(out["sig"], 64), lab + body) for lab in others)
     else:
         with pytest.raises(KS.KeyUseError):
-            s.sign_object(o)
+            sign(o)
+
+
+def test_sign_object_refuses_a_link_message_so_none_is_signed_without_the_exporter_binding():
+    for cls, name in ((KS.WskSigner, "link.w2h"), (KS.OpSigner, "link.h2w")):
+        with pytest.raises(KS.KeyUseError):
+            signer(cls).sign_object(SAMPLES[name])
+
+
+def test_a_link_signature_binds_the_exporter():
+    s = signer(KS.WskSigner)
+    out = s.sign_link(SAMPLES["link.w2h"], EXPORTER)
+    assert not S.verify(
+        s.public, unb64u(out["sig"], 64), H.L["sig_hub_link"] + b"\x01" * 32 + H.cj(SAMPLES["link.w2h"])
+    )
+    with pytest.raises(KS.KeyUseError):
+        s.sign_link(SAMPLES["link.w2h"], b"short")
 
 
 def test_signers_have_no_generic_byte_signing():
@@ -150,9 +191,9 @@ def test_card_and_approval_from_signers_pass_the_verifiers():
 
 def test_link_direction_is_bound_to_the_key():
     with pytest.raises(KS.KeyUseError):
-        KS.WskSigner(G.K.priv["wsk_a"]).sign_object(SAMPLES["link.h2w"])
+        KS.WskSigner(G.K.priv["wsk_a"]).sign_link(SAMPLES["link.h2w"], EXPORTER)
     with pytest.raises(KS.KeyUseError):
-        KS.OpSigner(G.K.priv["hk_op"]).sign_object(SAMPLES["link.w2h"])
+        KS.OpSigner(G.K.priv["hk_op"]).sign_link(SAMPLES["link.w2h"], EXPORTER)
 
 
 def test_op_admin_read_signs_only_get_or_head_over_the_exact_bytes():

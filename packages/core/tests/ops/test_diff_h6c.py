@@ -14,8 +14,7 @@ from tests.ops.humans import make_ticket, to_testing
 from tests.ops.test_verdict import CODE_POLICY, LINKS
 
 
-@pytest.fixture
-def scene(hws, agent, me):
+def build_scene(hws, agent, me):
     """feat/x: c1 (main) - c2 (approved by rita) - c3 - c3b - c4 (head, pushed). The owner gave the verdict only."""
     hws.repo()
     s = {"c1": hws.git("rev-parse", "HEAD")}
@@ -45,6 +44,33 @@ def scene(hws, agent, me):
     return s, rita
 
 
+@pytest.fixture
+def scene(hws, agent, me):
+    return build_scene(hws, agent, me)
+
+
+@pytest.fixture(scope="module")
+def shared_scene(tmp_path_factory):
+    """The same scene built once for the tests that only read it (``hws, (s, rita) = shared_scene``); the tests that
+    write to the workspace (a revoked device) or to the loaded state keep the per-test ``scene``."""
+    from orch.ops import human
+    from tests.ops.helpers import Cli
+    from tests.ops.humans import HumanWs
+
+    with pytest.MonkeyPatch.context() as mp:
+        w = HumanWs(tmp_path_factory.mktemp("diff-scene"))
+        w.bootstrap()
+        mp.setattr(human, "open_backend", w.backend)
+        mp.setattr(human, "show_secret", w.shown_secrets.append)
+        mp.setattr(human, "review_prompt", w.review_prompt)
+        w.provider.requests.clear()
+        w.provider.shown.clear()
+        scene = build_scene(w, Cli(w), Cli(w, grant=False, session=None))
+    yield w, scene
+    if w.store is not None:
+        w.store.close()
+
+
 def diff(hws, **kw):
     store = hws.other()
     try:
@@ -53,7 +79,8 @@ def diff(hws, **kw):
         store.close()
 
 
-def test_since_my_approval_uses_only_the_callers_own_approval(hws, scene):
+def test_since_my_approval_uses_only_the_callers_own_approval(shared_scene):
+    hws, scene = shared_scene
     s, rita = scene
     assert hws.view("1").gates["code"].counting == ()  # the new push voided it: the approval still names its commit
     got = diff(hws, since="my_approval", person=rita.ref)
@@ -74,7 +101,8 @@ def test_since_my_approval_uses_only_the_callers_own_approval(hws, scene):
         assert e.value.code == "not_found" and "no approval of yours" in e.value.message
 
 
-def test_head_and_base_in_direct_mode(hws, scene):
+def test_head_and_base_in_direct_mode(shared_scene):
+    hws, scene = shared_scene
     s, _ = scene
     got = diff(hws, repo="proj", base=s["c2"])  # the push's before
     assert (got["sources"][0]["base_source"], got["sources"][0]["head_sha"]) == ("pushed", s["c4"])
@@ -103,7 +131,8 @@ def test_head_and_base_in_direct_mode(hws, scene):
         {"repo": "proj", "base": "a" * 39},
     ],
 )
-def test_bad_arguments_are_invalid_input(hws, scene, kw):
+def test_bad_arguments_are_invalid_input(shared_scene, kw):
+    hws, _ = shared_scene
     with pytest.raises(OrchError) as e:
         diff(hws, person="x", **kw)
     assert e.value.code == "invalid.input"

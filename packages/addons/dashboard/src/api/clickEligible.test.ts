@@ -4,10 +4,8 @@ import { clickEligible } from '@/api/click'
 // Run 8 (1.1): on a one-click workspace every settings action the signer serves must be offered as a click, so the
 // person gets one Sign button; only the terminal-only ones fall back to the terminal hand-off (which works with One click on).
 it('settings actions the signer serves by click are click-eligible', () => {
-  expect(clickEligible({ action: 'icon_set', icon: { icon: 'cloud', colour: 'teal' } })).toBe(true)
-  expect(clickEligible({ action: 'icon_set', icon: null })).toBe(true)
   expect(clickEligible({ action: 'repo_set', name: 'a', path: '/x' })).toBe(true)
-  expect(clickEligible({ action: 'settings_set', sign_methods: ['terminal', 'click'] })).toBe(true) // #1161: core classes it click
+  expect(clickEligible({ action: 'settings_set', grant_hours: 4 })).toBe(true)
   expect(clickEligible({ action: 'repo_remove', name: 'a' })).toBe(true)
 })
 it('Publish is click-eligible (#1198 C2)', () => {
@@ -33,4 +31,9 @@ describe('depositViewOk on a contract-3 click View', () => {
 it('hub steps are click-eligible (#1198 C10) and carry no word', () => {
   expect(clickEligible({ action: 'hub_join', hub_card: '{}', hub_id: 'a'.repeat(32) })).toBe(true)
   expect(clickEligible({ action: 'hub_leave' })).toBe(true)
+})
+it('Cancel follow-up is click-eligible (run 12, 6.4): one click, no terminal word', () => {
+  expect(clickEligible({ action: 'followup_reschedule', key: 'DEMO-1', id: 'fu_1', when: '2026-10-28T09:00:00.000Z' })).toBe(true)
+  expect(clickEligible({ action: 'followup_undo', key: 'DEMO-1', id: 'fu_1' })).toBe(true)
+  expect(clickEligible({ action: 'followup_cancel', key: 'DEMO-1', id: 'fu_1' })).toBe(true)
 })

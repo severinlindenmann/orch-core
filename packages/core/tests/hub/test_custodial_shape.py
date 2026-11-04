@@ -49,7 +49,9 @@ VALID: dict[str, dict[str, Any]] = {
     "verdict.given": {"outcome": "pass", "hash": H1, "source_sha": [{"repo": "r", "ref": "main", "sha": "a" * 40}], **_DECISION},  # noqa: E501
     "addon.disabled": {"name": "wiki"},
     "addon.purged": {"name": "wiki"},
-    "grant.requested": {"scope": "workable", "verbs": ["log", "task.done"], "hours": 8, "label": "runner"},
+    "addon.requested": {"name": "wiki", "version": "1.2.0", "package_sha256": H1, "capabilities": ["network", "serve_http"], "handoff": "hr_01J9ZP0000000000000000HND1", "runtime": {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}},  # noqa: E501
+    "grant.requested": {"handoff": "01J9ZP00000000000000000001", "scope": "workable",
+                        "verbs": ["log", "task.done"], "hours": 8, "label": "runner"},
     "grant.revoked": {"grant": "gr_01J9ZP0000000000000000GRT1", "reason": "done"},
     "device.excluded": {"device": "d_" + "c" * 32, "reason": "lost"},
     "policy.changed": {"gates": {"plan": {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}}},  # noqa: E501
@@ -360,3 +362,16 @@ def test_an_answer_text_follows_the_answer_rule(text, ok):
     """#1123: the custodial answer text is checked like the model's (1..1000 code points, check_plain, not blank)."""
     got = refused("question.answered", event("question.answered", option=..., text=text))
     assert (got is None) is ok
+
+
+@pytest.mark.parametrize(
+    "first", ["Publish approval: share files outside this computer", "App approval: let an app go live"]
+)
+def test_a_note_over_the_hub_cannot_start_with_a_reserved_approval_line(first):
+    """#1781 Opus delta: reserved approval lines are written only by their own click op, never as a custodial note."""
+    for text in (first, first + "\nTicket: ORCH-0001"):
+        with pytest.raises(HubRefused) as caught:
+            C._payload_shape("log.added", event("log.added", text=text))
+        assert caught.value.code == "malformed"
+    C._payload_shape("log.added", event("log.added", text="I read: " + first))  # later in the note it is only text
+    C._payload_shape("log.added", event("log.added", text="App approval notes\nfor the team"))  # another line

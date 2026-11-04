@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from orch.click import sealed
+from orch.click import protocol, sealed
 from orch.click import view as views
 from orch.custody import personkey
 from orch.host import hubops
@@ -87,6 +87,8 @@ def test_a_hub_view_carries_the_seal_and_a_plain_line_and_the_key_is_per_request
     seal = view["seal"]
     assert seal["purposes"] == ["hub.backup_key"] and seal["v"] == 1 and seal["alg"] == sealed.ALG
     assert view["backup_key_line"] in view["lines"] and "pk" in seal
+    assert view["risk_lines"] == [protocol.HUB_SELECTIVE_RISK]  # run 13 C3: the signer's own words, by the mode
+    assert view["headline"] and isinstance(view["headline"], str)
     again = click.view(p["request_id"])
     assert again["view_digest"] == v["view_digest"]  # the same key for every rebuild: the digest holds
     p2, v2 = flow(click)
@@ -100,6 +102,7 @@ def test_join_and_leave_by_click_with_the_backup_key(click, served):
     assert hub_state(served)["owner_proof"]["o"]["op"] == "hub.join" and hub_state(served)["status"] != "left"
     assert click.signer.approvals[(served.wid, p["request_id"])].seal.closed  # the key for the secret is dropped
     p2, v2 = flow(click, "hub.leave", {})
+    assert v2["view"]["risk_lines"] == [protocol.HUB_LEAVE_RISK]  # run 13 C3: the signer marks the risk of leaving
     click.sign(p2["request_id"], v2["view_digest"], sealed=seal_for(v2, served, p2["request_id"]))
     assert click.signatures == 2
     assert hub_state(served)["status"] == "left"

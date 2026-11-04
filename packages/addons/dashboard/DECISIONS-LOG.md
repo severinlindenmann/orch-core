@@ -3,6 +3,18 @@
 Non-trivial product and engineering decisions made during the autonomous run, for the owner's review.
 Format: date, decision, why, how to revert.
 
+## 2026-10-28 — D2 grant sequences retain C3's press guard
+
+- **Decision:** Mark grant-carrying sequence Views as `grant` with `confirm.mode: press`. Enforce nonempty signer risk lines and the closed one-press allowlist at the relay; preserve dashboard execution checks at prepare and sign.
+- **Why:** Creating with missing access needs a second press over the grant's V2 payload. Valid existing access still produces a grant-free, one-press sequence. The grant remains last and launch waits for every step to land.
+- **Revert:** Refuse grant-carrying sequences again; never remove the risk or execution guards.
+
+## 2026-10-27 — Follow-up Reschedule and Undo on real hosts
+
+- **Decision:** Use person-signed handoffs for Reschedule and Undo, gated by host support. Keep Undo signing in the shell and offer it for 15 seconds after a successful Cancel.
+- **Why:** The cancelled card can unmount before Undo is clicked; the host enforces the 120-second window and canceller identity. Prepared reschedules must name the same follow-up and exactly one matching due/deadline instant to the second.
+- **Revert:** Remove the two handoff actions, capability flags and shell Undo host; retain mock actions.
+
 ## 2026-10-26 — Focus merge into run9fb
 
 - **Decision:** Focus uses the existing Built in list, switch and inline signing accordion; preserve Quick tasks, marketplace actions and per-add-on settings. Keep the extensible handoff name types.
@@ -2061,3 +2073,104 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 
 - **Decision:** Tabs are General, Members, Approvals, Agent access, Add-ons, Hub (Records is in General > Advanced; Devices is no tab, `/settings/devices` is still served for the phone pairing until the Phone add-on row takes it). Approvals are four presets mapped to `policy_set` (the host signs its own sentence), a "can never be met" block, a code-review switch; the old matrix is under Custom rules. `/api/session` reports `login` ("local" for every launch-code session); Log out shows only for a known hub/remote session. Page change: 120 ms pending delay, a 2 px indeterminate bar, 180 ms fade with a 6 px rise and staggered first rows.
 - **Why:** run-8 owner items 1.2-1.5, 1.8, 1.9, 2, 3, 10 (FINAL draft). **Revert:** restore the previous host pages, tabs and the sidebar button.
+
+### 2026-10-27 — Follow-ups in the dashboard (#720)
+
+- **Decision:** Schedules gets a Follow-ups tab (grouped: needs a person, waiting, finished in 7 days). The ticket page shows a quiet card in the right column while the agent waits and a full-width banner only when a person is needed; the board card gets a clock chip ("Resumes Tue 09:00", local time); Today gets a card only for failed, did not run, a chain stopped by orch, or a deadline wake-up (never for success). Run now is "Run now as me", a plain click without a dialog (the label says whose rights); "Hide for me" hides only the card for this person and does not move the ticket. Agents > Grants shows a follow-up run's grant with the access it came from. Real data is the host's `follow_up.list` through `GET /api/w/:ws/followups`; Cancel is the signed `followup_cancel` hand-off (`follow_up.cancel`). Reschedule and the Undo of a Cancel need host events that do not exist yet: the server says `can.reschedule` / `can.undo` false and the page does not draw them (the mock does).
+- **Why:** owner 27 Oct "take the recommended routes"; Opus API and Codex agreed on the quiet card and on hide-only; they disagreed on Run now (confirm vs undo countdown), so the simpler plain click was taken (mockups/followups-ui/README.md "Decisions (27 Oct)").
+- **Revert:** remove `src/app/pages/schedules`, the `followups` node, the chip, the Today cards, the rail card and banner, `server/.../followups.py` and the `followup_cancel` action.
+
+### 2026-10-28 — D3 staged install and turn on
+
+**Decision:** One inline review signs required non-secret settings, then the stage-bound grant last. Defaults are editable; capabilities retain C3's second press. Already-on add-ons are refused by the host.
+**Why:** A settings-only prefix cannot install code or change running code; the installer consumes the bytes verified under the store lock.
+**Revert:** Revert D3 together with its core event schema, signer sequence and shared signature vectors.
+
+### 2026-10-28 — D3 review fixes (#1520)
+
+**Decision:** Enabled marketplace add-ons use a separate update review and `market_update` grant, including the reviewed digest and capabilities. Fresh installs retain the staged enable sequence. Both core's `enabled` and the older `active` UI state select updates.
+**Why:** The enable sequence deliberately refuses already-enabled add-ons. Updates must retain their widened diff and signer-owned capability risk requiring a second press.
+**Revert:** Revert the separate update action, state mapping and review together; do not route enabled updates through `addon_enable`.
+
+### 2026-10-28 — D2 request-bound create and start
+
+Decision: New-ticket launch choices (harness, mode, optional model) belong to the sequence intent. The host's clock decides whether access needs renewal at the 15-minute boundary; the proposed grant defaults to eight hours and is signed last. Valid access with at least 15 minutes left means one review and one press, with no grant step. Missing or shorter access means the same single review includes ‘Agents can run as you for 8 hours’ and requires C3’s second press after one second; the grant is signed last and start waits for all steps to land. Existing access is mentioned only in the information drawer.
+
+Why: The browser must not select another ticket or launch after a partially landed sequence. `agents/start {after_request}` resolves the committed chain, checks its signer, uses its launch choices, and retains one run per request. Signer and launch retries retain the original request.
+
+Revert: Remove the composite launch option and require separate ticket creation and agent-start review; do not restore browser-authoritative automatic start.
+
+## 2026-10-28 — D5 unsigned signer holds
+
+**Decision:** A signer-marked log-only action asks for `sign {delay_s: 10}` after the C3 arm. The signer owns the unsigned queue, session-bound cancel, wall-clock deadline and FIFO order per workspace. More than 30 seconds late means not sent. A restart drops unsigned intents. The shell toast stores only request IDs/deadlines and reads the true outcome after reconnect. Add-on off and runner off offer fresh-review Undo; follow-up cancel retains its existing signed `follow_up.undo` path. Member role changes have no Undo.
+
+**Why:** Closing a browser must not control delivery or expose signed artifacts. Every deadline rechecks custody and host authority. D2/D3 sequences, grants, installs and secret-bearing requests cannot enter the hold queue.
+
+**Revert:** Remove the hold request and toast together with the signer hold queue; keep C3's review, risk lines and second press.
+
+
+## 2026-10-28 — D5 security review: holds end with their session
+
+**Decision:** Session removal (including logout everywhere and expiry) cancels its signer holds and forgets their dashboard entries. Hold admission checks the live session under the same lock as session removal.
+
+**Why:** Holds have already left the handoff quota, so logout must cancel them separately; serialization prevents a hold arriving after its logout cancellation.
+
+**Revert:** Revert the session-removal callback and admission lock together; doing so reopens the logout signing race.
+
+
+## 2026-10-28 — D5 second review: signer-owned session cancellation
+
+**Decision:** Auth marks sessions ending under its lock and drains cleanup after release. Hold admission and cancellation serialize outside that lock; pending holds are recorded before IPC and survive a lost reply. `cancel_holds` cancels the signer's unsigned queue by the SHA-256 hash of the bearer. A failed cancellation kills the signer, with a fresh process started on its next call. Finished dashboard hold entries are pruned; only holds require the preparing session for cancellation. Risk lines disallow holding.
+
+**Why:** The signer owns the queue even when its reply is lost. Slow or failed IPC must neither block authentication under its global lock nor leave unsigned holds eligible to sign after cleanup.
+
+**Revert:** Revert the protocol, admission gate and cleanup together; reverting just one reopens the lost-reply or logout race.
+
+### 2026-10-28 — C3 review hardening
+
+Decision: Require click contract 4 on every click route; validate the relay's risk allowlist against core. Generate the fake hosts' one-press allowlist from core. Refuse combined click sequences that include agent access until the UI can request a separate grant confirmation (terminal sequences still work). Gate risky confirmations on viewport intersection when supported, expire blocked arms, and prefer signer headlines.
+
+Why: Stale pages must not sign without the risk review; fixtures must reflect the real signer's operation classes. Risk lines must stay on screen throughout the dwell.
+
+Revert: Restore the prior gate only together with a coordinated click contract change in core, server, and client.
+
+## 2026-10-28 — D5 third review: signer-enforced session leases
+
+**Decision:** Holds use monotonic deadlines and require a fresh three-second session lease in the signer. Registration renews it; the dashboard renews every two seconds while that session has live holds. Logout stops renewal and sends best-effort cancellation without waiting for the admission gate. Restart on cancellation failure is a backstop. Cleanup failures are isolated per token.
+
+**Why:** A blocked or lost cancellation must not be the mechanism that prevents a disconnected session's holds from signing. Queued input is drained before deadlines; stale leases cancel unsigned holds locally.
+
+**Revert:** Revert the lease protocol and renewal loop together only when replacing them with another signer-enforced liveness boundary.
+### 2026-10-28 — New-ticket schedule dialog
+
+- **Decision:** Default New schedule to “A new ticket each run”, with a literal title limited to 100 characters. Keep the existing ticket picker as the other choice; preserve the row’s target when undoing cancellation.
+- **Why:** Repeated checks need a fresh ticket for each run. Keep the form short, with the longer explanation behind the information button. Preserve existing-ticket action arguments.
+- **Revert:** Remove the target choice and optional action/model fields, and restore the ticket picker as the first control.
+
+
+### 2026-10-31 — W01 setup service failure wording
+
+**Decision:** Show plain service-manager failure reasons and keep diagnostic text in collapsed Details. Preserve confirmed macOS background-item advice. Do not offer `orch dashboard open` as recovery from a missing workspace host.
+
+**Why:** The dashboard launcher starts only the dashboard; workspace access still requires a listening host socket. The task explicitly limits this change to reproduction and plain wording if that fallback cannot provide workspace access.
+
+**Revert:** Remove the diagnostic presentation with its tests; add an access command only when its host-start behavior has been verified.
+
+
+### 2026-10-31 — W01: open a workspace after a finishable setup failure
+
+- **Decision:** Put primary “Open your workspace” first on finishable error cards, using the success screen's finish path. Keep retry secondary and retain “Finish setup later”.
+- **Why:** A post-genesis failure leaves an existing workspace that the person should be able to open while deferring unfinished steps.
+- **Revert:** Remove the finishable-error open action and restore the previous warning and retry styling.
+
+### 2026-10-31 — Open hub in the dashboard demo
+
+- **Decision:** Share the mock API transport with hub switching; the production client exports a fetch transport. Mock rail and switch routes use `VITE_HUB_MOCKUP_URL`, defaulting to `http://127.0.0.1:8787/hub/index.html`, and map the requested page to its hash.
+- **Why:** The demo's Open hub action previously bypassed its router and failed against real HTTP. Standalone still has no hub.
+- **Revert:** Remove the mock rail/switch routes and switch transport exports together, restoring the direct fetch transport in `api/switch.ts`.
+
+### 2026-10-31 — X3 share delivery states
+
+- **Decision:** Show core's current delivery state, and reuse the existing share review for a confirming sync. Send now opens a preview; Sign explicitly confirms its plan through the existing owner-only endpoint. No new signing operation or automatic confirmation.
+- **Why:** A rule retained before joining has no confirmed selection, so an automatic retry cannot deliver it. A selected ticket is not evidence of delivery.
+- **Revert:** Remove the new entry points and delivery badges together; retain core's confirmation boundary.

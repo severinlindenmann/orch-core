@@ -9,18 +9,18 @@ import { quickRequest } from './quickRules'
 
 /**
  * "Created DEMO-0051 · bug" with the title, Open and Undo; the person stays where they are. One toast per ticket
- * (`id` = the key). Undo removes the ticket through the host, which refuses once anything else happened to it.
+ * (`id` = the key). `undo: false` (a signed ticket: undoing it would need a second signature) leaves Undo out. Undo removes the ticket through the host, which refuses once anything else happened to it.
  */
 export function useCreatedToast() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   return useCallback(
-    (ticket: TicketDocument, workspaceId: string) =>
+    (ticket: Pick<TicketDocument, 'key' | 'type' | 'title'>, workspaceId: string, opts: { undo?: boolean } = {}) =>
       toast.success(`Created ${ticket.key} · ${ticket.type}`, {
         id: ticket.key,
         description: ticket.title,
         action: { label: 'Open', onClick: () => void navigate({ to: '/ticket/$key', params: { key: ticket.key } }) },
-        cancel: {
+        cancel: opts.undo === false ? undefined : {
           label: 'Undo',
           onClick: async () => {
             try {

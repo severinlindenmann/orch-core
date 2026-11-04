@@ -229,6 +229,7 @@ def snapshot(
         "issued_ms": NOW - 60_000,
         "roles": roles if roles is not None else {U_ALICE: "admin", U_BOB: "read"},
         "revoked_channels": revoked if revoked is not None else [],
+        "ends_ms": {},
         "market_policy": default_policy(),
         "dev": True,
         **kw,
@@ -304,8 +305,12 @@ EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
     "people.changed": (TICKET, {"role": "reviewers", "add": ["u_" + U_BOB], "remove": []}),
     "addon.disabled": ("workspace", {"name": "wiki"}),
     "addon.purged": ("workspace", {"name": "wiki"}),
+    # FB15 (§8.8b): the owner's ask to turn an add-on on; the host answers with a host-actor addon.granted
+    "addon.requested": ("workspace", {"name": "wiki", "version": "1.2.0", "package_sha256": _h("wiki_package"),
+                                      "capabilities": ["network", "serve_http"], "handoff": "hr_01J9ZP0000000000000000HND1",
+                                      "runtime": {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}}),
     # phase 5 (§8.8, V3-D29)
-    "grant.requested": ("workspace", {"scope": "workable", "verbs": "agent", "hours": 72, "label": "Tariff import"}),
+    "grant.requested": ("workspace", {"handoff": "01J9ZP00000000000000000001", "scope": "workable", "verbs": "agent", "hours": 72, "label": "Tariff import"}),
     "grant.revoked": ("workspace", {"grant": "gr_01J9ZP0000000000000000GRT1", "reason": "done"}),
     "device.excluded": ("workspace", {"device": "d_" + fake16("device_old_phone"), "reason": "lost"}),
     "policy.changed": ("workspace", {"gates": {"code": {"approvers": ["maintainer", "owner"], "count": 2,
@@ -464,6 +469,8 @@ def publish_request(
     hub: str = HUB_ID,
     nonce: bytes = NONCE,
     wsk_signs_approval: Any = "same",
+    target: str = PUB_TARGET,
+    method: str = "PUT",
 ) -> dict[str, Any]:
     """A hub-path request. ``wsk_signs_approval`` is the approval the host's WSK signature commits to ("same" = the
     one attached); a different value models a hub that attached or swapped an approval after the host signed."""
@@ -471,7 +478,7 @@ def publish_request(
     if appr == "default":
         appr = approval(body=body, nonce=nonce, ts=ts)
     committed = appr if wsk_signs_approval == "same" else wsk_signs_approval
-    pbytes = H.hub_path_signed_bytes(ws, ts, nonce, "PUT", PUB_HOST, PUB_TARGET, body, hub, committed)
+    pbytes = H.hub_path_signed_bytes(ws, ts, nonce, method, PUB_HOST, target, body, hub, committed)
     headers = {
         "Orch-Workspace": WS_A,
         "Orch-Ts": str(ts),
@@ -483,13 +490,16 @@ def publish_request(
     if appr is not None:
         headers["Orch-Owner-Approval"] = b64u(cj(appr))
     return {
-        "method": "PUT",
+        "method": method,
         "host": PUB_HOST,
-        "target": PUB_TARGET,
+        "target": target,
         "headers": headers,
         "body_hex": body.hex(),
         "access": access,
     }
+
+
+LINK_EXPORTER = S.fake_seed("hub/tls_exporter")
 
 
 def link(
@@ -502,6 +512,7 @@ def link(
     re_: int | None = None,
     ts: int = NOW,
     label: str | None = None,
+    exporter: bytes | None = None,
     **kw: Any,
 ) -> dict[str, Any]:
     o = {
@@ -517,7 +528,9 @@ def link(
         **kw,
     }
     lk = label or ("sig_hub_link" if direction == "w2h" else "sig_hub_route")
-    return signed(key, lk, o)
+    # R1: a link signature is label || exporter || cj(o); the vectors all use the fake exporter LINK_EXPORTER.
+    msg = L[lk] + (LINK_EXPORTER if exporter is None else exporter) + cj(o)
+    return {"o": o, "sig": b64u(S.sign(K.priv[key], msg, deterministic=True))}
 
 
 # --- shared spaces (V3-D8) ------------------------------------------------------------------------------------------
@@ -581,6 +594,10 @@ def space_wrap(
 DEFAULT_MEMBERS = {1: [WS_A, WS_B], 2: [WS_A, WS_B, WS_C]}
 
 
+#: a valid space.item body (protocol 10.4): ``by`` is REQUIRED, ``restored_from`` optional
+ITEM_BODY = {"name": "notes.md", "size": 5, "data": b64u(b"hello"), "by": "person:" + fake16("person_1")}
+
+
 def space_item_obj(
     ws: str = WS_A,
     item_id: str | None = None,
@@ -599,7 +616,7 @@ def space_item_obj(
         "item_id": item_id or fake16("item_1"),
         "workspace_id": ws,
         "created_ms": NOW - 1000,
-        "body": {"kind": "ticket.summary", "title": "Reconcile March invoices", "status": "open"},
+        "body": ITEM_BODY,
         "dev": True,
         **kw,
     }
@@ -680,7 +697,14 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
     ),
     (
         "membership",
-        {"group": "ops", "user_id": U_BOB, "added": True, "actor_user_id": U_ALICE, "nonce": nonce32("membership")},
+        {
+            "group": "ops",
+            "user_id": U_BOB,
+            "added": True,
+            "ends_ms": None,
+            "actor_user_id": U_ALICE,
+            "nonce": nonce32("membership"),
+        },
     ),
     (
         "space",
@@ -768,19 +792,6 @@ def admin_req(
     }
     headers.update(hdr_kw)
     return {"method": method, "target": target, "headers": {k: v for k, v in headers.items() if v is not None}}
-
-
-ADMIN_ROW = {
-    "workspace_id": WS_A,
-    "release_id": "rel_2026_10_22_a",
-    "kind": "share",
-    "state": "active",
-    "created_ms": NOW - DAY,
-    "expires_ms": NOW + DAY,
-    "revoked": False,
-    "bytes": 12_345,
-    "public_url": None,
-}
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -1214,6 +1225,34 @@ def build() -> dict[str, Any]:
         3,
         "same version with another policy is a conflict like any other content change",
     )
+    # GA-07: the required field ends_ms {user_id: ms}: only users that have a role; each end is an integer after issued_ms
+    case(
+        "snapshot_ends_ms_ok",
+        "snapshot",
+        {**with_card, "signed": snapshot(ends_ms={U_BOB: NOW + 1000}), "workspace_id": WS_A, "pinned": None},
+        {"ok": {"version": 3}},
+        3,
+        "a user whose access ends at a given time (exclusive)",
+    )
+    for tag, bad in (
+        ("missing", None),
+        ("null", "null"),
+        ("list", []),
+        ("string_value", {U_BOB: "1790000001000"}),
+        ("bool_value", {U_BOB: True}),
+        ("not_after_issue", {U_BOB: NOW - 60_000}),
+        ("negative", {U_BOB: -5}),
+        ("key_not_hex16", {"bob": NOW + 1000}),
+        ("key_not_in_roles", {fake16("user_nobody"): NOW + 1000}),
+    ):
+        sn = snapshot(drop="ends_ms") if tag == "missing" else snapshot(ends_ms=None if tag == "null" else bad)
+        case(
+            f"snapshot_ends_ms_malformed_{tag}",
+            "snapshot",
+            {**with_card, "signed": sn, "workspace_id": WS_A, "pinned": None},
+            {"error": "malformed"},
+            3,
+        )
     case(
         "snapshot_unsorted_revocations",
         "snapshot",
@@ -1319,6 +1358,43 @@ def build() -> dict[str, Any]:
         {**cus, "event": ev, "snapshot": {**snap_o, "roles": {U_BOB: "read"}}},
         {"error": "forbidden_role"},
         4,
+    )
+    # GA-07 (R2/R6): a user listed in ends_ms has no role from that time on, and none when the snapshot is issued far ahead
+    ends_snap = lambda t, **kw: {**snap_o, "ends_ms": {U_ALICE: t}, **kw}
+    case(
+        "custodial_access_ends_after_now", "custodial", {**cus, "event": ev, "snapshot": ends_snap(NOW + 1)}, ok_cus, 4
+    )
+    case(
+        "custodial_access_ends_exactly_now",
+        "custodial",
+        {**cus, "event": ev, "snapshot": ends_snap(NOW)},
+        {"error": "forbidden_role"},
+        4,
+        "exclusive end: now == ends_ms is already over",
+    )
+    case(
+        "custodial_access_ended_before_now",
+        "custodial",
+        {**cus, "event": ev, "snapshot": ends_snap(NOW - 1)},
+        {"error": "forbidden_role"},
+        4,
+        "role_at just before (ends_ms = now + 1: a role), at (ends_ms = now: none) and after the end (none)",
+    )
+    case(
+        "custodial_snapshot_issued_far_ahead_with_end",
+        "custodial",
+        {**cus, "event": ev, "snapshot": ends_snap(NOW + 10**9, issued_ms=NOW + 300_001)},
+        {"error": "forbidden_role"},
+        4,
+        "R6: more than 5 minutes ahead of the verifier's clock: no role for a user with an end date",
+    )
+    case(
+        "custodial_snapshot_issued_ahead_without_end",
+        "custodial",
+        {**cus, "event": ev, "snapshot": {**snap_o, "issued_ms": NOW + 300_001}},
+        ok_cus,
+        4,
+        "users without an end date are not affected by the skew rule",
     )
     case(
         "custodial_channel_revoked",
@@ -2033,7 +2109,7 @@ def build() -> dict[str, Any]:
          {"ok": {"reader": 0}}, 5)  # fmt: skip
 
     # ---- link
-    ln = {**base, "hub_id": HUB_ID, "workspace_id": WS_A, "mode": "selective"}
+    ln = {**base, "hub_id": HUB_ID, "workspace_id": WS_A, "mode": "selective", "exporter_hex": LINK_EXPORTER.hex()}
     pub_out = link("publish_out", {"request": publish_request()})
     case(
         "link_publish_out",
@@ -2082,7 +2158,7 @@ def build() -> dict[str, Any]:
         "D80: no WK_e for the hub in selective mode",
     )
     case(
-        "link_share_put_in_full",
+        "link_share_put_in_full_ok",
         "link",
         {
             **ln,
@@ -2091,8 +2167,9 @@ def build() -> dict[str, Any]:
             "direction": "w2h",
             "pub": K.b("wsk_a"),
         },
-        {"error": "wrong_mode"},
+        {"ok": {"op": "share_put", "seq": 7}},
         2,
+        "r15: sharing a ticket with named people works in both modes (the hub accepts ticket items only in full)",
     )
     case(
         "link_w2h_signed_under_route_label",
@@ -2114,6 +2191,19 @@ def build() -> dict[str, Any]:
         {"error": "bad_signature"},
         2,
         "wrong signer",
+    )
+    case(
+        "link_other_exporter",
+        "link",
+        {
+            **ln,
+            "signed": link("snapshot_get", {}, exporter=S.fake_seed("hub/tls_exporter_other")),
+            "direction": "w2h",
+            "pub": K.b("wsk_a"),
+        },
+        {"error": "bad_signature"},
+        2,
+        "signed over another connection's TLS exporter (R1): valid on one connection only",
     )
     case(
         "link_stale",
@@ -2465,6 +2555,30 @@ def build() -> dict[str, Any]:
         3,
         "the author consented to another member set",
     )
+
+    # the body (protocol 10.4): by is REQUIRED and shaped person|agent:<id>; restored_from is an item id
+    def body_case(name: str, expect: dict[str, Any], note: str, **kw: Any) -> None:
+        body = {k: v for k, v in {**ITEM_BODY, **kw}.items() if v is not None}
+        case(name, "space_item", {**it, "sealed": seal_obj(space_item_obj(body=body))}, expect, 3, note)
+
+    body_case(
+        "space_item_by_agent_ok", {"ok": {"author": WS_A}}, "an agent put: by = agent:<session>", by="agent:s_01J9ZP-x"
+    )
+    body_case(
+        "space_item_restored_from_ok",
+        {"ok": {"author": WS_A}},
+        "a restore names its source item",
+        restored_from=fake16("item_0"),
+    )
+    body_case("space_item_by_missing", {"error": "malformed"}, "no item without by (no legacy path)", by=None)
+    body_case("space_item_by_bad_kind", {"error": "malformed"}, "by is person: or agent:", by="user:abc")
+    body_case("space_item_by_bad_chars", {"error": "malformed"}, "by has a closed alphabet", by="agent:a b")
+    body_case(
+        "space_item_by_too_long", {"error": "malformed"}, "by id is at most 64 characters", by="agent:" + "a" * 65
+    )
+    body_case("space_item_by_not_text", {"error": "malformed"}, "by is text", by=7)
+    body_case("space_item_restored_from_bad", {"error": "malformed"}, "restored_from is an item id", restored_from="x")
+    body_case("space_item_body_extra_key", {"error": "malformed"}, "the body is closed", extra=1)
 
     # consent: the host's put guard and the hub's rule for adding selective workspaces (L2P-2)
     rule = {"space_id": SPACE, "members": sorted([WS_A, WS_B])}
@@ -3382,21 +3496,6 @@ def build() -> dict[str, Any]:
         ok_ar,
         3,
     )
-    case(
-        "admin_read_rows_in_scope",
-        "admin_read_rows",
-        {"rows": [ADMIN_ROW], "scope": [WS_A]},
-        {"ok": {"rows": 1}},
-        3,
-    )
-    case(
-        "admin_read_row_outside_scope_never_emitted",
-        "admin_read_rows",
-        {"rows": [ADMIN_ROW, {**ADMIN_ROW, "workspace_id": WS_C}], "scope": [WS_A]},
-        {"error": "not_bound"},
-        3,
-        "whatever the target resolved to, a row of another workspace is not returned",
-    )
     sel_b = {**ab, "bindings": {WS_A: [{"binding": binding(mode="selective")}]}}
     case(
         "admin_read_selective_binding_excluded",
@@ -3450,32 +3549,6 @@ def build() -> dict[str, Any]:
         {"error": "not_bound"},
         3,
     )
-    case("admin_read_row_valid", "admin_read_row", {"row": ADMIN_ROW}, {"ok": {"row": True}}, 3)
-    case(
-        "admin_read_row_with_public_url",
-        "admin_read_row",
-        {"row": {**ADMIN_ROW, "public_url": "https://x.example/p/abc"}},
-        {"error": "malformed"},
-        3,
-        "public_url is null in hv 0: no public kind exists; a later hv adds it for live public releases only",
-    )
-    case(
-        "admin_read_row_extra_content_field",
-        "admin_read_row",
-        {"row": {**ADMIN_ROW, "content": "aGk"}},
-        {"error": "malformed"},
-        3,
-        "metadata only",
-    )
-    case(
-        "admin_read_row_missing_field",
-        "admin_read_row",
-        {"row": {k: v for k, v in ADMIN_ROW.items() if k != "bytes"}},
-        {"error": "malformed"},
-        3,
-    )
-    case("admin_read_row_wrong_type", "admin_read_row", {"row": {**ADMIN_ROW, "revoked": 0}}, {"error": "malformed"}, 3)
-
     # ---- unbind removes the workspace from every space (same step as hub.unbound)
     e2_a = space_rec(2, [WS_A])
     un = lambda ws, rec, sid=SPACE: {"unbind": {"ws": ws, "space_id": sid, "space": rec}}
@@ -3520,6 +3593,24 @@ def build() -> dict[str, Any]:
     pb = {**base, "workspace_id": WS_A, "cards": cards, "hub_card": c, "bindings": {WS_A: [{"binding": b1}]}}
     ok_pub = {"ok": {"workspace": WS_A, "hub": HUB_ID, "approved": True}}
     case("publish_public_with_approval", "publish", {**pb, "request": publish_request()}, ok_pub, 2)
+    app_target = f"/v1/ws/{WS_A}/apps/{fake16('app_1')}/commit"
+    app_body = b'{"op":"commit"}'
+    case(
+        "app_commit_through_legacy_check_without_approval",
+        "publish",
+        {**pb, "request": publish_request(appr=None, access=None, body=app_body, target=app_target, method="POST")},
+        {"error": "approval_required"},
+        2,
+        "M4 S0 review M2: an app commit/rollback/start route needs the approval whatever the access",
+    )
+    case(
+        "publish_approval_without_hub_id_on_the_hub_path",
+        "publish",
+        {**pb, "request": publish_request(appr=approval(hub_id=None))},
+        {"error": "other_hub"},
+        2,
+        "M4: a direct-path approval (hub_id null) never verifies through a hub",
+    )
     case(
         "publish_secret_without_approval",
         "publish",
@@ -3700,19 +3791,20 @@ def build() -> dict[str, Any]:
     # ---- signatures: exact signed bytes for each object (both directions are checked by the tests)
     sigs = []
 
-    def sig_entry(name: str, signer: str, label_key: str, obj: dict[str, Any]) -> None:
-        msg = L[label_key] + cj(obj["o"])
+    def sig_entry(name: str, signer: str, label_key: str, obj: dict[str, Any], exporter: bytes | None = None) -> None:
+        msg = L[label_key] + (exporter or b"") + cj(obj["o"])  # a link message binds the TLS exporter (R1)
         assert S.verify(K.pub[signer], _unb(obj["sig"]), msg)
-        sigs.append(
-            {
-                "name": name,
-                "signer": signer,
-                "label": HUB_LABELS.get(label_key) or V2_REUSED[label_key],
-                "canonical_hex": cj(obj["o"]).hex(),
-                "signed_hex": msg.hex(),
-                "sig": obj["sig"],
-            }
-        )
+        entry = {
+            "name": name,
+            "signer": signer,
+            "label": HUB_LABELS.get(label_key) or V2_REUSED[label_key],
+            "canonical_hex": cj(obj["o"]).hex(),
+            "signed_hex": msg.hex(),
+            "sig": obj["sig"],
+        }
+        if exporter is not None:
+            entry["exporter_hex"] = exporter.hex()
+        sigs.append(entry)
 
     sig_entry("op_cert", "hk_root", "sig_hub_op_cert", c["op_cert"])
     sig_entry("op_revoked", "hk_root", "sig_hub_op_revoked", rev)
@@ -3722,8 +3814,8 @@ def build() -> dict[str, Any]:
     sig_entry("snapshot", "hk_op", "sig_hub_snapshot", snapshot())
     sig_entry("binding", "wsk_a", "sig_hub_binding", b1)
     sig_entry("unbound", "wsk_a", "sig_hub_unbound", u1)
-    sig_entry("link_w2h_publish_out", "wsk_a", "sig_hub_link", pub_out)
-    sig_entry("link_h2w_snapshot_reply", "hk_op", "sig_hub_route", reply)
+    sig_entry("link_w2h_publish_out", "wsk_a", "sig_hub_link", pub_out, LINK_EXPORTER)
+    sig_entry("link_h2w_snapshot_reply", "hk_op", "sig_hub_route", reply, LINK_EXPORTER)
     sig_entry("audit_1", "hk_op", "sig_hub_audit", audit_chain()[0])
     sig_entry("space_e1", "hk_op", "sig_hub_space", space_rec(1))
     sig_entry("space_wrap_b_e1", "hk_op", "sig_hub_space_wrap", space_wrap())
@@ -3812,7 +3904,7 @@ def build() -> dict[str, Any]:
         },
     }
 
-    challenge, exporter = S.fake_seed("hub/link_challenge"), S.fake_seed("hub/tls_exporter")
+    challenge, exporter = S.fake_seed("hub/link_challenge"), LINK_EXPORTER
     la = H.link_auth_bytes(HUB_ID, WS_A, challenge, exporter)
     link_auth_vec = {
         "hub_id": HUB_ID,
@@ -3886,7 +3978,6 @@ def build() -> dict[str, Any]:
             "ts_ms": NOW,
             "signed_hex": H.admin_read_bytes(HUB_ID, NOW, "GET", ADMIN_TARGET).hex(),
             "request": admin_req(),
-            "row": ADMIN_ROW,
         },
         "phase4": p4["section"],
         "cases": cases,

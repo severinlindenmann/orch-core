@@ -81,6 +81,14 @@ class Item:
 RECORDS_TEXT = "Keep a history of your tickets on this computer, saved automatically (never uploaded)."
 
 
+#: what the review says about Claude Code's folder trust (one entry, this folder only)
+TRUST_TEXT = "Let Claude Code open this folder without asking. It only holds orch's files, no one else's settings."
+
+
+#: added when the person chose "trust anyway": Claude Code settings in a folder above this one also apply
+TRUST_PARENT_TEXT = " You chose to trust it although Claude Code settings in a folder above it apply to it too."
+
+
 @dataclass
 class Plan:
     items: list[Item]
@@ -179,6 +187,7 @@ def plan(
     *,
     manifest_bytes: Any,
     missing: list[str] | None = None,
+    private_paths: list[str] | None = None,
 ) -> Plan:
     """The plan of ``profile``. In new mode every item is planned; in finish mode only ``missing`` ones (R7)."""
     from orch.custody.cli import RISK as CONVENIENCE_RISK
@@ -190,11 +199,6 @@ def plan(
         return want is None or item_id in want
 
     sets: dict[str, Any] = {}
-    if profile["method"] == "click":
-        if facts is None:
-            sets["sign_methods"] = ["terminal", "click"]  # terminal stays allowed until the conversion is done
-        elif facts.sign_methods is not None and "click" not in facts.sign_methods:
-            sets["sign_methods"] = [*facts.sign_methods, "click"]  # M1: only what is actually missing
     if profile["agent_hours"] != 8 and (facts is None or not facts.grant_hours_set):
         sets["grant_hours"] = profile["agent_hours"]
     if profile.get("git_init") and facts is None:  # a new workspace only
@@ -248,16 +252,29 @@ def plan(
         )
         runner_grant = {"hours": hours, "scope": RUNNER_GRANT_SCOPE, "holder": HOLDER}
     flags: list[dict[str, str]] = []
+    # P14: new and Finish setup alike, orch's folders are made private (P08) and the review says so
+    flags.append(
+        {
+            "id": "perms",
+            "text": "Folders made private: only you can change this folder and orch's own folders.",
+            "detail": "Removes the group and other write permission from these folders, where you own them: "
+            + ", ".join(private_paths or [])
+            + ". Nothing else is changed.",
+        }
+    )
     if profile.get("git_init") and wanted("git"):
         flags.append(
             {
                 "id": "git",
-                "text": "Make this folder a git repository (git init), and keep .orch/ and .orch-work/ out of it. "
-                "It gets one empty first commit, none of your files.",
+                "text": "Keep a history of changes in this folder. Your files stay as they are.",
+                "detail": "This runs git init, keeps .orch/ and .orch-work/ out of the repository, and makes one empty "
+                "first commit. None of your files is committed.",
             }
         )
     if profile.get("records") and facts is None:  # a new workspace only
         flags.append({"id": "records", "text": RECORDS_TEXT})
+    if profile.get("trust_folder") and facts is None:  # a new workspace only
+        flags.append({"id": "trust", "text": TRUST_TEXT + (TRUST_PARENT_TEXT if profile.get("trust_parent") else "")})
     wants_exec = profile["agent_grant"] or any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"]
     )
@@ -277,7 +294,8 @@ def plan(
     exec_addon = any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"] if info[a].kind == "addon"
     )
-    tty = facts is not None or runner_grant is not None or exec_addon
+    # One click (method click) has no terminal check: the risk notice and the Create click are the consent (P01)
+    tty = profile["method"] != "click" and (facts is not None or runner_grant is not None or exec_addon)
     p = Plan(items, flags, runner_grant, risk, tty, _canon_profile(profile, directory))
     if facts is None:
         p.workspace = _workspace(profile, directory)
@@ -313,6 +331,8 @@ def _canon_profile(profile: Mapping[str, Any], directory: str) -> dict[str, Any]
     out = {k: profile[k] for k in keys}
     out["git_init"] = bool(profile.get("git_init"))
     out["records"] = bool(profile.get("records"))
+    out["trust_folder"] = bool(profile.get("trust_folder"))
+    out["trust_parent"] = bool(profile.get("trust_parent"))
     out["dir"] = directory
     out["custody_conversion"] = profile["method"] == "click"
     return out

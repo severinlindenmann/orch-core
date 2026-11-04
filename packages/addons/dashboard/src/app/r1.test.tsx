@@ -177,7 +177,8 @@ it('review: "blocking" agrees on Today and the ticket page: only while an agent 
   const row = await screen.findByTestId('card-question:DEMO-0044:Q9')
   expect(within(row).queryByText('blocking')).toBeNull()
   expect(within(screen.getByTestId('card-question:DEMO-0043:Q2')).getByText('blocking')).toBeInTheDocument()
-  await user.click(within(row).getByRole('link', { name: 'DEMO-0044' }))
+  // A question card names its ticket by title (plain words, run-13), and the title opens the ticket.
+  await user.click(within(row).getByRole('link', { name: (await api.getTicket('DEMO-0044')).title }))
   await user.click(await screen.findByRole('tab', { name: /Questions/ }))
   const q9 = await screen.findByText('Keep the old role?')
   const card = q9.closest('[id^="question-"]') as HTMLElement

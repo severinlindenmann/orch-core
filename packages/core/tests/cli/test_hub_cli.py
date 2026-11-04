@@ -76,6 +76,14 @@ def test_an_agent_or_a_session_is_refused_before_anything(offline, argv, env):
     assert code == 3 and out.startswith("error op.not_allowed")
 
 
+def test_w29_an_agent_rotating_keys_is_told_about_keys_not_hubs(offline):
+    code, out = run(["rotate"], {"ORCH_SESSION": "s.1"})
+    assert code == 3 and out.startswith("error op.not_allowed")
+    assert "rotates the workspace key" in out and "hub" not in out.splitlines()[0]
+    code, out = run(["leave"], {"ORCH_SESSION": "s.1"})
+    assert "joins or leaves a hub" in out
+
+
 def test_the_refusal_in_json(offline):
     code, out = run(["leave"], {"ORCH_GRANT": "gr_x"}, as_json=True)
     assert code == 3 and json.loads(out)["code"] == "op.not_allowed"
@@ -151,7 +159,7 @@ def test_a_malformed_or_conflicting_hub_id_is_refused_before_signing(host, card_
 def test_join_without_a_terminal_signs_nothing(host, card_file):
     host.tty = False
     code, out = run(["join", "inv-1", "--hub-card", card_file], {})
-    assert code == 5 and "no terminal" in out and host.signed == [] and host.called == []
+    assert code == 3 and "no terminal" in out and host.signed == [] and host.called == []
 
 
 def test_a_hub_that_is_down_after_the_signature_says_how_to_finish(host, card_file):
@@ -255,7 +263,7 @@ def test_refresh_flags_belong_to_status(host, argv):
 
 @pytest.fixture
 def share_host(monkeypatch):
-    log = SimpleNamespace(called=[], asked=[], yes=True)
+    log = SimpleNamespace(called=[], asked=[], yes=True, answers={})
     preview = {"count": 1, "new": 1, "revoked": 0, "more": 0, "plan": "p" * 43,
                "items": [{"logical": "ticket:t", "kind": "ticket", "line": "ticket K-1: Public note"}]}  # fmt: skip
     reply = {
@@ -264,6 +272,14 @@ def share_host(monkeypatch):
         "share.rule_remove": {"note": "changed", "synced": True, "put": 0, "revoke": 1, "kept": 0},
         "share.revoke": {"note": "withdrawn", "synced": True, "put": 0, "revoke": 1, "kept": 0},
         "share.sync": {"synced": False, "pending": "hub_unreachable"},
+        "share.audience": {
+            "people": [
+                {"user_id": "a" * 32, "name": "Ben"},
+                {"user_id": "b" * 32, "name": "Ben"},
+                {"user_id": "c" * 32, "name": "Cleo"},
+            ],
+            "teams": [{"group": "team-b", "members": 2}],
+        },
         "share.rules": {
             "rules": [{"kind": "tag", "tag": "x", "count": 1, "describes": "d"}],
             "shared": 1,
@@ -271,10 +287,15 @@ def share_host(monkeypatch):
         },  # fmt: skip
     }
     monkeypatch.setattr(hub, "_target", lambda env: object())
-    monkeypatch.setattr(hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), reply[op])[1])
-    from orch.cli import publish
+    monkeypatch.setattr(
+        hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), log.answers.get(op, reply[op]))[1]
+    )
 
-    monkeypatch.setattr(publish, "_confirm", lambda prompt, word: (log.asked.append((prompt, word)), log.yes)[1])
+    monkeypatch.setattr(
+        __import__("orch.ops.human", fromlist=["review_prompt"]),
+        "review_prompt",
+        lambda prompt, verb="sign": (log.asked.append(prompt), verb == "continue" and log.yes)[1],  # D4: unsigned
+    )
     return log
 
 
@@ -290,8 +311,8 @@ def test_an_agent_cannot_use_share_at_all(share_host, argv):
 def test_rule_add_shows_what_will_be_shared_and_binds_the_plan(share_host):
     code, out = run(["share", "rule", "add", "--tag", "x"], {}, as_json=True)
     assert code == 0
-    ((prompt, word),) = share_host.asked
-    assert word == "share" and "ticket K-1: Public note" in prompt and "cannot be taken back" in prompt
+    (prompt,) = share_host.asked
+    assert "ticket K-1: Public note" in prompt and "cannot be taken back" in prompt
     rule = {"kind": "tag", "tag": "x"}
     assert share_host.called == [
         ("share.preview", {"add": rule}),
@@ -302,7 +323,7 @@ def test_rule_add_shows_what_will_be_shared_and_binds_the_plan(share_host):
 def test_an_unconfirmed_rule_change_sends_nothing(share_host):
     share_host.yes = False
     code, _ = run(["share", "rule", "remove", "--tag", "x"], {}, as_json=True)
-    assert code == 5 and [op for op, _ in share_host.called] == ["share.preview"]
+    assert code == 3 and [op for op, _ in share_host.called] == ["share.preview"]
 
 
 def test_revoke_says_it_cannot_take_back_what_was_read(share_host):
@@ -343,18 +364,11 @@ def test_refused_share_items_show_in_the_normal_output_and_a_stale_one_says_so(s
 
 def test_sync_shows_what_is_new_and_binds_the_plan(share_host):
     code, _ = run(["share", "sync"], {}, as_json=True)
-    assert code == 0 and "ticket K-1: Public note" in share_host.asked[0][0]
+    assert code == 0 and "ticket K-1: Public note" in share_host.asked[0]
     assert share_host.called == [("share.preview", {}), ("share.sync", {"expect": "p" * 43})]
     share_host.called.clear()
     share_host.yes = False
-    assert run(["share", "sync"], {}, as_json=True)[0] == 5 and [op for op, _ in share_host.called] == ["share.preview"]
-
-
-def test_a_cut_off_list_needs_the_typed_count(share_host, monkeypatch):
-    from orch.cli import hub as H
-
-    prev = {"count": 250, "new": 250, "revoked": 0, "more": 150, "plan": "p" * 43, "items": []}
-    assert H._confirm_word(prev) == "all 250" and H._confirm_word({**prev, "more": 0}) == "share"  # noqa: SLF001
+    assert run(["share", "sync"], {}, as_json=True)[0] == 3 and [op for op, _ in share_host.called] == ["share.preview"]
 
 
 # --- C8 goldens: keys rotate and hub history (exact output; both are host ops, so no registry golden file) -----------
@@ -407,3 +421,94 @@ def test_hub_history_golden(host):
     )  # L2-C8i-6: no JSON pretending to be a command
     code, out = run(["history"], {}, as_json=True)
     assert code == 0 and json.loads(out)["data"] == HIST
+
+
+# --- R6 (#1594): orch hub network ---------------------------------------------------------------------------------
+
+
+def test_network_show_set_and_clear(host, monkeypatch):
+    host.reply["hub.network"] = {"proxy": None, "user": None, "has_password": False, "broken": False}
+    code, out = run(["network"], {})
+    assert code == 0 and "directly" in out and host.called == [("hub.network", {})]
+    host.reply["hub.network_set"] = {
+        "proxy": "https://p.office:3128",
+        "user": "a",
+        "has_password": True,
+        "broken": False,
+    }
+    monkeypatch.setattr(hub, "_read_password", lambda: "pw")
+    code, out = run(["network", "set-proxy", "https://p.office:3128", "--proxy-user", "a"], {})
+    assert code == 0 and "pw" not in out and "p.office:3128" in out
+    assert host.called[-1] == ("hub.network_set", {"proxy": "https://p.office:3128", "user": "a", "password": "pw"})
+    run(["network", "clear-proxy"], {})
+    assert host.called[-1] == ("hub.network_set", {"proxy": None})
+
+
+def test_network_refuses_agents_and_bad_shapes(host):
+    code, out = run(["network"], {"ORCH_SESSION": "x"})
+    assert code != 0 and host.called == []
+    for bad in (["network", "set-proxy"], ["network", "x"], ["network", "--proxy-user", "a"]):
+        assert run(bad, {})[0] == 2
+
+
+def test_share_people_lists_the_hub_people(share_host):
+    code, out = run(["share", "people"], {})
+    assert code == 0 and "Cleo" in out and "team team-b" in out and share_host.called == [("share.audience", {})]
+
+
+def test_with_resolves_a_name_or_id_into_the_signed_audience(share_host):
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo", "--team", "team-b"], {}, as_json=True)
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": ["team-b"]}}
+    assert code == 0 and ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+
+
+def test_an_ambiguous_or_unknown_person_reaches_no_rule_change(share_host):
+    for who in ("Ben", "Nobody"):
+        code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", who], {}, as_json=True)
+        assert code == 5
+    assert all(op != "share.rule_add" for op, _ in share_host.called)
+
+
+def test_the_hubs_people_are_cleaned_before_anything_is_printed(share_host):
+    share_host.answers["share.audience"] = {
+        "people": [{"user_id": "a" * 32, "name": "\x1b[31mBen\u202e\nEvil"}, {"user_id": "zz\x1b[2J", "name": "X"}],
+        "teams": [
+            {"group": "t\x1b[0m", "members": 7},
+            {"group": "ok", "members": True},
+            {"group": "fine", "members": 3},
+            {"group": "x" * 60, "members": 1},
+        ],
+    }
+    code, out = run(["share", "people"], {})
+    assert code == 0 and "\x1b" not in out and "\u202e" not in out and "Evil" in out and "zz" not in out
+    assert "team fine (3 people)" in out and "team ok" not in out and "7" not in out and "xxxx" not in out
+
+
+def test_two_people_with_one_name_are_refused_with_both_ids_listed(share_host):
+    code, out = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Ben"], {}, as_json=True)
+    assert code == 5 and "a" * 32 in out and "b" * 32 in out and "--with ID" in out
+    assert all(op != "share.rule_add" for op, _ in share_host.called)
+
+
+def test_one_name_shows_the_short_id_in_the_review_and_signs_only_the_id(share_host):
+    share_host.answers["share.preview"] = {
+        **share_host.answers.get(
+            "share.preview", {"count": 1, "new": 1, "revoked": 0, "more": 0, "plan": "p" * 43, "items": []}
+        ),
+        "review": {"readers": {"people": ["Cleo"], "teams": []}},
+    }
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--with", "Cleo"], {}, as_json=True)
+    prompt = share_host.asked[0]
+    assert code == 0 and "You chose: Cleo (..." + "c" * 8 + ")" in prompt
+    assert prompt.index("You chose") < prompt.index("Readers (from the hub, not signed): Cleo")
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": ["c" * 32], "groups": []}}
+    assert ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+
+
+def test_a_team_is_matched_on_its_raw_safe_name_and_an_unsafe_one_is_never_signed(share_host):
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--team", "team-b"], {}, as_json=True)
+    rule = {"kind": "ticket", "ticket": "K-1", "audience": {"users": [], "groups": ["team-b"]}}
+    assert code == 0 and ("share.rule_add", {"rule": rule, "expect": "p" * 43}) in share_host.called
+    share_host.answers["share.audience"] = {"people": [], "teams": [{"group": "x" * 60, "members": 1}]}
+    code, _ = run(["share", "rule", "add", "--ticket", "K-1", "--team", "x" * 40], {}, as_json=True)
+    assert code == 5 and len([1 for op, _ in share_host.called if op == "share.rule_add"]) == 1

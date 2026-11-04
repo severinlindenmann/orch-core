@@ -645,3 +645,76 @@ def test_a_ticket_a_foreign_writer_created_is_in_the_rebuilt_journal(w):
     again = c.open(["tickets"], after=sub["cursor"])
     items, _ = c.items_until(again["sub"], before + 1)
     assert [(i["uid"], i["type"]) for i in items] == [(uid, "ticket.created")]
+
+
+# --- run-10 J04: the host records "the agent waits in orch wait" ------------------------------------------------------
+
+
+def _waits(s):
+    return list(getattr(s.service, "agent_waits", {}).values())
+
+
+def _until(cond, timeout=5.0):
+    import time
+
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.05)
+    return cond()
+
+
+def test_a_parked_agent_wait_is_recorded_and_its_answer_clears_it(w):
+    from types import SimpleNamespace
+
+    from orch.host import runners
+
+    uid, key = _claimed_asked(w)
+    c = w.conn()
+    rid = c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session=SESSION)
+    assert _until(lambda: len(_waits(w)) == 1)
+    (entry,) = _waits(w)
+    gid = w.grant.partition(".")[0]
+    assert entry["key"] == key and entry["grant"] == gid
+    rec = {"run": "r_1", "kind": "agent", "state": "running", "ticket": key, "grant": gid, "session": "s_x"}
+    hub = SimpleNamespace(activity={"r_1": (99, __import__("time").time())})  # its terminal just printed (a timer)
+    got = runners.waiting_of(w.service, hub, rec)
+    assert got is not None and got["source"] == "wait"
+    assert runners.waiting_of(w.service, hub, {**rec, "grant": "g_other"}) is None  # another agent's run
+    assert runners.waiting_of(w.service, hub, {**rec, "state": "exited"}) is None  # a dead run never waits
+    answer(w, uid)
+    assert ok(c.answer(rid))["data"]["kind"] == "answered"
+    assert _until(lambda: not _waits(w))
+
+
+def _claimed_asked(s):
+    uid, key = s.ticket()
+    ok(s.client().req("claim", {"ref": key}, grant=s.grant, session=SESSION, idem=True))
+    ok(s.client().req("ask", {"ref": key, "text": "which?"}, grant=s.grant, session=SESSION, idem=True))
+    return uid, key
+
+
+def test_only_the_claim_holders_wait_is_recorded(w):
+    _, key = _claimed_asked(w)
+    c = w.conn()
+    c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session="s_01J9ZP0000000000000000000T")  # a sibling
+    c.quiet(wait=0.4)
+    assert not _waits(w)
+
+
+def test_a_killed_wait_clears_the_waiting_state(w):
+    _, key = _claimed_asked(w)
+    c = w.conn()
+    c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session=SESSION)
+    assert _until(lambda: len(_waits(w)) == 1)
+    c.client.close()  # the agent's orch process is killed: its connection closes, the host cancels the request
+    assert _until(lambda: not _waits(w))
+
+
+def test_a_wait_without_a_grant_is_not_an_agent_wait(w):
+    _, key = w.ticket()
+    c = w.conn()
+    c.send("wait", {"ref": key, "timeout": 60})
+    c.quiet(wait=0.4)
+    assert not _waits(w)

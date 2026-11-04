@@ -49,7 +49,7 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
-from . import rules, transcript, transcript_children, transcript_sources
+from . import claimend, mcpconfig, rules, transcript, transcript_children, transcript_sources
 from .config import ConfigError, RunnerConfig
 from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
@@ -61,6 +61,10 @@ __all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_g
 LOG = logging.getLogger(__name__)
 #: ``peer.denied`` answers in a row after which the runner exits to be started afresh (its unit restarts it)
 DENIED_LIMIT = 3
+#: how long the runner waits for the host's welcome. The host asks who the peer is off its event loop (the service
+#: manager, a thread pool that is busy under load) before it answers; the CLI's 2 s deadline made a runner whose check
+#: took longer time out at every attempt and never connect (CI flake, 29 Oct). The runner is a long-lived connection.
+WELCOME_TIMEOUT = 30.0
 
 #: §2.4: what a run may get from the runner's own environment (values never reach the host)
 ENV_FROM_RUNNER = frozenset(
@@ -181,11 +185,35 @@ def _harness_of(argv: list[str], config: RunnerConfig | None = None) -> str | No
     return {"claude": "claude-code", "codex": "codex"}.get(os.path.basename(prog))
 
 
+def _company_skills(raw: Any) -> tuple[dict[str, str], ...]:
+    """The ``company_skills`` of a spawn: absent is none; anything not acceptable refuses the spawn (it would run
+    without, or with something other than, what the owner accepted)."""
+    if raw is None:
+        return ()
+    bad = rules.company_problem(raw)
+    if bad is not None:
+        raise SpawnError("invalid.input", f"spawn: company_skills are not acceptable ({bad})")
+    return tuple(dict(x) for x in raw)
+
+
+def _org_mcp(raw: Any) -> dict[str, Any] | None:
+    """The ``org_mcp`` of a spawn: absent is none; anything not acceptable refuses the spawn."""
+    if raw is None:
+        return None
+    bad = mcpconfig.problem(raw)
+    if bad is not None:
+        raise SpawnError("invalid.input", f"spawn: org_mcp is not acceptable ({bad})")
+    return {"port": raw["port"], "capability": raw["capability"], "servers": list(raw["servers"])}
+
+
 def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerConfig, grants: GrantStore) -> SpawnSpec:
     """A ``spawn`` command as the :class:`SpawnSpec` the supervisor starts: the registry argv, the environment
     (allow-list, ``pass_env``, host-chosen fixed values) and, for an agent, ``ORCH_GRANT`` from the grant store and
     ``ORCH_SESSION``. Raises :class:`SpawnError`."""
     kind = args.get("kind")
+    run_grant = args.get("run_grant", False)
+    if not isinstance(run_grant, bool):
+        raise SpawnError("invalid.input", "spawn: run_grant must be a bool")
     trusted = None
     argv = registry_argv(args.get("argv"), own, config)
     env = build_env(args, own, config.pass_env)
@@ -199,7 +227,11 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
         if grant is None:
             raise SpawnError("launch.no_grant", "spawn: an agent needs its person's runner grant")
         try:
-            env["ORCH_GRANT"] = grants.secret_for(wid, person, grant)
+            env["ORCH_GRANT"] = (
+                grants.secret_for_run(args.get("run"), grant)
+                if run_grant
+                else grants.secret_for(wid, person, grant, args.get("run"))
+            )
         except GrantError as exc:
             raise SpawnError(exc.code, exc.message) from None
         env["ORCH_SESSION"] = session
@@ -216,6 +248,7 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
     return SpawnSpec(
         str(args.get("run")), str(args.get("workspace_id")), str(kind), argv, env, dict(args.get("cwd") or {}),
         int(args.get("cols") or 120), int(args.get("rows") or 40), trusted,
+        _company_skills(args.get("company_skills")), _org_mcp(args.get("org_mcp")),
     )  # fmt: skip
 
 
@@ -283,6 +316,12 @@ class HostLink:
         self._repo_locks: dict[str, threading.Lock] = {}
         #: run -> (workspace root, work folder) a Claude Code trust entry was recorded for
         self._trusted: dict[str, tuple[str, str]] = {}
+        #: W31: run -> the agent run's environment without its secret (its claim is released when it ends), and the
+        #: outcome once decided; ``claim_cli`` runs ``orch`` for that (tests replace it)
+        self._claims: dict[str, dict[str, str]] = {}
+        self._claim_out: dict[str, bool] = {}
+        self._claim_lock = threading.Lock()
+        self.claim_cli: claimend.CliFn = claimend.run_cli
         #: tests: drop the report of these commands (a lost ack)
         self.drop_reports: set[str] = set()
         sup.on_event = self._on_event
@@ -352,7 +391,9 @@ class HostLink:
 
     def _session(self) -> None:
         hello = {"t": "hello", "proto": [1], "client": "orch-runner", "caps": ["runner/1"], "ops": {}}
-        sock, welcome = handshake_pinned(Pin(self.host_uid, None, self.socket_path), hello)  # peer UID first
+        sock, welcome = handshake_pinned(  # peer UID first
+            Pin(self.host_uid, None, self.socket_path), hello, timeout=WELCOME_TIMEOUT
+        )
         if (welcome.get("peer") or {}).get("class") != "runner":
             sock.close()
             raise ConnectionError("the host did not accept this process as the runner")
@@ -489,7 +530,7 @@ class HostLink:
         """``attach.end`` runs inline on this (the link) thread: it never blocks (the term socket's ``end`` takes its
         lock, queues and reports), and it must not wait behind ``stop``/``spawn`` in the command pool, or the host's
         5 s confirmation deadline would drop the whole runner session. Every other command goes to the pool."""
-        if item.get("op") in ("attach.end", "grant.put", "grant.drop"):
+        if item.get("op") in ("attach.end", "grant.put", "grant.put_run", "grant.drop"):
             # grant.put and grant.drop run inline too, in arrival order (#466 review round 2): the host sends a forget's
             # drop after the put it follows, so the drop can never overtake that put in the pool (a client that went
             # away or a host timeout releases the host's per-person lock while the put is still in flight)
@@ -523,7 +564,12 @@ class HostLink:
         if cmd == "spawn":
             spec = spawn_spec(args, self.env, self.config(), self.grants)
             spec.check()
-            spec = dataclasses.replace(spec, argv=rules.prepare(self._rules_base(), spec.run, spec.argv, spec.env))
+            spec = dataclasses.replace(
+                spec, argv=rules.prepare(self._rules_base(), spec.run, spec.argv, spec.env, spec.company_skills)
+            )
+            spec = dataclasses.replace(
+                spec, argv=mcpconfig.prepare(self._rules_base(), spec.run, spec.argv, spec.env, spec.org_mcp)
+            )
             spec = dataclasses.replace(spec, argv=transcript.prepare(spec.run, spec.argv))
             if spec.trusted is not None:
                 self._trusted[spec.run] = spec.trusted
@@ -533,6 +579,8 @@ class HostLink:
                 if self._restarting():
                     raise SpawnError("runner.unavailable", "the agent runner is restarting on a new release; try again")
                 res = self.sup.spawn(spec)
+                if spec.kind == "agent" and not res.get("duplicate"):
+                    self._claims[spec.run] = {k: v for k, v in spec.env.items() if k != "ORCH_GRANT"}
                 if not res.get("duplicate"):  # the transcript reader finds the run's file from these
                     harness = _harness_of(spec.argv, self.config())
                     self.sup.table.update(spec.run, harness=harness, cwd_path=spec.cwd.get("path"))
@@ -560,9 +608,9 @@ class HostLink:
             if args.get("children"):  # P2-2: the delegated children of the run
                 return transcript_children.serve(args, self.sup, self.env)
             return transcript.serve(args, self.sup, self.env)
-        if cmd == "grant.put":  # H11c: the secret arrives here once; it is answered without it
+        if cmd in ("grant.put", "grant.put_run"):  # H11c: the secret arrives here once; it is answered without it
             try:
-                return self.grants.put(args)
+                return self.grants.put_run(args) if cmd == "grant.put_run" else self.grants.put(args)
             except GrantError as exc:
                 raise SpawnError(exc.code, exc.message) from None
         if cmd == "grant.drop":
@@ -611,22 +659,42 @@ class HostLink:
         """The run is over: its rules file goes, and its Claude Code trust is checked again (somebody may have put
         settings or a tracked file in the folder meanwhile)."""
         rules.remove(self._rules_base(), run)
+        mcpconfig.remove(self._rules_base(), run)
         got = self._trusted.pop(run, None)
         if got is not None:
             from .claude_trust import refresh
 
             refresh(self.env, *got)
 
+    def _end_claim(self, run: str) -> bool:
+        """W31: the run's leader ended: release its claim as the agent, once. True if this run's claim was released."""
+        with self._claim_lock:
+            base = self._claims.pop(run, None)
+            if base is None:
+                return self._claim_out.get(run, False)
+            try:
+                done = claimend.release_claim(run, base, self.grants.secret_for_release(run), self.claim_cli)
+            except Exception:  # noqa: BLE001 - never let a failed release stop the exit report
+                LOG.info("run %s: claim release failed", run)
+                done = False
+            self._claim_out[run] = done
+            while len(self._claim_out) > 256:
+                del self._claim_out[next(iter(self._claim_out))]
+            return done
+
     def _on_event(self, kind: str, run: str, payload: dict[str, Any]) -> None:
         if kind == "exit":
             with contextlib.suppress(Exception):
                 self._after_exit(run)
-        if not self.ready.is_set() or kind != "cleanup":
-            return  # the next hello carries the state; runner.exit is sent once the clean-up has a result
+        if kind != "cleanup":
+            return
         rec = self.sup.table.get(run) or {}
         exit_ = rec.get("exit") or {}
         if not exit_:
             return  # a leader still alive (incomplete stop): no exit to report yet
+        released = self._end_claim(run)  # also when the host is away: the claim is the host's, not this link's
+        if not self.ready.is_set():
+            return  # the next hello carries the state; runner.exit is sent once the clean-up has a result
         args: dict[str, Any] = {
             "run": run,
             "code": exit_.get("code"),
@@ -634,6 +702,8 @@ class HostLink:
             "at": exit_.get("at") or now_iso(),
             "cleanup": payload.get("cleanup") or "unknown",
         }
+        if released:
+            args["claim_released"] = True
         with contextlib.suppress(OSError, ConnectionError):
             self._send_req("runner.exit", args)
 

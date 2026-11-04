@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "switch.refused",
+    "message": "this workspace cannot be opened from another computer through the hub",
+    "hint": "open it on its own computer",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

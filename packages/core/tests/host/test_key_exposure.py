@@ -11,7 +11,6 @@ from orch.host import human as hh
 from orch.identity import certs
 from tests.host import human_helpers
 from tests.host.human_helpers import Human, err, ok
-from tests.host.test_hub_only import full_joined, owner_event
 from tests.host.test_hub_ops import (  # noqa: F401
     CARD,
     connect_args,
@@ -20,6 +19,7 @@ from tests.host.test_hub_ops import (  # noqa: F401
     keystore,
     stub,
 )
+from tests.host.test_hub_optional import full_joined, owner_event
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 

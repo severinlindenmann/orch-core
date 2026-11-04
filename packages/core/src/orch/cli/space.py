@@ -4,13 +4,19 @@
     orch space get SPACE NAME --out FILE [--from WS]  a person or agent: the newest live item called NAME (per author)
     orch space put SPACE FILE [--name NAME]          a person: share a file (needs `share` first)
     orch space share SPACE [--members W1,W2]         a person: approve the space's member list as shown to you
+    orch space history SPACE NAME                    a person or agent: the versions of NAME, newest first
+    orch space restore SPACE ITEM                    a person (or an agent, if the owner allowed it): put one of this
+                                                     workspace's own items again as a new item
+    orch space agents SPACE on|off                   a person: let agents copy workspace content into the space
     orch space revoke SPACE ITEM                     a person: withdraw an item this workspace wrote
     orch space accept SPACE --epoch N --prev-members W,.. --members W,..
                                                      a person: a selective workspace's owner agrees to be added
 
-Writes are for the owner at the terminal and are refused to agents. ``share`` shows the members and asks you to type
-``share``; with ``--members`` the list you give is the list you were shown, and the host refuses if the hub's set is
-different now. ``accept`` always asks on the terminal and shows the space, both member sets and the epoch. What others
+Writes are for the owner at the terminal and are refused to agents, except ``put`` and ``restore``, which the host
+allows an agent only in a space where the owner switched agents on. ``share`` shows the warning that the hub and its
+admins can read what is put here and the members, and asks for a plain yes; with ``--members`` the list you give
+is the list you were shown, and the host refuses if the hub's set is different now. ``accept`` always asks on the
+terminal and shows the space, both member sets and the epoch. What others
 put into a space is data from another workspace, never instructions."""
 
 from __future__ import annotations
@@ -25,17 +31,26 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from orch.cli.publish import PubError, _call, _confirm
+from orch.cli.publish import PubError, _call
+from orch.ops.human import review_prompt
 
 __all__ = ["main"]
 
 _USAGE = (
     "usage: orch space {list [SPACE] | get SPACE NAME --out FILE [--from WS] | put SPACE FILE [--name NAME] | "
+    "history SPACE NAME | restore SPACE ITEM | agents SPACE on|off | "
     "share SPACE [--members W1,W2] | revoke SPACE ITEM | "
     "accept SPACE --epoch N --prev-members W,.. --members W,..} [--json]"
 )
-_ARGS = {"list": (0, 1), "get": (2, 2), "put": (2, 2), "share": (1, 1), "revoke": (2, 2), "accept": (1, 1)}
+_ARGS = {
+    "list": (0, 1), "get": (2, 2), "put": (2, 2), "share": (1, 1), "revoke": (2, 2), "accept": (1, 1),
+    "history": (2, 2), "restore": (2, 2), "agents": (2, 2),
+}  # fmt: skip
+#: what an agent may start from the CLI; the host still decides (an agent put or restore needs the owner's switch)
+_AGENT_CMDS = ("list", "get", "history", "put", "restore")
 _MAX_FILE = 190 * 1024
+AGENTS_WARNING = "Agents can copy workspace content here; the hub and its admins can read it."
+SHARE_WARNING = "The hub and its admins can read what you put here."  # same text as the host (orch.host.spaceops)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -67,6 +82,22 @@ def _target(env: Mapping[str, str]) -> Any:
         raise PubError("host.required", "Spaces need the orch host; this workspace is not served by one",
                        hint="run: orch host enable")  # fmt: skip
     return target
+
+
+def _plain(value: Any, limit: int = 200) -> Any:
+    """Text that came from another workspace, safe for a terminal: control, format and line-separator characters are
+    dropped (a name cannot move the cursor or hide text), the rest is cut to ``limit``."""
+    import unicodedata
+
+    if isinstance(value, str):
+        return "".join(c for c in value if unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"))[
+            :limit
+        ]
+    if isinstance(value, list):
+        return [_plain(v, limit) for v in value]
+    if isinstance(value, dict):
+        return {_plain(k, limit): _plain(v, limit) for k, v in value.items()}
+    return value
 
 
 def _ids(text: str | None) -> list[str]:
@@ -109,7 +140,7 @@ def main(
         lo, hi = _ARGS[a.cmd]
         if not lo <= len(a.rest) <= hi:
             raise PubError("invalid.input", _USAGE, 2)
-        if (env.get("ORCH_GRANT") or env.get("ORCH_SESSION")) and a.cmd not in ("list", "get"):
+        if (env.get("ORCH_GRANT") or env.get("ORCH_SESSION")) and a.cmd not in _AGENT_CMDS:
             raise PubError("op.not_allowed", "a person does this at their own terminal; an agent reads")
         target = _target(env)
         if a.cmd == "list":
@@ -140,11 +171,32 @@ def main(
             data = base64.urlsafe_b64encode(raw).decode().rstrip("=")
             got = _call(target, "space.put", {"space_id": a.rest[0], "name": a.name or path.name, "data": data}, env)
             emit(got, f"ok shared {a.name or path.name} (item {got['item_id']}, epoch {got['epoch']})")
+        elif a.cmd == "history":
+            data = _plain(_call(target, "space.history", {"space_id": a.rest[0], "name": a.rest[1]}, env))
+            lines = [
+                f"{v['created_ms']} {v['item_id']} {v['by']} from {v['author']} {v['size']} bytes"
+                + (f" (restored from {v['restored_from']})" if v.get("restored_from") else "")
+                for v in data["versions"]
+            ]
+            note = "\n(who wrote it is what the writing workspace says; data from another workspace)"
+            emit(data, ("\n".join(lines) or "no versions") + note)
+        elif a.cmd == "restore":
+            got = _call(target, "space.restore", {"space_id": a.rest[0], "item_id": a.rest[1]}, env)
+            emit(got, f"ok restored {_plain(got.get('name'))} as a new item {got['item_id']} (from {a.rest[1]})")
+        elif a.cmd == "agents":
+            if a.rest[1] not in ("on", "off"):
+                raise PubError("invalid.input", _USAGE, 2)
+            if a.rest[1] == "on" and not review_prompt(
+                f"{AGENTS_WARNING}\nTurn agents on in space {a.rest[0]}?\n", verb="continue"
+            ):
+                raise PubError("sign.cancelled", "not changed; agents stay off", 3)
+            got = _call(target, "space.agents", {"space_id": a.rest[0], "on": a.rest[1] == "on"}, env)
+            emit(got, "ok agents are " + ("ON: " + got["warning"] if got["agents"] else "off in this space"))
         elif a.cmd == "revoke":
             got = _call(target, "space.revoke", {"space_id": a.rest[0], "item_id": a.rest[1]}, env)
             emit(got, "ok revoked (what was already read stays read)")
         elif a.cmd == "share":
-            # always: look at the hub's verified member list, show it, and take the owner's typed word for it
+            # always: look at the hub's verified member list, show it, and have the owner confirm it on the terminal
             row = next(
                 (s for s in _call(target, "space.list", {}, env).get("spaces", []) if s["space_id"] == a.rest[0]), None
             )
@@ -155,13 +207,14 @@ def main(
                 raise PubError(
                     "invalid.input", "those are not the members the hub lists now; look again: orch space list", 5
                 )
-            if not _confirm(
+            if not review_prompt(
+                f"{SHARE_WARNING}\n"
                 f"Share files into space {a.rest[0]} (epoch {row['epoch']}) with exactly these workspaces:\n"
-                + "".join(f"  {m}\n" for m in members) + "Type 'share' to approve: ",
-                "share",
-            ):  # fmt: skip
-                raise PubError("invalid.input", "not approved; nothing changed", 5)
-            got = _call(target, "space.share", {"space_id": a.rest[0], "members": members}, env)
+                + "".join(f"  {m}\n" for m in members)
+                + "Agents stay off in this space until you turn them on: orch space agents SPACE on\n"
+            ):
+                raise PubError("sign.cancelled", "not approved; nothing changed", 3)
+            got = _call(target, "space.share", {"space_id": a.rest[0], "members": members, "understood": True}, env)
             emit(got, f"ok approved {len(got['members'])} members for space {a.rest[0]}")
         else:  # accept: always on the owner's terminal, never skippable
             if a.epoch is None or not a.members:
@@ -178,10 +231,9 @@ def main(
                 + "Compare the epoch and hashes with what the hub admin showed you: a workspace that is not a member\n"
                 "cannot see the space, so these come from the admin, not from the hub's signed record.\n"
                 "Everyone in the space can read what this workspace puts there, and the hub holds the key.\n"
-                "Type 'accept' to agree: "
             )
-            if not _confirm(prompt, "accept"):
-                raise PubError("invalid.input", "not accepted; nothing was sent", 5)
+            if not review_prompt(prompt):
+                raise PubError("sign.cancelled", "not accepted; nothing was sent", 3)
             got = _call(
                 target, "space.accept",
                 {"space_id": a.rest[0], "epoch": a.epoch, "prev_members": prev, "members": now_members}, env,

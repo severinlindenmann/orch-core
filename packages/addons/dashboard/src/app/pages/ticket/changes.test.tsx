@@ -42,7 +42,7 @@ describe('ticket: the changes the verdict signs', () => {
     expect(await screen.findByTestId('gate-notes', {}, T)).toHaveTextContent('Verdict: via the factory charter — no person reviewed this (charter signed by Severin, commit')
   })
 
-  it('with the code review on, the gates strip shows it after the verdict and the header offers it', async () => {
+  it('with the code review on, the next-step card offers it after the verdict', async () => {
     renderApp('/ticket/DEMO-0041', {
       setup: (s) => {
         s.appendWs(wsOf(s), { type: 'gate.policy_set', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'all' })
@@ -51,14 +51,13 @@ describe('ticket: the changes the verdict signs', () => {
         s.append('DEMO-0041', { type: 'gate.approved', actor: 'p_mara', gate: 'verify', source_sha: head })
       },
     })
-    expect(await screen.findByTestId('gate-code', {}, T)).toHaveAccessibleName('Code review: Waiting for your review')
-    expect(within(screen.getByTestId('ticket-header')).getByRole('button', { name: 'Approve code review' })).toBeInTheDocument()
+    expect(await within(await screen.findByTestId('next-step', {}, T)).findByRole('button', { name: 'Approve code review' })).toBeInTheDocument()
   })
 
   it('the verdict dialog signs the head it opened with: a push while it is open is refused as stale', async () => {
     const { user } = renderApp('/ticket/DEMO-0041')
-    const header = await screen.findByTestId('ticket-header', {}, T)
-    await user.click(within(header).getByRole('button', { name: 'Give verdict' }))
+    const card = await screen.findByTestId('next-step', {}, T)
+    await user.click(within(card).getByRole('button', { name: 'Give verdict' }))
     const dialog = await screen.findByRole('dialog', {}, T)
     await user.click(within(dialog).getByRole('radio', { name: /^Pass on c90e7a1/ }))
     mockStore.pushCommit('DEMO-0041')
@@ -72,7 +71,7 @@ describe('ticket: the changes the verdict signs', () => {
 // A real host reads one diff per person at a time and answers `quota.host` while busy (core #417): the tab says the
 // host is busy and tries again; only after a few tries does it stop, still saying "busy", with a Try again button.
 describe('ticket: Changes while the host is busy', () => {
-  const busy = () => new ApiError(503, { code: 'quota.host', message: 'busy', retryable: true, retry_after_ms: 20 })
+  const busy = () => new ApiError(503, { code: 'quota.host', message: 'busy', retryable: true, retry_after_ms: 400 })
 
   it('says "busy, trying again" and then shows the diff', async () => {
     const real = api.getChanges.bind(api)
@@ -81,7 +80,7 @@ describe('ticket: Changes while the host is busy', () => {
     try {
       const { user } = renderApp('/ticket/DEMO-0042')
       await user.click(await screen.findByRole('tab', { name: /Changes/ }, T))
-      expect(await screen.findByRole('status', {}, T)).toHaveTextContent('The host is busy reading other diffs; trying again')
+      expect(await screen.findByText(/The host is busy reading other diffs; trying again/, {}, T)).toBeInTheDocument()
       expect(await screen.findByLabelText('Diff', {}, T)).toBeInTheDocument()
       expect(screen.queryByText(/Could not load the diff/)).toBeNull()
       expect(calls).toBe(3)

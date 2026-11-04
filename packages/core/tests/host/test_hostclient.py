@@ -116,28 +116,50 @@ def test_every_non_human_op_renders_byte_identically_in_both_modes(tmp_path_fact
     assert any(c[0] == 0 for c in want) and any(c[0] != 0 for c in want)
 
 
+WORKSPACE_DEPENDENT = {
+    "describe/_all.txt", "describe/_all.json", "help/_all.txt", "help/_all.json",
+    "help/workflow.wait.txt", "help/workflow.wait.json",
+}  # fmt: skip
+
+
 def test_the_local_golden_paths_are_unchanged_with_the_workspace_registered(lab, monkeypatch):
     """The golden cases are help, describe, rendered error envelopes and parser errors: none of them is a request to
     the host. This only shows that those stay local and unchanged while the workspace is registered and served; the
     parity of everything that does reach the host is ``test_every_non_human_op_renders_byte_identically...``."""
+    import orch.ops as ops
     from tests.cli import conftest as cc
     from tests.cli import golden_cases
 
+    # every operation an add-on declares, from the registry: a hand-kept list missed some (follow_up.reschedule/.undo)
+    addon_ops = {op.name for op in ops.all() if op.addon is not None}
     served = hosted(lab)
+    # help and describe ask this host which add-ons are on (addon.list), one connection per call: the cases below make
+    # hundreds within a second, past the connection-rate bucket (20/s, burst 40). A refused call made help list every
+    # command, as if there were no workspace, so which cases were really compared against the host depended on timing.
+    served.h.host.limits.connection_rate = None
+    served.h.host.limits.attempts.clear()
     try:
         base = {"ORCH_WORKSPACE": str(lab.root), "ORCH_STATE_DIR": str(lab.state), "ORCH_HOST_RUN_DIR": str(lab.run)}
 
         def run_cli(*argv, env=None, **kw):
             return cc.run_cli(*argv, env={**base, **(env or {})}, **kw)
 
+        from orch.cli import main as cli_main
+
+        read = cli_main._addons_on
+        answers = []
+        monkeypatch.setattr(cli_main, "_addons_on", lambda *a: answers.append(read(*a)) or answers[-1])
         monkeypatch.setattr(golden_cases, "run_cli", run_cli)
         checked = 0
         for name, text in golden_cases.cases():
             if name == "errors/_not-implemented.txt":
                 continue  # binds a stub over a handler of this process: the host runs its own
+            if name in WORKSPACE_DEPENDENT or name.split("/")[-1].rsplit(".", 1)[0] in addon_ops:
+                continue  # help and describe list an add-on's commands only while it is on: this workspace has none on
             assert (cc.GOLDEN / name).read_text(encoding="utf-8") == text, name
             checked += 1
         assert checked > 200
+        assert answers and all(a == {} for a in answers)  # every help/describe read this workspace: none on, no refusal
     finally:
         served.close()
 
@@ -162,6 +184,34 @@ def test_mode_is_by_registration_and_a_dead_host_is_never_a_direct_write(lab):
     assert len(list((lab.ws.store_dir / "tickets").iterdir())) == n  # nothing written directly
     r = hcli(lab).j("show", "1")
     assert (r.code, r.err_code) == (9, "host.unavailable")
+
+
+def _listing(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*")) if root.exists() else []
+
+
+@pytest.mark.parametrize(("name", "value"), [("ORCH_TICKET", "DEMO-0001"), ("ORCH_WORKDIR", "/nowhere/.orch-work/X")])
+def test_w00_a_host_launched_agent_never_falls_back_to_direct_mode(lab, name, value):
+    """W00 (QA J18): an agent the host started, whose CLI finds no host for its workspace, stops with one plain reason;
+    it never opens the store itself (no fresh genesis pin, no empty view of the tickets)."""
+    cli = Cli(lab.ws, **{name: value})
+    before, store_before = _listing(lab.state), _listing(lab.ws.store_dir)
+    for argv in (("status",), ("list",), ("claim", "DEMO-0001")):
+        r = cli.j(*argv)
+        assert (r.code, r.err_code) == (9, "host.unavailable"), r.out
+        message = r.doc["error"]["message"]
+        assert message.startswith("cannot reach the orch host:"), message
+        assert "not registered" in message or "registry is missing" in message, message
+    assert _listing(lab.state) == before  # nothing was created: no pin, no records
+    assert _listing(lab.ws.store_dir) == store_before  # and the store was not opened for a write
+
+
+def test_w00_a_persons_terminal_keeps_direct_mode_and_an_empty_marker_still_refuses(lab):
+    assert Cli(lab.ws).j("status").code == 0  # neither variable: a person's terminal, direct mode as today
+    r = Cli(lab.ws, ORCH_TICKET="").j("status")  # set but empty is still the host's launch marker (Opus W00)
+    assert (r.code, r.err_code) == (9, "host.unavailable")
+    r = Cli(lab.ws, ORCH_TICKET="DEMO-0001").j("import", "v1", str(lab.ws.root))  # import.v1 is no way around it
+    assert r.err_code == "host.unavailable", r.out
 
 
 def _files():
@@ -249,7 +299,7 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
                 return owner.sig_pub
 
         monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: True)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: True)
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
         (keys / ops_human.KEY_FILE).write_text("{}")
@@ -259,13 +309,24 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
         n = Net()
         n.add("lint", "1.0.0")
         seed_market(files, n.entries)  # what `orch addon install` leaves
-        r = hcli(lab, grant=False).j("addon", "grant", "lint", "--staged", stage)
+        r = hcli(lab, grant=False).j(
+            "addon",
+            "grant",
+            "lint",
+            "--staged",
+            stage,
+            "--digest",
+            files.read_stage(stage)["digest"],
+            "--caps",
+            "network",
+        )
         assert r.code == 0, r.out
     finally:
         served.close()
 
 
 def test_a_person_command_runs_the_signer_composite_at_the_terminal(lab, monkeypatch, tmp_path):
+    real_prompt = ops_human.review_prompt
     served = hosted(lab)
     try:
         out = hcli(lab)
@@ -278,19 +339,31 @@ def test_a_person_command_runs_the_signer_composite_at_the_terminal(lab, monkeyp
 
         shown = []
         monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: shown.append((text, word)) or True)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: shown.append(text) or True)
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
         (keys / ops_human.KEY_FILE).write_text("{}")
         r = hcli(lab, grant=False).j("close", "1", "--resolution", "wont_do")
         assert r.code == 0, r.out
-        assert shown and shown[0][1].startswith("DEMO-0001/") and "close" in shown[0][0].lower()
+        assert shown and "DEMO-0001" in shown[0] and "close" in shown[0].lower()
         assert "ticket.closed" in hcli(lab, grant=False)("show", "1").out
         # declined: nothing is signed
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: False)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: False)
         out("new", "Second")
         r = hcli(lab, grant=False).j("close", "2")
-        assert (r.code, r.err_code) == (5, "invalid.input") and "nothing was signed" in r.doc["error"]["message"]
+        assert (r.code, r.err_code) == (3, "sign.cancelled") and "nothing was signed" in r.doc["error"]["message"]
+
+        # A real terminal refusal leaves the event log unchanged.
+        def missing_tty(flags):
+            raise OSError("no terminal")
+
+        monkeypatch.setattr(ops_human, "review_prompt", real_prompt)
+        monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
+        monkeypatch.setattr(ops_human, "open_tty", missing_tty)
+        before = lab.ws.read_events(lab.ws.uid("2"))
+        r = hcli(lab, grant=False).j("close", "2")
+        assert (r.code, r.err_code) == (3, "tty.required")
+        assert lab.ws.read_events(lab.ws.uid("2")) == before
         # an agent never gets there
         r = hcli(lab).j("close", "2")
         assert (r.code, r.err_code) == (3, "human_only")
@@ -310,6 +383,9 @@ def test_wait_is_one_request_parked_on_the_host_bus(lab):
         c = hcli(lab)
         c("new", "A")
         c("claim", "1")
+        r = c.j("wait", "--timeout", "30")  # run-10 J04: nothing a person can approve yet: refused at once
+        assert (r.code, r.err_code) == (5, "wait.incomplete") and "missing: context" in r.doc["error"]["message"]
+        c("ask", "Which?")  # something open for a person: the wait waits (else wait.incomplete)
         r = c.j("wait", "--timeout", "1")
         assert r.code == 0 and r.data["kind"] == "timeout"
         r = c.j("wait", "--timeout", "1", "--strict-timeout")
@@ -339,6 +415,7 @@ def _done_events(lab, key):
 
 
 def test_task_done_run_runs_the_command_here_and_sends_a_labelled_receipt(lab):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = hcli(lab)
@@ -361,6 +438,7 @@ def test_task_done_run_runs_the_command_here_and_sends_a_labelled_receipt(lab):
 
 
 def test_task_done_run_text_says_who_attests_and_a_failing_command_sends_nothing(lab):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = hcli(lab)
@@ -380,6 +458,7 @@ def test_task_done_run_text_says_who_attests_and_a_failing_command_sends_nothing
 
 
 def test_task_done_never_forwards_run_and_dry_run_runs_nothing(lab):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = hcli(lab)
@@ -412,6 +491,7 @@ def test_task_done_never_forwards_run_and_dry_run_runs_nothing(lab):
 
 
 def test_task_done_run_on_a_ticket_with_a_linked_repo_names_the_repo_and_its_commit(lab, monkeypatch):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     store = lab.ws.other()
     lab.ws.store = store
     try:
@@ -516,7 +596,7 @@ def test_a_lost_submit_is_sent_again_with_the_same_idem_and_a_grant_exists_once(
 
         shown, secrets = [], []
         monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: shown.append(word) or True)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: shown.append(text) or True)
         monkeypatch.setattr(ops_human, "show_secret", lambda text: secrets.append(text))
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
@@ -635,6 +715,7 @@ def test_a_host_answer_for_another_task_or_ticket_runs_nothing(lab, monkeypatch)
 
 
 def test_the_task_done_goes_to_the_ticket_the_command_was_read_from(lab, monkeypatch):
+    lab.ws.plan_gate_off()  # r10-P02: no plan approval in this test; it is about the receipt
     served = hosted(lab)
     try:
         c = _setup(lab)

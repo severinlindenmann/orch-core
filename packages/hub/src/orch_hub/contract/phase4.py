@@ -133,6 +133,12 @@ def render_text(s: str) -> str:
     return "".join(c if c == "\n" or _char_ok(c) else f"<U+{ord(c):04X}>" for c in s)
 
 
+def strip_text(s: str) -> str:
+    """Display-only text from another workspace's profile: controls, bidi, zero-width and other refused characters
+    are removed (render_text keeps showing them escaped for approvals; a profile is never signed, so it is cleaned)."""
+    return "".join(c for c in s if c != "\n" and _char_ok(c))
+
+
 def _re(rx: re.Pattern[str]) -> Any:
     return lambda x: type(x) is str and rx.fullmatch(x) is not None
 
@@ -248,6 +254,62 @@ def _visibility(x: Any) -> bool:
 _OPNAME = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?")
 _GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _DEVICE = re.compile(r"d_[0-9a-f]{32}")
+#: FB15 (§8.8b): the grammars of ``addon.requested`` (core's add-on name, semver and capability schemas)
+_ADDON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+#: names core refuses for an add-on (core schema common#/$defs/addonName not.enum); the vectors and
+#: tests/test_addon_reserved_names.py hold this list equal to core's file
+RESERVED_ADDON_NAMES = frozenset(
+    [
+        "ticket",
+        "status",
+        "visibility",
+        "people",
+        "policy",
+        "claim",
+        "followup",
+        "schedule",
+        "task",
+        "handoff",
+        "log",
+        "question",
+        "gate",
+        "verdict",
+        "branch",
+        "artifact",
+        "edit",
+        "projection",
+        "restore",
+        "workspace",
+        "member",
+        "role",
+        "device",
+        "settings",
+        "grant",
+        "addon",
+        "invalid",
+        "hub",
+        "relay",
+        "remote",
+    ]
+)
+_SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+_HANDOFF = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+CAPABILITIES = ("serve_http", "spawn_agent", "pty", "network", "git_push", "choose_model", "credential")
+RUNTIME_KINDS = ("python-requirements", "node-package-lock")
+
+
+def _runtime(x: Any) -> bool:
+    """``runtime`` exactly as the signed ``addon.granted`` holds it: the lockfile kind, its path, the package count."""
+    return (
+        type(x) is dict
+        and set(x) == {"kind", "lock", "packages"}
+        and x["kind"] in RUNTIME_KINDS
+        and _text(200)(x["lock"])
+        and type(x["packages"]) is int
+        and 1 <= x["packages"] <= 1000
+    )
+
+
 APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 POLICY_GATES = ("requirements", "plan", "verify", "code")
 SETTINGS_SET: dict[str, Any] = {
@@ -337,6 +399,7 @@ ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     # phase 5 (§8.8, C10 M6; owner V3-D29): grants, device exclusion, policy and settings
     "grant.requested": (
         {
+            "handoff": _re(re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")),
             "scope": _enum("all", "workable"),
             "verbs": lambda x: x == "agent" or _sorted_unique(_re(_OPNAME), 1, 32)(x),
             "hours": lambda x: type(x) is int and 1 <= x <= 168,
@@ -344,6 +407,16 @@ ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
         {"label": _text(200)},
     ),
     "grant.revoked": ({"grant": _re(_GRANT)}, {"reason": _text(500)}),
+    "addon.requested": (
+        {
+            "name": lambda x: _re(_ADDON_NAME)(x) and x not in RESERVED_ADDON_NAMES,
+            "version": _re(_SEMVER),
+            "package_sha256": _re(_HASH),
+            "capabilities": _sorted_unique(_enum(*CAPABILITIES), 0, len(CAPABILITIES)),
+            "handoff": _re(_HANDOFF),
+        },
+        {"runtime": _runtime},
+    ),
     "device.excluded": ({"device": _re(_DEVICE), "reason": _enum("lost", "retired", "compromised")}, {}),
     "policy.changed": ({"gates": lambda x: _gates(x)}, {}),
     "settings.changed": ({"set": lambda x: _settings(x)}, {}),
@@ -744,6 +817,26 @@ SHARE_CONTENT: dict[str, dict[str, Any]] = {
 }
 
 
+#: content keys a kind MAY carry besides the exact set (§10.2b): a ticket's description
+SHARE_OPTIONAL_CONTENT: dict[str, dict[str, Any]] = {"ticket": {"description": _text(4000, multiline=True)}}
+_GROUP_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+
+
+def check_audience(a: Any, item_kind: str) -> None:
+    """The optional ``audience`` of a ``share.item`` (§10.2b): exactly ``{users, groups}``, sorted unique hub user ids and
+    group names, at least one entry, only on a ticket item. It names who besides the owner alias may READ the item."""
+    if (
+        item_kind != "ticket" or type(a) is not dict or set(a) != {"users", "groups"}
+        or type(a["users"]) is not list or type(a["groups"]) is not list
+        or len(a["users"]) > 32 or len(a["groups"]) > 16 or not (a["users"] or a["groups"])
+        or not all(_hex16(u) for u in a["users"])
+        or not all(type(g) is str and _GROUP_NAME.fullmatch(g) is not None for g in a["groups"])
+        or "hub-admin" in a["groups"]  # N2: the hub admin group is never an audience (admins read nothing by role)
+        or a["users"] != sorted(set(a["users"])) or a["groups"] != sorted(set(a["groups"]))
+    ):  # fmt: skip
+        raise Refused("malformed")
+
+
 def _chain_head(x: Any) -> bool:
     return (
         type(x) is dict
@@ -843,7 +936,7 @@ def open_share_item(
         raise Refused("malformed") from None
     o = _envelope(signed, "share.item")
     _signature(signed, L["sig_share_item"], wsk_pub)
-    _fields({k: v for k, v in o.items() if k != "f1"}, "share.item")  # f1 is the one optional key (C3b addendum)
+    _fields({k: v for k, v in o.items() if k not in ("f1", "audience")}, "share.item")  # the optional keys
     if o["hub_id"] != hub_id:
         raise Refused("other_hub")
     if o["workspace_id"] != workspace_id:
@@ -852,8 +945,13 @@ def open_share_item(
         raise Refused("malformed")
     spec = SHARE_CONTENT[o["item_kind"]]
     c = o["content"]
-    if set(c) != set(spec) or not all(ok(c[k]) for k, ok in spec.items()):
+    optional = SHARE_OPTIONAL_CONTENT.get(o["item_kind"], {})
+    if not set(spec) <= set(c) <= set(spec) | set(optional) or not all(
+        ok(c[k]) for k, ok in {**spec, **{k: v for k, v in optional.items() if k in c}}.items()
+    ):
         raise Refused("malformed")
+    if "audience" in o:
+        check_audience(o["audience"], o["item_kind"])
     if "f1" in o:
         check_f1(o["f1"], o["chain"])
     _dev(o, dev_mode)
@@ -1261,6 +1359,8 @@ def build_selective(action: Any, item: Mapping[str, Any]) -> tuple[str, dict[str
 # --- §10.7 the ticket projection of a full-mode view (D15b) --------------------------------------------------------------
 
 VIEW_PROJ_KEYS = frozenset({"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"})
+#: R14b: optional ``waiting``: the gates the host's own needs rule says wait for a person now (sorted, distinct)
+VIEW_PROJ_WAITING = "waiting"
 
 
 def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: Any, ws_heads: list[str]) -> None:
@@ -1270,7 +1370,7 @@ def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: An
     if (
         log == "workspace"
         or type(proj) is not dict
-        or set(proj) != VIEW_PROJ_KEYS
+        or set(proj) - {VIEW_PROJ_WAITING} != VIEW_PROJ_KEYS
         or not _int0(proj["seq"])
         or not _hash(proj["head"])
         or not _int0(proj["ws_seq"])
@@ -1280,6 +1380,14 @@ def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: An
         or not _int0(proj["roster_v"])
         or type(proj["gates"]) is not dict
         or not all(k in F1_GATES and _f1_gate(k, v) for k, v in proj["gates"].items())
+        or (
+            VIEW_PROJ_WAITING in proj
+            and not (
+                type(proj[VIEW_PROJ_WAITING]) is list
+                and all(type(g) is str and g in F1_GATES for g in proj[VIEW_PROJ_WAITING])
+                and proj[VIEW_PROJ_WAITING] == sorted(set(proj[VIEW_PROJ_WAITING]))
+            )
+        )
     ):
         raise Refused("malformed")
     if proj["seq"] != seq or proj["head"] != head or type(line_ws_seq) is not int or proj["ws_seq"] < line_ws_seq:

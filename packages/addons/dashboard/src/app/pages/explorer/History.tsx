@@ -1,6 +1,7 @@
 // The history of one file (issue #491, decision 2): the commits that changed it, one commit's change, and the
 // difference between two versions. A commit that a ticket's own events name carries that ticket as a chip (decision 3).
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { explorerApi, explorerQueries, type Commit } from '@/api/explorer'
@@ -98,10 +99,9 @@ export function HistoryPanel({ ws, root, path, sha, onSha, onOpenVersion }: { ws
                 <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => onOpenVersion(c.sha)}>
                   Open the file as it was then
                 </Button>
-                <details className="text-[12px] text-text-muted">
-                  <summary className="cursor-pointer select-none">Technical details</summary>
+                <InfoDrawer>
                   <span className="break-all font-mono">{c.sha}</span>
-                </details>
+                </InfoDrawer>
               </div>
             )}
           </li>

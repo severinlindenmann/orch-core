@@ -61,6 +61,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         row: dict[str, Any] = {
             "name": name, "version": granted[name].version, "enabled": state == "active", "state": state,
         }  # fmt: skip
+        if state not in ("disabled", "purged"):
+            # the grant's own, for ``orch describe NAME.FIELD``
+            row["fields"] = {k: dict(v) for k, v in granted[name].fields.items()}
         if state == "active":
             row["capabilities"] = sorted(granted[name].capabilities)  # the grant's own, for a capability gate
         if pause is not None:
@@ -112,9 +115,10 @@ OP = operation(
                         "credential": STR,
                         "settings": obj({"title": {"type": ["string", "null"]}, "schema": {"type": "object"}}),
                         "capabilities": arr(STR),
+                        "fields": {"type": "object"},
                         "paused": obj({"code": STR, "cause": STR, "reconnect": STR}, optional=("reconnect",)),
                     },
-                    optional=("credential", "settings", "capabilities", "paused"),
+                    optional=("credential", "settings", "capabilities", "fields", "paused"),
                 )
             ),
         }

@@ -583,3 +583,9 @@ def test_a_termclient_with_its_own_send_deadline_is_not_wrapped_and_stop_still_e
     finally:
         ours.close()
         runner.close()
+
+
+def test_only_the_setup_page_may_probe_a_loopback_port(client):
+    """run-15 P01: the dashboard's own pages keep connect-src as before; only /setup adds http://127.0.0.1:*."""
+    assert "http://127.0.0.1:*" not in client.get("/").headers["content-security-policy"]
+    assert "http://127.0.0.1:*" in client.get("/setup").headers["content-security-policy"]

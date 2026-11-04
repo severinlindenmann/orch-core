@@ -9,6 +9,15 @@
 8 base_rev conflict
 9 retryable
 
+tty.required 3 retry:false
+sign.cancelled 3 retry:false
+followup.too_soon 3 retry:false
+followup.too_far 3 retry:false
+followup.bad_brief 3 retry:false
+followup.no_receiver 3 retry:false
+followup.too_many_hooks 3 retry:true
+followup.denied 3 retry:false
+schedule.denied 3 retry:false
 internal 1 retry:false
 not_implemented 1 retry:false
 usage 2 retry:false
@@ -22,7 +31,6 @@ custody.no_key 3 retry:false
 custody.wrong_passphrase 3 retry:false
 sign.convenience_readers 3 retry:false
 sign.convenience_unavailable 3 retry:false
-sign.hub_only 3 retry:false
 sign.key_exposed 3 retry:false
 relay.pair_open 3 retry:false
 relay.no_primary 3 retry:false
@@ -33,7 +41,7 @@ custody.no_batch 3 retry:false
 grant.required 3 retry:false
 grant.expired 3 retry:false
 grant.verb 3 retry:false
-quick.off 3 retry:false
+addon.off 3 retry:false
 role.denied 3 retry:false
 transition.refused 3 retry:false
 verify.unapproved 3 retry:false
@@ -50,6 +58,8 @@ host.busy 4 retry:false
 custody.unsafe_mode 3 retry:false
 host.unavailable 9 retry:true
 invalid.input 5 retry:false
+wait.incomplete 5 retry:false
+wait.build 5 retry:false
 ac.evidence_missing 5 retry:false
 verify.failed 5 retry:false
 observe.unavailable 5 retry:false
@@ -57,6 +67,8 @@ gate.stale 5 retry:false
 artifact.mismatch 5 retry:false
 gate.already_approved 5 retry:false
 source.missing 5 retry:false
+update.unverified 5 retry:false
+update.stale 5 retry:false
 parse.json 6 retry:false
 parse.text 6 retry:false
 wait.timeout 7 retry:true
@@ -65,6 +77,16 @@ conflict.field 8 retry:true
 quick.unlabelled 9 retry:true
 hub.refused 3 retry:false
 hub.proof_invalid 3 retry:false
+hub.link_inspected 3 retry:false
+hub.proxy_auth 3 retry:false
+hub.proxy_refused 3 retry:false
+hub.proxy_unreachable 9 retry:true
+remote.proof_invalid 3 retry:false
+remote.agents_risk 3 retry:false
+remote.needs_selective 3 retry:false
+remote.no_pending 3 retry:false
+remote.full 3 retry:false
+switch.refused 3 retry:false
 hub.already_joined 3 retry:false
 hub.not_joined 3 retry:false
 device.lockout 3 retry:false
@@ -75,6 +97,24 @@ passkey.stepup_required 3 retry:false
 retry.later 9 retry:true
 quota.unattended 9 retry:true
 members.stale 9 retry:true
+update.unreachable 9 retry:true
+update.no_record 2 retry:false
+update.downgrade 3 retry:false
+update.too_old 5 retry:false
+update.no_space 4 retry:false
+update.agents_running 4 retry:true
+update.rolled_back 5 retry:false
+update.after_commit 5 retry:false
+format.older 3 retry:false
+format.newer 3 retry:false
+format.missing 3 retry:false
+format.exists 3 retry:false
+update.interrupted 3 retry:false
+migrate.running 4 retry:true
+migrate.signed_path 3 retry:false
+migrate.backup_refused 3 retry:false
+migrate.actor_refused 3 retry:false
+migrate.step_failed 5 retry:false
 market.malformed 5 retry:false
 market.unpinned 5 retry:false
 market.bad_digest_format 5 retry:false
@@ -106,6 +146,7 @@ market.digest_mismatch 3 retry:false
 market.manifest_mismatch 3 retry:false
 market.lock_missing 5 retry:false
 market.lock_invalid 5 retry:false
+addon.stage_changed 3 retry:false
 market.staged_changed 3 retry:false
 market.env_failed 5 retry:false
 market.env_changed 3 retry:false
@@ -113,6 +154,7 @@ market.actor_refused 3 retry:false
 market.state_invalid 5 retry:false
 market.refresh_running 9 retry:true
 market.already_added 3 retry:false
+cosmetic.conflict 3 retry:false
 market.not_installed 3 retry:false
 market.ambiguous_addon 3 retry:false
 market.still_enabled 3 retry:false

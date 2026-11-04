@@ -2,8 +2,14 @@
 
 Status: **draft, 21 Oct 2026** (orch-core #714, #715-#720; orch-relay #81). Written from the Opus design check of
 21 Oct 2026 and the owner decisions of 19 Oct 2026. The pure rules (§3) are built in `orch/model/followups.py`; the
-engine, host, runner and relay parts are not wired yet. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
+engine, ops/CLI (`orch follow-up`), runner one-run grant slot and host runner (time triggers) are built (parts 1 and 2); event, webhook and add-on triggers and the skill are built (below); the relay inbox is not. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
 in the code.
+
+**Built (27 Oct 2026, #717/#719):** the event shape `{source, kind, ref, status, at}` (`model/followup_events.py`: orch kinds
+question.asked/answered, ticket.changed/closed, gate.approved/changes_requested, task.done; webhook hook.rang; add-on events `<addon>.<kind>` are built in #718: addon-api 1.2, the host polls only while a follow-up waits),
+`orch follow-up --on question.answered | ticket.changed:testing | webhook:<id>` (`--in/--at` is then the deadline), `orch webhook new`
+(a doorbell address, shown once; only `H(id)` is stored), the host receiver (`host/hooks.py`), the deadline fallback with `follow-up show`
+printing the reason before the brief, and the work-skill text (`orch help wait`). Laptop delivery through the relay is #1285.
 
 ## 1. What it is
 
@@ -23,7 +29,7 @@ only**. No new person-signed grant exists; the follow-up grant is derived by the
 | follow-up | `fu_<ULID>`, on one ticket, created by `followup.set` |
 | parent grant | the grant of the agent that appended `followup.set` (a person's grant or an earlier follow-up grant) |
 | root grant | the person-issued grant at the top of that chain of grants |
-| follow-up grant (G') | `fgr_<ULID>`, derived at `followup.fired`; never a `grant.issued` event |
+| follow-up grant (G') | `gr_<ULID>`, derived at `followup.fired`; never a `grant.issued` event |
 | chain | the follow-ups set on a ticket since the last person event on that ticket; a person event resets it |
 | hook | a webhook doorbell, `hk_` plus 128 random bits; only `H(id)` is stored anywhere (label `orch/v2/hook|`) |
 
@@ -46,7 +52,7 @@ only**. No new person-signed grant exists; the follow-up grant is derived by the
 | **FU11 A doorbell carries nothing** | A ring is (`H(hook id)`, the relay's receive time). The relay never reads past the headers, never stores or forwards a body or signature, and has no status field. A hook belongs to at most one pending follow-up at a time. A ring that finds nothing pending is dropped without a ledger write. | orch-relay `hooks` module; FU3 |
 | **FU12 Hook id secrecy** | The hook id is printed once to the agent. The ledger (`webhook.created {hook_hash, label, expires}`), the host state and the relay store only `H(id)`. A hook expires at most 14 days after creation, is revoked at the relay when its chain ends or a person revokes it, and may be re-bound by the next `followup.set` of the same chain. | `host/followups` hooks |
 | **FU13 Relay inbox auth** | Register, revoke and fetch are host requests signed with WSK for that workspace only (push/drop pattern). The public `POST /h/<id>` accepts only registered, unexpired hashes; answers 204 with the same body and timing for known and unknown ids; refuses a body over 64 KiB unread; rate-limits per hook, per source IP and per workspace; keeps one inbox row per hook (the first ring) and at most 256 rows per workspace. The id does not encode the workspace. | orch-relay `hooks` module |
-| **FU14 Every outcome is a fact with a closed reason** | Each state other than `pending` is `followup.outcome {outcome: ran, failed or did_not_run, reason, run?}` (H), `followup.cancelled {reason}` (P or A), or a model-derived cancel. Reasons come from the closed lists of §6; the UI shows only these. | `model/followups.REASONS`, `DERIVED_CANCEL_REASONS` |
+| **FU14 Every outcome is a fact with a closed reason** | Each state other than `pending` is `followup.outcome {outcome: ran, failed or did_not_run, reason, run?}` (H), `followup.cancelled {followup, reason}` (P or A), or a model-derived cancel. Reasons come from the closed lists of §6; the UI shows only these. | `model/followups.REASONS`, `DERIVED_CANCEL_REASONS` |
 | **FU15 Clocks** | `due` and `deadline` are UTC; the setter's CLI resolves `--at "+2d 09:00"` in local time once, at set time. The host fires by wall clock: every tick (60 s or less) it compares the wall-clock delta with the continuous clock (`CLOCK_BOOTTIME` / `mach_continuous_time`); a jump of more than 5 min without sleep is a clock change, is logged, nothing fires on that tick, and it shows on Schedules. After sleep, overdue follow-ups fire marked `late by ...`, at most 2 at once, in due order; past deadline + 24 h they get `did_not_run: no_host`. | `host/followups` timer |
 | **FU16 What the person signs is what runs** | Enabling Schedules goes through `addon_enable`, owner only. Its review states the delegated power in words with the numbers from the signed settings (text in §8). Nothing about follow-ups is signed per run. | `addon_enable` review lines (#737) |
 
@@ -61,10 +67,13 @@ the model. Actor classes: P person (signed), A agent or person, G agent with a g
 | `followup.set` | G | `{id, trigger, due?, deadline?, brief, hook?}` | creates a follow-up `pending` (or `needs_person` at the chain cap, FU7); replaces the pending one (`cancelled: replaced`); releases the setter's claim in the same event. The ticket stays `in_progress`: "waiting" is derived. Attested by the host like every G event; it carries **no** `secret_hash` and no signature. |
 | `followup.fired` | H | `{id, grant, trigger, fallback?, secret_hash, run}` | `pending` to `fired`; the engine derives G' with `derive_grant` (FU1) and stores it in `ws.grants`. |
 | `followup.outcome` | H | `{id, outcome, reason?, run?}` | `fired` to `ran`, `failed` or `did_not_run` (a `pending` one may become `did_not_run`, e.g. `no_host`). Ends G'. |
-| `followup.cancelled` | P or A | `{id, reason}` | `pending` or `needs_person` to `cancelled`. A person's Cancel or Run now is signed (Q6). |
-| `followup.rescheduled` | P | `{id, due?, deadline?}` | changes the times of a pending or `needs_person` follow-up within the same caps. |
+| `followup.cancelled` | P or A | `{followup, reason}` (`followup` is the follow-up ID; a person signs it: the follow-up's person or a manager, reason `person`) | `pending` or `needs_person` to `cancelled`. A person's Cancel or Run now is signed (Q6). |
+| `followup.restored` | P | `{followup}` | Undo a person cancellation by its canceller within 120 seconds and at or before the effective deadline; no other live or newer-set follow-up. Restore the pre-cancel state; derived cancellation still applies. |
+| `followup.rescheduled` | P | `{followup, due?, deadline?}` | Moves pending times within set caps (person or manager); only its own person resumes `needs_person` to pending and resets the chain. Time triggers require due and retain max(old deadline, due) when deadline is omitted; event triggers require deadline and forbid due. |
 | `webhook.created` | G | `{hook_hash, label, expires}` | records a hook; the id is shown once. |
 | `webhook.revoked` | P or A | `{hook_hash}` | ends a hook. |
+
+The four implemented events use `followup` for the payload follow-up ID (`fu_<ULID>`); the envelope `id` remains a unique event ULID. The `hook` field is not implemented.
 
 A model-derived cancel writes no event; the engine derives it on replay with `derived_cancel_reason`.
 
@@ -134,8 +143,8 @@ cancels its follow-ups."
 |---|---|---|
 | Q1 | Chain ceiling | **decided:** progress counts only tasks that existed at chain start; a chain also ends after 30 days or 10 follow-ups (`FU_CHAIN_CEILING_DAYS`, `FU_CHAIN_CEILING_COUNT`) |
 | Q2 | How long a follow-up session may run | **decided:** the parent grant's length, at most 8 h (`FU_RUN_HOURS`) |
-| Q3 | Webhooks on a VPS | relay inbox in v1; direct receive later |
-| Q4 | Optional HMAC | drop in v1 (the relay drops the body) |
+| Q3 | Webhooks on a VPS | relay inbox later (#1285); **built (#717):** direct receive on the host, `orch host run --hook-listen HOST:PORT --hook-url URL` |
+| Q4 | Optional HMAC | **built (#717), direct receive only:** GitHub `X-Hub-Signature-256`, secret kept in `<state>/hosts/hook-secrets.json` by `orch host hook-secret <id>`; the body is read (64 KiB) only to verify, then dropped |
 | Q5 | Budgets | **decided:** 20 pending per workspace, 24 runs a day, 2 at once (`FU_PENDING_MAX`, `FU_RUNS_PER_DAY`, `FU_CONCURRENT_RUNS`) |
 | Q6 | Cancel and Reschedule by a person are signed events | yes |
 | Q7 | Another session claims the waiting ticket | **decided:** cancel ("someone picked the ticket up") |
@@ -154,3 +163,12 @@ cancels its follow-ups."
   follow-up early.
 * **Laptop asleep or clock changes?** FU15. A wrong host clock can fire a follow-up early, no worse than an early
   ring; the model checks FU8 only for consistency.
+
+## Real-host end to end, and the dev shortcuts (26 Oct 2026)
+
+`packages/core/tests/host/test_followups_real_host.py` (slow, about 5 minutes) drives a real dev-sandbox host and a real
+foreground runner with a fake harness: set, fire, brief read through the one-run grant (never argv), outcome `ran`, cancel,
+host restart across the due time (fires late), a chained follow-up, the add-on turned off. Only a dev sandbox workspace (signed
+genesis prefix `SBX`, never a real one) gets the shortcuts that make it fast: a 30 s minimum lead instead of FU5's hour, no
+early-fire tolerance (FU8's 5 minutes), and a 2 s timer tick instead of 30 s. A follow-up run needs the `schedules` add-on and
+an enabled runner, not the `start-agent` add-on.

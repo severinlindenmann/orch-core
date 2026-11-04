@@ -86,3 +86,26 @@ def test_a_publisher_key_seen_for_the_first_time_is_widened():
 
 def test_an_old_package_that_cannot_be_read_counts_as_widened():
     assert d(None, m(version="1.0.1"))["widened"] is True
+
+
+EVENT = {
+    "kind": "run.finished", "title": "Run finished", "statuses": ["succeeded", "failed"],
+    "ref": {"format": "int"}, "poll": {"interval_s": 300},
+}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"poll": {"interval_s": 60}},  # polls five times as often (more cost on the person's key)
+        {"statuses": ["succeeded", "failed", "cancelled"]},  # a status it did not report before
+        {"statuses": ["succeeded"]},
+        {"title": "Deploy finished"},
+    ],
+)
+def test_an_update_that_only_changes_an_events_interval_or_statuses_is_widened_and_needs_a_new_review(change):
+    old = m(api=">=1.2,<2", events=[EVENT])
+    got = d(old, m(api=">=1.2,<2", version="1.0.1", events=[{**EVENT, **change}]))
+    assert got["widened"] is True and "events changed" in got["changes"]
+    same = d(old, m(api=">=1.2,<2", version="1.0.1", events=[EVENT]))
+    assert same["widened"] is False and "events changed" not in same["changes"]

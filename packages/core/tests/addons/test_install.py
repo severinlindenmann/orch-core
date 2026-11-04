@@ -77,7 +77,8 @@ def test_the_owner_grants_a_package_and_the_event_carries_digest_capabilities_an
     assert a.enabled and not a.purged and a.package_sha256 == pkg.digest
     assert hws.provider.shown and "echo" in hws.provider.shown[-1]  # the signing prompt names the grant
     lst = me("addon", "list", "--json").doc["data"]["addons"]
-    assert lst == [
+    assert lst[0]["fields"] == e["fields"]  # the grant's own fields (``orch describe echo.FIELD`` reads them)
+    assert [{k: v for k, v in row.items() if k != "fields"} for row in lst] == [
         {"name": "echo", "version": "1.0.0", "enabled": True, "state": "active", "capabilities": ["serve_http"]}
     ]
 
@@ -198,7 +199,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
     installed_package(hws, man=man)
     assert me("addon", "grant", "echo").code == 0
     text = hws.reviews[-1]
-    assert hws.expects[-1] == "echo"  # the owner types the addon's name
+    assert "echo" in hws.reviews[-1]
     pkg_digest = read_package(hws.store_dir / "addons" / "echo").digest
     for needle in (
         "addon echo 1.0.0",
@@ -311,33 +312,13 @@ def test_list_says_the_state_and_what_to_do_about_a_changed_package(hws, me):
     me("addon", "grant", "echo")
     (d / "addon.py").write_text("# other\n")
     r = me("addon", "list", "--json")
-    assert r.doc["data"]["addons"] == [{"name": "echo", "version": "1.0.0", "enabled": False, "state": "changed"}]
+    (row,) = r.doc["data"]["addons"]
+    assert {k: v for k, v in row.items() if k != "fields"} == {
+        "name": "echo", "version": "1.0.0", "enabled": False, "state": "changed",
+    }  # fmt: skip
     assert "changed since the grant: orch addon grant echo" in me("addon", "list").out
     me("addon", "purge", "echo")
     assert me("addon", "list", "--json").doc["data"]["addons"][0]["state"] == "purged"
-
-
-def test_the_typed_word_of_a_workspace_event_is_the_name_it_signs(monkeypatch):
-    """A2: the caller cannot choose the word; a workspace event without a name is refused before any prompt."""
-    import types
-
-    import pytest
-
-    from orch.ops import human as human_mod
-    from orch.ops.errors import OrchError
-    from orch.ops.human import Human
-
-    asked = []
-    monkeypatch.setattr(human_mod, "review_prompt", lambda text, word: asked.append(word) or True)
-    h = Human.__new__(Human)
-    h.ctx = types.SimpleNamespace(dry_run=False, prepare=None)
-    h.precheck = lambda event, log: None
-    h._sign_and_append = lambda *a: "done"
-    assert h.run({"type": "addon.granted", "name": "echo"}, "workspace", "x", review=["r"]) == "done"
-    assert asked == ["echo"]
-    with pytest.raises(OrchError) as e:
-        h.run({"type": "member.removed", "person": "p_x"}, "workspace", "x", review=["r"])
-    assert e.value.code == "invalid.input" and asked == ["echo"]
 
 
 def test_a_builtin_addon_never_installed_is_put_in_place_by_its_grant(hws, me):
@@ -416,3 +397,17 @@ def test_preview_is_read_only_and_equals_the_grant_that_follows(hws, me):
     assert read_package(d).digest == before.doc["data"]["grant"]["package_sha256"]
     missing = me("addon", "preview", "nope", "--json")
     assert missing.code != 0 and missing.doc["error"]["code"] == "not_found"
+
+
+def test_grant_event_capabilities_are_sorted_and_unique_whatever_the_manifest_order(monkeypatch):
+    """FB15 B1: the hub's terms are sorted and unique, so the grant the host builds is too."""
+    from orch.addons import install
+
+    class M:
+        name, version, capabilities, runtime = "x", "1.0.0", ["pty", "network", "pty", "git_push"], None
+
+    class P:
+        digest = "sha256:" + "a" * 64
+
+    monkeypatch.setattr(install, "declarations", lambda m: {"fields": {}, "sections": [], "artifact_kinds": []})
+    assert install.grant_event(M(), P())["capabilities"] == ["git_push", "network", "pty"]

@@ -58,10 +58,13 @@ def test_a_marketplace_install_between_dev_stage_and_submit_wins(tmp_path, monke
         commit_files(repo, {"extra.txt": b"dev change\n"}, "dev")
         st = ok(person(served, "market.dev_stage", {"path": str(repo)}))["data"]
         h = Human(served)
-        prepared = h.prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
+        prepared = h.prepare(
+            "addon.grant",
+            {"name": NAME, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+        )
         install(served, Human(served), NAME)  # now installed from the marketplace
         res = h.submit_res(prepared["request"]["id"], h.sign(prepared).events)
-        assert err(res) in ("market.origin_changed", "market.staged_changed")
+        assert err(res) in ("market.origin_changed", "addon.stage_changed")
         rec = mfiles(served).installs()["addons"][NAME]
         assert rec["origin"] == URL  # the install record is untouched by the dev stage
     finally:
@@ -77,7 +80,10 @@ def test_after_a_dev_grant_a_marketplace_install_is_a_normal_install_and_dev_byt
         commit_files(repo, {"extra.txt": b"dev change\n"}, "dev")
         st = ok(person(served, "market.dev_stage", {"path": str(repo)}))["data"]
         h = Human(served)
-        prepared = h.prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
+        prepared = h.prepare(
+            "addon.grant",
+            {"name": NAME, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+        )
         ok(h.submit_res(prepared["request"]["id"], h.sign(prepared).events))
         assert mfiles(served).installs()["addons"] == {}
         # a plain grant of the dev bytes stays refused (C1)

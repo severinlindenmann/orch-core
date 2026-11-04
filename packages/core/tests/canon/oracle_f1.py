@@ -702,7 +702,7 @@ INDEX: dict[str, str] = {
     "restore.json": "workspace restore carries effective revocations atomically (5.10); re-signed structural "
     "refusals; host self-revocation",
     "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "
-    "refusal order (5.11)",
+    "refusal order (5.11); settings scenarios: repo refusals and the accepted-and-ignored set.sign_methods",
     "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",
     "status.json": "the 5.9 status table, done is sticky, reopen, a new sha under a case-variant remote",
     "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",

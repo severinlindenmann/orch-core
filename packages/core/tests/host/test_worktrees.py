@@ -274,7 +274,7 @@ def test_a_dirty_worktree_blocks_the_decision_while_the_declared_copy_is_clean(w
 def test_re_registration_between_prepare_and_binding_invalidates_the_request(w):
     ok(create(w))
     name, args = decision(w)
-    prepared = w.human.prepare(name, args, handoff=True)
+    prepared = w.human.prepare_unbound(name, args)
     rid = prepared["request"]["id"]
     ok(remove(w))
     ok(create(w))  # the same path, a new generation
@@ -285,7 +285,7 @@ def test_re_registration_between_prepare_and_binding_invalidates_the_request(w):
 def test_a_removed_worktree_never_falls_back_to_the_declared_copy(w):
     ok(create(w))
     name, args = decision(w)
-    prepared = w.human.prepare(name, args, handoff=True)
+    prepared = w.human.prepare_unbound(name, args)
     ok(remove(w))
     res = w.human.c.req("human.get", {"request_id": prepared["request"]["id"], "signer": w.human.signer})
     assert err(res) == "observe.unavailable"
@@ -321,7 +321,7 @@ def test_a_bound_request_rechecks_the_copy_binding_inside_the_tree_check_window(
     and the next signer-bearing get is observe.unavailable."""
     ok(create(w))
     name, args = decision(w)
-    prepared = w.human.prepare(name, args, handoff=True)
+    prepared = w.human.prepare_unbound(name, args)
     rid = prepared["request"]["id"]
     ok(w.human.c.req("human.get", {"request_id": rid, "signer": w.human.signer}))  # bound, trees just checked
     ok(remove(w))
@@ -336,7 +336,7 @@ def test_a_relink_after_prepare_is_observe_unavailable_at_binding(w, bound_first
     the worktree itself is unchanged (generation and pin still match)."""
     ok(create(w))
     name, args = decision(w)
-    prepared = w.human.prepare(name, args, handoff=True)
+    prepared = w.human.prepare_unbound(name, args)
     rid = prepared["request"]["id"]
     if bound_first:
         ok(w.human.c.req("human.get", {"request_id": rid, "signer": w.human.signer}))

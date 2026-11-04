@@ -1,4 +1,5 @@
 import { QueryClientContext } from '@tanstack/react-query'
+import { PUBLIC_ACCESS_LINE } from '@/app/pages/shares/reviewFacts'
 import { ShieldAlert } from 'lucide-react'
 import { useContext, useState, type ReactNode } from 'react'
 import type { Workspace } from '@/api/types'
@@ -219,7 +220,10 @@ function QuickSigned({ typed, also, members, notes = [] }: { typed: QuickTyped; 
   </>
 }
 
-export function SignContent({ content, ws, technical, compact = false, quick }: { content: Content; ws?: string; technical?: ReactNode; compact?: boolean; /** A quick task: the typed values, for the folded "Also signed" view. */ quick?: QuickTyped }) {
+/** The host's own share summary (signcontent.py _share_summary): only then are the ids folded; the client's action never decides. */
+const HOST_SHARE_SUMMARY = 'Share these files'
+
+export function SignContent({ content, ws, technical, compact = false, quick, workspaceLine, foldIds = false }: { content: Content; /** Only the signed id and the workspace lines fold under "What you sign" (display; the content is unchanged). The capability line is not folded. */ foldIds?: boolean; ws?: string; technical?: ReactNode; /** The workspace line, kept one click away inside this review's own fold (hub join) instead of a second fold of its own. */ workspaceLine?: ReactNode; compact?: boolean; /** A quick task: the typed values, for the folded "Also signed" view. */ quick?: QuickTyped }) {
   const members = useWorkspaceMembers(ws)
   // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
   const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]
@@ -234,7 +238,9 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
   const otherSections = content.sections?.filter(s => CORE_SECTIONS.includes(s.id)).map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)
   const acceptanceEl = !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'How we know it is done' : 'Acceptance criteria'}</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>
   const tasksEl = !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'Steps' : 'Plan tasks'}</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>
+  const fields = !also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? (content.fields_changed.every(f => f.before == null) ? 'Signed values' : 'Changed fields')}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>
   const rest = <>
+    {content.fields_inline && fields}
 
     {gate ? <GateText sections={gateSections} approving={/^Approve /.test(content.headline ?? '')} acceptance={acceptanceEl} tasks={tasksEl} others={otherSections} /> : null}
     {!gate && !also && content.sections?.map(s => <section key={s.id} aria-label={s.title}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
@@ -251,29 +257,34 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
     </section>}
     <div className="space-y-2 border-t border-border pt-4 empty:hidden">{[...(also ? [] : content.notes ?? []).filter(n => n !== summary?.risk), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i} className="text-[13px] leading-relaxed text-text-muted"><Prose inline>{note}</Prose></p>)}</div>
     {(content.ticket || ids.length > 0 || technical || content.fields_changed?.length || summary) && <details className="space-y-3 text-[12px] text-text-muted">
-      <summary className="cursor-pointer">Technical details</summary>
+      <summary className="cursor-pointer">{workspaceLine && !summary ? 'Details' : 'Technical details'}</summary>
+      {!summary && workspaceLine}
       {also && quick && <QuickSigned typed={quick} also={also} members={members} notes={content.notes ?? []} />}
       {content.ticket && <div>
         {<p><Raw>{content.ticket.key}</Raw> <span className="text-text-muted">(key per host)</span> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
         {content.ticket.title && <Value>{content.ticket.title}</Value>}
         {content.ticket.key_note && <p><Value>{content.ticket.key_note}</Value></p>}
       </div>}
-    {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? (content.fields_changed.every(f => f.before == null) ? 'Signed values' : 'Changed fields')}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
+      {!content.fields_inline && fields}
+
       {ids.map(id => <p key={id}><Person parts={personLabel(id, members)!} /> = <Raw>{id}</Raw></p>)}
       {technical}
     </details>}
   </>
   const parts = compact ? compactAnswer(content) : null
   const choice = parts?.choice.after
+  // foldIds: only for the host's share summary; every other review keeps every line in the main view
+  const foldTheIds = foldIds && summary?.title === HOST_SHARE_SUMMARY
   const facts = summary?.lines ?? []
   return <div data-testid={parts ? 'sign-compact' : undefined} className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
     {choice && <p data-testid="sign-choice">Your answer will be <Inline>{choice}</Inline>.</p>}
-    {facts.length > 0 && <section data-testid="sign-summary"><ul className="space-y-1.5">{facts.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul></section>}
-    {summary && content.ticket && <p data-testid="sign-ticket"><Raw>{content.ticket.key}</Raw> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
-    {summary?.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
+    {facts.length > 0 && <section data-testid="sign-summary"><ul className="space-y-1.5">{facts.map((line, i) => <li key={i}>{PUBLIC_ACCESS_LINE.test(line) ? <span role="note" className="text-warning"><Inline>{line}</Inline></span> : <Inline>{line}</Inline>}</li>)}</ul></section>}
+    {summary && content.ticket && !foldTheIds && <p data-testid="sign-ticket"><Raw>{content.ticket.key}</Raw> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
+    {summary?.risk && <p role="note" data-testid="sign-risk" className={`flex items-start gap-2 rounded-md border border-warning/50 border-l-[3px] border-l-risk-bar bg-warning-soft px-3 py-2 font-medium ${PUBLIC_ACCESS_LINE.test(summary.risk) ? 'text-warning' : 'text-text'}`}><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
     {!summary ? <div data-testid="sign-exact" className="min-w-0 space-y-5">{rest}</div> : <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
-      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Show exactly what is signed</summary>
+      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">What you sign</summary>
       <div className="mt-2 min-w-0 space-y-5">
+        {workspaceLine}
         {rest}
       </div>
     </details>}

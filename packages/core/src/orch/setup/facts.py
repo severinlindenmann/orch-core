@@ -64,7 +64,7 @@ DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees", "quick"})
 DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "wiki", "focus"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "wiki", "focus", "schedules"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -84,10 +84,15 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
             True,
             False,
         ),
-        "terminals": ("Terminals", "Open a terminal on this computer from the dashboard. It runs as you.", True, True),
+        "terminals": (
+            "Command window",
+            "Open a window on this computer where you type commands. It runs as you.",
+            True,
+            True,
+        ),
         "worktrees": (
-            "Worktrees",
-            "Each ticket gets its own copy of your project folder, so agents do not overwrite each other.",
+            "Own copy per ticket",
+            "Each ticket gets its own copy of your project so agents do not overwrite each other.",
             True,
             False,
         ),
@@ -124,7 +129,13 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         ),
         "quick": (
             "Quick tasks",
-            "Small one-off tasks that skip the usual steps. Off: nobody (you, the CLI or agents) can make new ones.",
+            "Small one-off tasks without the usual steps. Off: nobody can make new ones.",
+            False,
+            False,
+        ),
+        "schedules": (
+            "Schedules",
+            "Let agents schedule a fresh session on their ticket when work must wait more than an hour.",
             False,
             False,
         ),
@@ -157,9 +168,10 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
 
 
 def suggest(env: dict[str, str], directory: Path) -> dict[str, str]:
-    """Defaults to start from (the user changes them): a workspace named "Personal Workspace", prefix PW. The person's
+    """Defaults to start from (the user changes them): a workspace named "My workspace", prefix MW, until a person
+    name is known (the dashboard then offers "<name>'s workspace"). The person's
     name is left empty: a login name is rarely how a person wants to be called (B11 finding 19)."""
-    return {"name": "", "workspace_name": "Personal Workspace", "prefix": "PW"}
+    return {"name": "", "workspace_name": "My workspace", "prefix": "MW"}
 
 
 def _inside(child: Path, parent: Path) -> bool:
@@ -242,8 +254,6 @@ class Facts:
     #: a runner grant whose deposit was confirmed (see the runner's own record)
     runner_deposit_confirmed: bool = False
     convenience: bool = False
-    #: the workspace's explicit ``sign_methods`` (``None``: never set, click allowed)
-    sign_methods: tuple[str, ...] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -273,7 +283,6 @@ def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confi
                 terminals_enabled=bool(runner.get("terminals")),
                 runner_deposit_confirmed=deposit_confirmed,
                 convenience=convenience,
-                sign_methods=None if settings.get("sign_methods") is None else tuple(settings["sign_methods"]),
             )
     except SetupError:
         raise
@@ -289,6 +298,7 @@ LABELS = {
     "runner_grant_retry": "Agent access for this computer's runner (the earlier hand-over was not confirmed)",
     "custody": "One-click approval on this computer",
     "records": "Records history on this computer",
+    "trust": "Claude Code trusts this folder",
 }
 
 
@@ -334,12 +344,7 @@ def missing_items(facts: Facts, profile: dict[str, Any], info: dict[str, AddonIn
     wants_runner = any(info[a].needs_runner or info[a].needs_terminals for a in profile["addons"])
     if wants_runner and not facts.runner_enabled:
         out.append("runner")
-    click_excluded = (
-        profile["method"] == "click" and facts.sign_methods is not None and "click" not in facts.sign_methods
-    )
-    # M1: converting the key to one-click on a workspace whose explicit sign_methods leave click out would make the host
-    # refuse every signature; the settings item adds click first
-    if (not facts.grant_hours_set and profile["agent_hours"] != 8) or click_excluded:
+    if not facts.grant_hours_set and profile["agent_hours"] != 8:
         out.append("settings")
     if profile["agent_grant"]:
         if not facts.grant_issued:

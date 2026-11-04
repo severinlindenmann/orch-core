@@ -21,25 +21,19 @@ The host never prompts and holds no device key (D-P2-15). A person op is prepare
 * **pending** lists the caller's requests (or the one named by ``request_id``), each with ``error: {code}`` after a
   refused submit (the catalog code only).
 
-Hand-off (H5b, F5): a request prepared with ``handoff:true`` gets a code, ``XXXX-XXXX`` in Crockford base32 (40 bits
-from a CSPRNG, unique among this workspace's stored requests). The code **names** the request and authorises nothing:
-``human.pending {code}`` finds it only for the same principal and person, in this workspace, while it is pending
-(``prepared`` or ``bound``); a terminal request's code no longer resolves and is never issued again while the request is
-kept. Failed code lookups are limited to 5 per minute **per connection** (``rate.limited``), so one connection's
-failures never lock out another. ``human.get`` with ``signer`` binds the request to one device, once
-(:mod:`orch.host.handoff` is ``orch sign CODE``).
+Unbound requests are reserved for hub-mediated operations: ``human.prepare {handoff: true}`` (no signer) stores one only
+for :data:`HUB_HANDOFF_OPS` (the add-on grant the hub answers, FB15); every other request is bound at prepare (a dry
+run stores nothing either way). No terminal code is issued.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import logging
 import os
-import secrets
 import time
-import weakref
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -47,7 +41,7 @@ from jsonschema import Draft202012Validator
 from orch import canon
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
-from . import convenience, hubproof, hubsign, marketinstall, review
+from . import convenience, hubproof, marketinstall, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -83,7 +77,6 @@ PHASES = {
     "human.cancel": "read",
     "human.pending": "read",
 }
-_CODE = {"type": "string", "pattern": r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$"}
 
 _DEVICE = {"type": "string", "pattern": r"^d_[0-9a-f]{32}$"}
 _SIGNER = {
@@ -100,6 +93,7 @@ _SCHEMAS = {
             "op": {"type": "string", "minLength": 1, "maxLength": 64},
             "args": {"type": "object"},
             "signer": _SIGNER,
+            # FB15: true (without signer) stores an unbound request for HUB_HANDOFF_OPS only (_check_binding)
             "handoff": {"type": "boolean"},
             "sequence": {"type": "object"},
         },
@@ -129,7 +123,7 @@ _SCHEMAS = {
     },
     "human.pending": {
         "type": "object",
-        "properties": {"code": _CODE, "request_id": _REQ},
+        "properties": {"request_id": _REQ},
         "maxProperties": 1,
         "additionalProperties": False,
     },
@@ -137,17 +131,6 @@ _SCHEMAS = {
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 _GATE_TYPES = {"gate.approved", "gate.changes_requested", "verdict.given"}
 _HASH = r"sha256:[0-9a-f]{64}"
-#: Crockford base32 (no I, L, O, U): 8 characters are 40 bits
-CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-#: failed ``human.pending {code}`` lookups allowed per connection per window (F5)
-LOOKUP_FAILURES = 5
-LOOKUP_WINDOW = 60.0
-
-
-def new_code() -> str:
-    """A hand-off code: 8 Crockford base32 characters from a CSPRNG (40 bits), shown as ``XXXX-XXXX``."""
-    s = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
-    return f"{s[:4]}-{s[4:]}"
 
 
 def _iso(epoch: float) -> str:
@@ -269,6 +252,26 @@ def _person_operation(name: str) -> Any:
 #: the first line of a dry run's result in both modes (``orch.ops.runtime.Call.result``)
 DRY_RUN_NOTE = "dry-run: nothing was written"
 
+#: FB15: the only ops ``human.prepare {handoff: true}`` stores, unbound, for the hub to answer (``hub_handoff``)
+HUB_HANDOFF_OPS = frozenset({"addon.grant"})
+
+
+def _check_binding(name: str, signer: Any, handoff: bool, dry_run: bool) -> None:
+    """``human.prepare`` takes ``signer`` (bound at prepare), or ``handoff: true`` without a signer for a hub hand-off
+    op only (:data:`HUB_HANDOFF_OPS`): every other request is bound at prepare. A dry run binds and stores nothing: it
+    may take neither (the dashboard's folder check), or a hand-off of any op, never both."""
+    if handoff and signer is not None:
+        raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
+    if dry_run:
+        return
+    if handoff and name not in HUB_HANDOFF_OPS:
+        raise HostError(
+            "invalid.input",
+            f"human.prepare: handoff:true is for the hub's add-on grant only, not {name}; prepare it with a signer",
+        )
+    if not handoff and signer is None:
+        raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
+
 
 class HumanOps:
     """``human.*`` of one request, on the workspace worker thread (the dispatcher calls :meth:`serve`)."""
@@ -277,9 +280,6 @@ class HumanOps:
 
     def __init__(self, backend: Any) -> None:
         self.backend = backend  # the RegistryBackend: its context, file and state helpers
-        #: per connection (the transport's Session): the times of its failed code lookups in the last window (F5).
-        #: Only the workspace worker thread touches it; a closed connection's entry goes with its session.
-        self._lookups: weakref.WeakKeyDictionary[Any, deque[float]] = weakref.WeakKeyDictionary()
 
     def serve(self, call: Call, redactor: Redactor) -> dict[str, Any]:
         op = call.frame["op"]
@@ -316,9 +316,7 @@ class HumanOps:
 
         if types is None or name in NOT_SERVED:
             raise HostError("op.not_allowed", f"{name} is not an op a person runs through human.prepare")
-        signer, handoff = args.get("signer"), bool(args.get("handoff", False))
-        if handoff == (signer is not None):
-            raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
+        _check_binding(name, args.get("signer"), bool(args.get("handoff", False)), dry_run)
         self.backend._state(service, True)  # the request prepares a write
         intent: Any = None
         idem = (call.frame.get("opts") or {}).get("idem")
@@ -441,15 +439,43 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        capture.hub_handoff = name in HUB_HANDOFF_OPS and handoff and signer is None  # FB15
         capture.market_files = marketinstall.files_of(service)
         if args.get("sequence") is not None and name == "artifact.add":
             self._check_pasted_image(inner, files)
         meta = self._sequence(call, name, inner, args, person, store, dry_run)
         capture.sequence = meta
+        if meta and meta.get("intent", {}).get("staged") and name == "settings.set":
+            from . import marketops
+
+            doc = capture.market_files.read_stage(meta["intent"]["staged"])
+            capture.market = {
+                "url": doc.get("origin") or "local folder",
+                "class": doc["class"],
+                "commit": doc["commit"],
+                "source_note": marketinstall.SOURCE_NOTE,
+                "publisher": {
+                    "fingerprint": marketops.fingerprint(doc["publisher_key"]) if doc["publisher_key"] else None,
+                    "tofu": doc["tofu"],
+                },
+                "index_version": doc.get("index_version", 0),
+                "stale": bool(doc.get("stale")),
+                "summary": doc.get("summary"),
+                "replaces": doc.get("prev_digest"),
+            }
+            capture.deps = doc.get("deps")
         if name == "publish.share":  # P5: the staged copy's own words (the args name only the staged id)
             from . import publishing
 
             capture.publish = publishing.facts_for(service, inner, call)
+        if name == "app.release":  # #1457: the staged release's own words (the args name only the staged id)
+            from . import appops
+
+            capture.app = appops.facts_for(service, inner, call)
+        if name in ("remote.set", "remote.device_confirm"):  # R2: the host's own facts, never the request's
+            from . import remotefacts
+
+            capture.remote = remotefacts.facts_for(service, inner.get("pending"))
         if name in ("hub.join", "hub.mode"):  # V3 C2a: the host's clock and dev state, never the request's
             from . import hubops
 
@@ -457,8 +483,6 @@ class HumanOps:
             convenience.refuse_hub_reader(
                 service, name, inner.get("hub_card"), now_ms=capture.hub.now_ms, dev_mode=capture.hub.dev_mode
             )  # #1198 C9: the hub's card declares a reader level the log's history needs
-            if name == "hub.mode" or inner.get("mode") == "full":  # V3 C11: a full join leaves click-to-sign off
-                hubsign.refuse_full_while_click_on(service)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)
@@ -481,6 +505,12 @@ class HumanOps:
             check_device(
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
+        if meta and meta["step"] == 0 and meta["intent"].get("launch") and not meta["intent"].get("agent"):
+            from .runnergrants import reusable
+
+            current = reusable(service, person)
+            if current:
+                capture.agent_access_until = current["until"]
         prepared, extras = self._build(call, name, log, capture, store, now)
         if name in hubproof.OPS:  # #1198 C9: what the signer needs to make the owner proof (the host's own dev state)
             from . import hubops
@@ -489,9 +519,9 @@ class HumanOps:
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         built = prepared["events"]
         convenience.refuse_reader_op(service, name, events=built, readers=capture.readers)
-        convenience.refuse_click_removal(service, name, built)  # B6: never lock the honest signer out
-        if (refused := hubsign.refusal(service, built, None)) is not None:
-            raise refused  # V3 C11: early and friendly; append_signed is the enforcement (under the store lock)
+        # FB15: an add-on grant may be PREPARED as a hub hand-off (signer None, an optional extra path): nothing is
+        # signed here. The hub's channel signs an ``addon.requested`` that names this request, and the host answers it
+        # (hubdeliver). The local signature path is always open (A1, D83).
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         from . import cancels as cancel_preview
@@ -521,7 +551,6 @@ class HumanOps:
             "principal": call.principal,
             "person": person,
             "op": name,
-            "code": self._new_code(requests) if handoff else None,
             "state": "bound" if signer is not None else "prepared",
             "signer": signer,
             "created": now,
@@ -534,6 +563,7 @@ class HumanOps:
             "extras": extras,
             # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
             "readers": capture.readers,
+            "hub_handoff": capture.hub_handoff,  # FB15: prepared to be answered by the hub's addon.requested
             "staged": capture.staged,  # V3 G3: the stage an addon.grant installs from (None: plain grant)
             "sequence": meta,
             "result": template,
@@ -583,7 +613,9 @@ class HumanOps:
         elif op == "settings.set":
             if (why := settings_needs.clear_refusal(events[0].get("set") or {}, ws.addons)) is not None:
                 raise HostError("invalid.input", why)
-            if ADDONS_KEY in (events[0].get("set") or {}):  # G6: the granted schema, again on the re-read state
+            if ADDONS_KEY in (events[0].get("set") or {}) and not (
+                (record.get("sequence") or {}).get("intent", {}).get("staged")
+            ):  # G6: the granted schema, again on the re-read state
                 from orch.addons import settings_value
 
                 if (why := settings_value.check_granted(store, events[0]["set"][ADDONS_KEY])) is not None:
@@ -614,16 +646,28 @@ class HumanOps:
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.QUICK:
+            from orch.ops import addon_gate
             from orch.ops import quick as quick_core
 
-            if not quick_core.is_on(store.state.workspace.addons):
-                raise HostError("quick.off", "Quick tasks is switched off in this workspace; turn it on in Add-ons")
+            if not addon_gate.is_on(store.state.workspace.addons, quick_core.ADDON):
+                raise HostError("addon.off", addon_gate.off_message(quick_core.ADDON))
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.ADDON:
             from . import seqaddon
 
             seqaddon.host_check_first(
-                store, person, checked["intent"], dry_run=dry_run, err=lambda code, why: HostError(code, why)
+                store,
+                person,
+                checked["intent"],
+                dry_run=dry_run,
+                err=lambda code, why: HostError(code, why),
+                service=call.service,
             )
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.GATES:
+            from . import seqgates
+
+            # the person may decide both gates and their one approval completes the requirements: refused here, before
+            # anything is signed (also under the submit lock below)
+            seqgates.host_check_first(store, person, checked["intent"], err=lambda code, why: HostError(code, why))
         if checked["step"] > 0 and checked.get("log") == "workspace":
             # the add-on sequence's grant: the next step on the workspace log, only on the tail its settings left (AE6)
             if not dry_run and _tail_id(store, "workspace") != checked["prev"]:
@@ -636,14 +680,23 @@ class HumanOps:
             view = store.ticket(checked["intent"]["ticket"]["key"])
             if view is None or not claims.may_manage(core.ws, core.tickets[view.uid], person):
                 raise HostError("role.denied", "people are for the ticket owner, owners and maintainers")
-        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and not dry_run:
+        if checked["step"] == 0 and checked["intent"]["kind"] in (sequence.EDIT, sequence.GATES) and not dry_run:
             # an edit starts on the ticket and at the head the person reviewed (also checked by the signer)
             want = checked["intent"]["ticket"]
             view = store.ticket(want["key"])
             seq = store.log_seq(want["uid"]) if view is not None and view.uid == want["uid"] else None
             if seq is None or store.head_at(want["uid"], seq) != checked["intent"]["head"]:
                 raise HostError("human.request_mismatch", sequence.CHANGED)
-        agent = (checked.get("intent") or {}).get("agent") if checked["step"] == 0 else None
+        intent = checked.get("intent") or {}
+        if checked["step"] == 0 and intent.get("launch"):
+            from .runnergrants import reusable
+
+            current = reusable(call.service, person)
+            if current is None and not intent.get("agent"):
+                raise HostError("grant.short", "review again: agent access has less than 15 minutes left")
+            if current is not None and intent.get("agent"):
+                raise HostError("sequence.changed", "review again: current agent access needs no grant")
+        agent = intent.get("agent") if checked["step"] == 0 else None
         if (
             agent is not None
         ):  # a runner grant lasts at most the workspace's grant_hours (even for an owner): refuse at the review
@@ -670,23 +723,6 @@ class HumanOps:
         """The inner op's ``files``: inline ``{b64}``, a ``{blob}``, or (only on a retry of a prepare with
         ``opts.idem`` that has a record, since the prepare consumed the blob) a ``{digest}``, which only binds."""
         return self.backend._file_specs(operation, frame, inner)
-
-    @staticmethod
-    def _new_code(requests: RequestStore) -> str:
-        """A code no request stored in this workspace carries (terminal ones included, for the 24 h they are kept), so a
-        code names one request only and is never issued twice while that request can be looked up."""
-        taken = set()
-        for rid in requests.ids():
-            try:
-                rec = requests.read(rid)
-            except HostError:
-                continue
-            if rec is not None and rec.get("code"):
-                taken.add(rec["code"])
-        while True:
-            code = new_code()
-            if code not in taken:
-                return code
 
     def _build(
         self, call: Call, name: str, log: str, capture: Any, store: Any, now: float
@@ -783,6 +819,14 @@ class HumanOps:
                     and a.ac in criteria
                     and parse_label(a.label) == (a.ac, criterion_hash(a.ac, criteria[a.ac]))
                 ]
+            seq = getattr(capture, "sequence", None)
+            if seq is not None and seq["step"] == 0:  # the approval of both gates starts on a gate request
+                material["sequence"] = {
+                    "digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"]),
+                }  # fmt: skip
+                if seq["intent"].get("kind") == "approve_gates" and view.gates.get("plan") is not None:
+                    # the plan rule, so the review says who approves it (per host, not signed)
+                    material["sequence"]["plan_policy"] = _canon.canonical_policy(thaw(view.gates["plan"].policy))
             return material
         if len(events) == 1 and types[0] == "question.answered":
             qid = events[0]["question"]
@@ -810,7 +854,7 @@ class HumanOps:
                         held = current.settings.get(ADDONS_KEY) or {}
                         now = {name: thaw(held.get(name)) for name in value}
                     else:
-                        now = thaw(current.settings.get(key))  # a tuple (sign_methods) is a list on the wire
+                        now = thaw(current.settings.get(key))
                     before.setdefault(key, now)
         if before:
             material["before"] = before
@@ -824,10 +868,12 @@ class HumanOps:
             }
         if capture.removed_device is not None and "device.removed" in types:
             material["removed_device"] = dict(capture.removed_device)  # #1198 C15: whose device, per host, not signed
-        if capture.market is not None and "addon.granted" in types:
+        if capture.market is not None:
             material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
-        if capture.deps is not None and "addon.granted" in types:
+        if capture.deps is not None:
             material["deps"] = copy.deepcopy(capture.deps)  # V3 G4: the package list, from the checked lockfile
+        if getattr(capture, "agent_access_until", None):
+            material["agent_access_until"] = capture.agent_access_until
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
             material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}
@@ -839,7 +885,6 @@ class HumanOps:
         return {
             "request": {
                 "id": record["id"],
-                "code": record.get("code"),
                 "expires_at": _iso(record["expires"]),
                 "state": record["state"],
                 "submitted_at": _submitted_at(record),
@@ -857,6 +902,10 @@ class HumanOps:
             raise HostError("human.request_expired", _expired(record))
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
+        if state != "bound" and record.get("hub_handoff") is not True:
+            # the only request stored unbound is the hub's add-on grant hand-off (FB15); every other request is bound
+            # at prepare, so an unbound one that is not a hand-off was not prepared here: never bound (no legacy path)
+            raise HostError("invalid.input", "the request was not prepared here for a hub hand-off; prepare it again")
         call.service.store.refresh()
         convenience.refuse_reader_op(  # §0.8.6: fails early, before binding (H12d-2: the declaration, rechecked)
             call.service,
@@ -917,11 +966,7 @@ class HumanOps:
         return self._view(record)
 
     def pending(self, call: Call, requests: RequestStore, args: dict[str, Any]) -> dict[str, Any]:
-        """``human.pending`` (R6): this principal's requests, the one named by ``request_id``, or the pending one named
-        by a hand-off ``code`` (F5). A failed submit carries ``error: {code}``, the catalog code only, never the
-        message."""
-        if "code" in args:
-            return {"requests": [self._summary(r) for r in self._by_code(call, requests, args["code"])]}
+        """This principal's requests, optionally selected by id; submit errors carry catalog codes only."""
         if "request_id" in args:
             try:
                 records = [requests.load(args["request_id"], call.principal)]
@@ -940,40 +985,6 @@ class HumanOps:
                     records.append(requests.expire(rec))
         return {"requests": [self._summary(r) for r in records]}
 
-    def _by_code(self, call: Call, requests: RequestStore, code: str) -> list[dict[str, Any]]:
-        """The pending request of this principal and person that ``code`` names, in this workspace. After
-        ``LOOKUP_FAILURES`` failed lookups in ``LOOKUP_WINDOW`` seconds on **this connection**, every code lookup on it
-        answers ``rate.limited`` until the oldest failure leaves the window; other connections are not affected (F5)."""
-        now = call.service.clock()
-        failures = self._lookups.setdefault(call.session, deque())
-        while failures and now - failures[0] >= LOOKUP_WINDOW:
-            failures.popleft()
-        if len(failures) >= LOOKUP_FAILURES:
-            wait = max(1, int((failures[0] + LOOKUP_WINDOW - now) * 1000))
-            raise HostError(
-                "rate.limited",
-                f"too many failed code lookups on this connection: at most {LOOKUP_FAILURES} per minute",
-                retry_after_ms=wait,
-            )
-        found = []
-        for rid in requests.ids():
-            try:
-                rec = requests.read(rid)
-            except HostError:
-                continue
-            if (
-                rec is not None
-                and rec.get("code") == code
-                and rec.get("principal") == call.principal
-                and rec.get("person") == call.viewer
-            ):
-                rec = requests.expire(rec)
-                if rec["state"] in PENDING:
-                    found.append(rec)
-        if not found:
-            failures.append(now)
-        return found
-
     @staticmethod
     def _summary(record: dict[str, Any]) -> dict[str, Any]:
         prepared = record["prepared"]
@@ -981,7 +992,6 @@ class HumanOps:
         outcome = record.get("outcome") or {}
         out: dict[str, Any] = {
             "id": record["id"],
-            "code": record.get("code"),
             "op": record["op"],
             "key": ticket["key"] if ticket else None,
             "created_at": _iso(record["created"]),
@@ -1003,6 +1013,7 @@ class HumanOps:
         if record["state"] in PENDING:
             record = {**record, "state": "cancelled", "done_at": call.service.clock()}
             requests.write(record)
+            marketinstall.discard_request_stage(call.service, record)
         # an expired request can never be submitted either: it answers cancelled (§0.8.1 lists two answers)
         return {"state": "submitted" if record["state"] == "submitted" else "cancelled"}
 
@@ -1035,7 +1046,11 @@ class HumanOps:
             # before anything landed, which refuse() stores only when it is not retryable
             outcomes.fail(begun, stored.error)
             raise stored.error from None
-        except HostError as exc:  # a refusal before any append: the request stays as it was (bound), until it expires
+        except HostError as exc:  # keep the reviewed bytes available for a retryable refusal
+            if not exc.retryable:
+                with contextlib.suppress(HostError):
+                    record = self._requests(service).load(args["request_id"], call.principal)
+                    marketinstall.discard_request_stage(service, record)
             outcomes.refuse(begun, redactor.error(exc))
             self._note_refusal(call, args["request_id"], exc.code)
             raise redactor.error(exc) from None
@@ -1096,7 +1111,13 @@ class HumanOps:
             from . import sequence
 
             meta = record.get("sequence")
-            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.EDIT:
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.GATES:
+                from . import seqgates
+
+                seqgates.host_check_first(
+                    store, record["person"], meta["intent"], err=lambda code, why: HostError(code, why)
+                )
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] in (sequence.EDIT, sequence.GATES):
                 # B12D: an edit's first step lands only on the head the person reviewed, re-checked here under the lock
                 if store.log_head(record["prepared"]["log"]) != events[0].get("based_on"):
                     raise HostError("human.request_mismatch", sequence.CHANGED)
@@ -1120,18 +1141,27 @@ class HumanOps:
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.ADDON:
+                from . import seqaddon
+
+                seqaddon.host_check_first(
+                    store, record["person"], meta["intent"], dry_run=False, err=HostError, service=service
+                )
             self._recheck_needs(store, record, events)
             marketinstall.recheck(
                 service, record, events
             )  # V3 G3 C2: the install record as it is now, before the journal
-            if (refused := hubsign.refusal(service, events, None)) is not None:
-                raise refused  # V3 C11: before the journal write; a join after the prepare lands here
             if record["op"] in hubproof.OPS:  # #1198 C9: every hub event carries a valid proof, checked under the lock
                 for e in events:
                     hubproof.check(
                         service, person=record["person"], op=record["op"], request_id=record["id"],
                         event=e, proof=e.get("owner_proof"),
                     )  # fmt: skip
+            if record["op"] == "remote.device_confirm":  # R2 review L2: the waiting device, again under the lock
+                from .remote import enrollment
+
+                if not all(enrollment.still_pending(service, e.get("code_id")) for e in events):
+                    raise HostError("remote.no_pending", "no device is waiting to be added (it may have disconnected)")
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(
                     service,
@@ -1535,13 +1565,8 @@ def append_signed(
     relay path ``signed_by`` refuses convenience events except a dev-gated answer (§11A.17.4, ``dev_gate``), which
     writes the mark here like any other.
 
-    **Full hub mode (V3 C11, D78/D81)** is enforced here too, under the same lock and before the first append: in
-    ``full`` (and ``unknown``, which fails closed as full) every event not in the log yet is refused with
-    ``sign.hub_only`` whatever signs it (owner key, another member's device, a relay device, ``auth: convenience``),
-    except the break-glass events of :data:`orch.host.hubsign.BREAK_GLASS` (:func:`orch.host.hubsign.refusal`). The mode
-    is read from the signed log as this append sees it, so a request prepared before the join, a roll forward or a
-    recovery after a restart, the relay path and a race with ``hub.joined`` are all covered. ``hubdeliver.land``
-    (custodial events) does not pass here.
+    **Hub mode (A1, D83)** does not limit who signs here: a local signature is valid in every hub mode, with the hub
+    reachable or not. ``hubdeliver.land`` (custodial events) does not pass here.
 
     **Invariant I (H12d-2, §0.8.6 item 9.4)** is checked here too, under the store lock and before the first append,
     for the events not in the log yet that add a reader (``member.added``, ``device.added``, ``restore``) or carry
@@ -1569,13 +1594,6 @@ def append_signed(
 
         store.append_check = check
         try:
-            if error is None:  # V3 C11 (D78/D81): full hub mode takes no local signature, whoever the signer is
-                error = hubsign.refusal(service, [e for e in events if store.logged_event(log, e.get("id")) is None],
-                                        signed_by)  # fmt: skip
-            if (
-                error is None and signed_by is None
-            ):  # B6: by custody, not by the label; under the lock, on the re-read state
-                error = convenience.refuse_excluded_click_custody(service)
             if error is None:
                 error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
             if error is None and any(e.get("auth") == "convenience" for e in events):
@@ -1599,6 +1617,10 @@ def append_signed(
                 landed.append(int(done.event["seq"]))
         finally:
             store.append_check = old_check
+    if landed:
+        from . import hubpublish
+
+        hubpublish.note_events(service, log, events)  # #1838: where the publish settings came from (unsigned record)
     if landed and signed_by is None and any(e.get("auth") == "convenience" for e in events):
         convenience.touch(service.state_dir, service.workspace_id, service.host_uid)  # #1198 C17: resets the idle clock
     return landed, error
@@ -1678,9 +1700,9 @@ def roll_forward(service: WorkspaceService, requests: RequestStore, record: dict
 
 
 def first_view(record: dict[str, Any]) -> dict[str, Any]:
-    """The answer ``human.prepare`` gave for ``record``: a hand-off request (it has a code) is ``prepared``, any other
+    """The answer ``human.prepare`` gave for ``record``: an unbound request is ``prepared``, any other
     one was bound to its signer at prepare."""
-    return HumanOps._view({**record, "state": "prepared" if record.get("code") else "bound"})
+    return HumanOps._view({**record, "state": "bound" if record.get("signer") else "prepared"})
 
 
 def outcome_prepared(service: WorkspaceService, record: dict[str, Any]) -> dict[str, Any] | str:

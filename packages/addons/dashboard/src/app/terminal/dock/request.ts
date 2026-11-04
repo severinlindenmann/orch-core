@@ -1,4 +1,4 @@
-// "Open the dock on this session": an action that opened a terminal session (e.g. Worktrees' "Open terminal here")
+// "Open the dock on this session": an action that opened a terminal session (e.g. Work copies' "Open terminal here")
 // answers with its id, and core's dock opens on it with the keyboard in it. Light (entry chunk): a window event only.
 
 const EVENT = 'orch:dock-open'

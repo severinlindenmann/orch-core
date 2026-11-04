@@ -13,6 +13,8 @@ class Node_ {
   focus() {} select() {}
   set textContent(v) { this._text = String(v); this.children = []; }
   get textContent() { return this.tag === "#text" ? this._text : this._text + this.children.map((c) => c.textContent).join(""); }
+  get tagName() { return this.tag.toUpperCase(); }
+  querySelectorAll() { return this.all().slice(1).filter(n => ["input", "select", "textarea", "button", "summary", "details"].includes(n.tag)); }
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = {

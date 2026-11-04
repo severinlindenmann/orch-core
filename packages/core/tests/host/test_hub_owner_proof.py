@@ -296,7 +296,7 @@ def test_the_composite_asks_for_the_backup_key_after_the_confirmation(human, ser
     result = signer.finish(
         call, prepared, prepared["request"]["id"], backend=human.backend, key_id="dk", workspace_id=served.wid,
         person=human.person.ref, device=human.person.device, workspace=lambda wid: ("Demo", "DEMO"),
-        confirm=lambda text, word: order.append("confirm") or True, show_secret=lambda s: None, idem=new_idem(),
+        confirm=lambda text: order.append("confirm") or True, show_secret=lambda s: None, idem=new_idem(),
         owner_proof=lambda p, rid: order.append("proof") or human.owner_proof(p),
     )  # fmt: skip
     assert order == ["confirm", "proof"] and calls[-1] == "human.submit"

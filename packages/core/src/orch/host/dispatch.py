@@ -58,7 +58,8 @@ and a write that commits consumes the blobs it used (also when the answer is a r
 them.
 
 **Redaction** (D-P2-10). Every result is passed through the request's :class:`~orch.host.auth.Redactor` before it is
-stored or sent, and so is every error.
+stored or sent, and so is every error. Only what leaves the host: the worker's internal answer of a
+op of :data:`SECOND_PHASE` (a plan the second phase verifies, signs or sends) is never redacted, its final answer is.
 
 **Visibility** (F6): :class:`Viewer` holds the hooks the later reads use (``ticket.query``, ``needs``,
 ``session.list``, ``diff``, ``artifact.get``, ``sub.open``: H6a, H6b, H3b1, H4a2). The registry reads already filter
@@ -71,20 +72,23 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import importlib
 import logging
 import time
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from jsonschema import Draft202012Validator
 
+from . import agentwaits, phonehints, readerops, reads, sessions, terms
 from . import diff as git_diff
-from . import phonehints, readerops, reads, sessions, terms
 from . import quick as quick_list
 from . import records as records_ops
 from .agents import AGENT_OPS
+from .appops import APP_OPS
+from .appops import NETWORK_OPS as APP_NETWORK_OPS
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
 from .auth import Redactor
@@ -92,11 +96,14 @@ from .blobs import INLINE_MAX, decoded_len
 from .blobs import VALIDATORS as BLOB_VALIDATORS
 from .bus import Subscription
 from .columns import OpKind
+from .cosmeticops import COSMETIC_OPS
 from .errors import HostError
 from .hubops import HUB_OPS
 from .hubops import NETWORK_OPS as HUB_NETWORK_OPS
 from .marketops import MARKET_OPS, MARKET_READS
 from .marketops import NETWORK_OPS as MARKET_NETWORK_OPS
+from .orgops import NETWORK_OPS as ORG_NETWORK_OPS
+from .orgops import ORG_OPS, ORG_READS
 from .outcomes import BUILDERS, Planned, request_idem
 from .peerops import NETWORK_OPS as PEER_NETWORK_OPS
 from .peerops import PEER_OPS, PEER_READS
@@ -104,12 +111,13 @@ from .publishing import NETWORK_OPS as PUBLISH_NETWORK_OPS
 from .publishing import PUBLISH_CAPS, PUBLISH_OPS
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
+from .remote import REMOTE_CAPS, REMOTE_OPS, REMOTE_READS
 from .runnergrants import GRANT_OPS
 from .runners import RUN_CAPS, RUN_OPS
 from .shareops import NETWORK_OPS as SHARE_NETWORK_OPS
-from .shareops import SHARE_OPS, SHARE_READS
+from .shareops import SHARE_NET_READS, SHARE_OPS, SHARE_READS
 from .spaceops import NETWORK_OPS as SPACE_NETWORK_OPS
-from .spaceops import SPACE_OPS, SPACE_READS
+from .spaceops import SPACE_AGENT_WRITES, SPACE_OPS, SPACE_READS
 from .terms import TERM_CAPS, TERM_OPS
 from .transcripts import LINK_OPS, TRANSCRIPT_CAPS, TRANSCRIPT_OPS
 from .visibility import Viewer
@@ -145,6 +153,18 @@ NOT_SERVED: dict[str, str] = {
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
 }
 PERSON_READS = frozenset({"doctor", "instructions.sync"})
+
+
+def plain(value: Any) -> Any:
+    """A plan as the second phase gets it: a deep copy into plain dicts and lists (the worker's read-only views of
+    the store, ``mappingproxy`` and tuples, must not be read from another thread), every string and key unchanged."""
+    if isinstance(value, Mapping):
+        return {str(k): plain(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [plain(v) for v in value]
+    return value
+
+
 #: registry reads for P and G: the session-start hook runs in the agent's own session (column G, a verified grant), so
 #: it must not be a person-only read (run 6, #1067: ``instructions.hook is not allowed here`` at every agent start)
 #: Column N (an agent with no verified grant) is excluded on purpose: the hook shows the person, claim and unread
@@ -238,10 +258,14 @@ def served_ops() -> dict[str, int]:
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
     out.update(TRANSCRIPT_OPS)  # focus/1: run.transcript
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
+    out.update(APP_OPS)  # #1455: app.prepare, .send, .list, .discard
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
+    out.update(REMOTE_OPS)  # R2 #1590: remote.off, .code, .device_remove, .key_rotate, .status, .pending, .sessions
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
+    out.update(ORG_OPS)  # M3 H-2: org.* (company skills and MCP servers offered by the hub)
     out.update(MARKET_OPS)  # V3 G2: market.* (the add-on marketplace)
+    out.update(COSMETIC_OPS)  # run 13 D6: workspace.cosmetic.set (name and icon, unsigned)
     out.update(SHARE_OPS)  # V3 C6: share.* (selective-mode share rules)
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
@@ -300,15 +324,33 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         if name == "publish.list":
             return ("pg_read", "read")
         return ("pg_write", "write") if name in ("publish.prepare", "publish.discard") else ("person_write", "write")
+    if name in APP_OPS:  # #1455: prepare and discard P and G (G on its claimed ticket); list P and G; send P only
+        if name == "app.list":
+            return ("pg_read", "read")
+        return ("pg_write", "write") if name in ("app.prepare", "app.discard") else ("person_write", "write")
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
-        reads = ("hub.status", "hub.handoff", "hub.link")
+        reads = ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared", "hub.network")
         return ("person_read", "read") if name in reads else ("person_write", "write")
+    if name in REMOTE_OPS:  # R2 #1590: column P only (the op checks the owner role)
+        return ("person_read", "read") if name in REMOTE_READS else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
+    if name in COSMETIC_OPS:  # D6: column P only (the op checks the owner role)
+        return ("person_write", "write")
     if name in SHARE_OPS:  # V3 C6: column P only (the op checks the owner role)
-        return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
-    if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
-        return ("pg_read", "read") if name in SPACE_READS else ("person_write", "write")
+        return ("person_read", "read") if name in SHARE_READS | SHARE_NET_READS else ("person_write", "write")
+    if name in SPACE_OPS:  # V3 C13: reads and put/restore for P and G (untrusted data; SP-1), the rest P only (owner)
+        if name in SPACE_READS:
+            return ("pg_read", "read")
+        return ("pg_write", "write") if name in SPACE_AGENT_WRITES else ("person_write", "write")
+    if name in ORG_OPS:  # M3 H-2: offers P and G (names only); show, accept, decline P only (owner); sync P and G
+        if name in ORG_READS:
+            return ("pg_read", "read")
+        return (
+            ("pg_write", "write")
+            if name == "org.sync"
+            else (("person_read", "read") if name in ("org.show", "org.secrets") else ("person_write", "write"))
+        )
     if name in MARKET_OPS:  # V3 G2: P and G; the op itself refuses an agent's add and --commit (market.actor_refused)
         return ("pg_read", "read") if name in MARKET_READS else ("pg_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
@@ -446,6 +488,7 @@ class RegistryBackend:
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
             *WORKDIR_CAPS, *WORKTREE_CAPS, *TRANSCRIPT_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
+            *REMOTE_CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -479,54 +522,16 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
-        if op in GIT_OPS or op in QUICK_OPS:
-            return await self._git_read(call, result)
-        if op == "sub.open":
-            return self._register(call, result)
-        if op == "run.sub":
-            return await self._register_runs(call, result)
-        if op in TERM_OPS or op == "run.stop":
-            return await terms.complete(call, result)
-        if op in TRANSCRIPT_OPS:  # focus/1: the runner reads the transcript
-            from . import transcripts
+        if op == "remote.attach":  # R3: park a poll with nothing to say (the adapter's frames wake it)
+            from . import remote
 
-            return await transcripts.complete(call, result)
-        if op in AGENT_OPS:  # H11c: the launch intent, the worktree, the spawn
-            from . import agents
-
-            return await agents.complete(call, result)
-        if op in GRANT_OPS:  # H11c: the runner grant table and the runner, on the event loop
-            from . import runnergrants
-
-            return await runnergrants.complete(call, result)
-        if op in WORKTREE_OPS and op not in ("worktree.list", "worktree.diff"):  # H11d: runner git, then registration
-            from . import worktrees
-
-            return await worktrees.execute(call, result)
-        if op in PUBLISH_NETWORK_OPS or op == "publish.list":  # P5: the server calls, off the workspace worker
-            from . import publishing
-
-            return await publishing.execute(call, result)
-        if op in HUB_NETWORK_OPS:  # V3 C2a: the hub link, off the workspace worker
-            from . import hubops
-
-            return await hubops.execute(call, result)
-        if op in SHARE_NETWORK_OPS:  # V3 C6: the hub link, off the workspace worker
-            from . import shareops
-
-            return await shareops.execute(call, result)
-        if op in MARKET_NETWORK_OPS:  # V3 G2: DNS and git, off the workspace worker, no lock held
-            from . import marketops
-
-            return await marketops.execute(call, result)
-        if op in SPACE_NETWORK_OPS:  # V3 C13: the hub link, off the workspace worker
-            from . import spaceops
-
-            return await spaceops.execute(call, result)
-        if op in PEER_NETWORK_OPS:  # V3 C12: peer.send / peer.reply, the hub link off the worker
-            from . import peerops
-
-            return await peerops.execute(call, result)
+            result = await remote.attach_wait(call, result)
+        if op in SECOND_PHASE:  # the worker handed over its plan unredacted: redact what the second phase ANSWERS
+            redactor = Redactor((call.frame.get("auth") or {}).get("grant"), op)
+            try:
+                return redactor.obj(await SECOND_PHASE[op](self, call, result))
+            except HostError as exc:
+                raise redactor.error(exc) from None
         if op == "sub.close":
             bus = call.service.bus
             closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
@@ -647,12 +652,15 @@ class RegistryBackend:
         deadline = loop.time() + timeout
         step = Step()
         watch = bus.watch(service.workspace_id)  # before the first look: nothing committed after it is missed
+        waiting: int | None = None  # run-10 J04: "the agent waits in orch wait" while parked (agentwaits)
         try:
             while True:
                 try:
                     return await asyncio.wrap_future(service.submit(self.serve, call, step))
                 except Parked:
-                    pass
+                    # only the claim holder's wait (a sibling run of the same grant never reads as waiting)
+                    if waiting is None and step.mine and call.column.name == "G" and call.verified.grant is not None:
+                        waiting = agentwaits.enter(service, call.verified.grant.id, step.key, timeout)
                 watch.uid = step.log
                 # look again only for an entry that can answer (or refuse) this wait, a rebuild, or the timeout
                 while not watch.relevant():
@@ -666,6 +674,7 @@ class RegistryBackend:
                 watch.clear()
         finally:
             bus.unwatch(watch)
+            agentwaits.leave(service, waiting)  # also on cancel: a killed CLI closes its connection (fail closed)
 
     # -- on the worker thread
     def serve(self, call: Call, step: Any = None) -> dict[str, Any]:
@@ -719,10 +728,22 @@ class RegistryBackend:
                 from . import publishing
 
                 result = publishing.serve(call)
+            elif op in APP_OPS:
+                from . import appops
+
+                result = appops.serve(call)
             elif op in HUB_OPS:
                 from . import hubops
 
                 result = hubops.serve(call)
+            elif op in REMOTE_OPS:
+                from . import remote
+
+                result = remote.serve(call)
+            elif op in COSMETIC_OPS:
+                from . import cosmeticops
+
+                result = cosmeticops.serve(call)
             elif op in SHARE_OPS:
                 from . import shareops
 
@@ -731,6 +752,10 @@ class RegistryBackend:
                 from . import spaceops
 
                 result = spaceops.serve(call)
+            elif op in ORG_OPS:
+                from . import orgops
+
+                result = orgops.serve(call)
             elif op in MARKET_OPS:
                 from . import marketops
 
@@ -745,6 +770,8 @@ class RegistryBackend:
                 result = self.human.serve(call, redactor)
             else:
                 result = self._registry(call, redactor, step)
+            if op in TWO_PHASE_OPS:
+                return plain(result)  # internal: run() redacts the second phase's answer, never the data it acts on
             return redactor.obj(result)
         except HostError as exc:
             raise redactor.error(exc) from None
@@ -1084,3 +1111,52 @@ class RegistryBackend:
         if ctx.session and operation.is_write and not ctx.dry_run:
             records.succeeded_write(ctx.session)
         return result_dict(res)
+
+
+# -- the second phases -------------------------------------------------------------------------------------------------
+
+SecondPhase = Callable[[RegistryBackend, "Call", Any], Awaitable[dict[str, Any]]]
+
+
+def _in(module: str, fn: str) -> SecondPhase:
+    """``orch.host.<module>.<fn>(call, worker_answer)``, looked up at call time (a lazy import; a test may patch it)."""
+
+    def run(backend: RegistryBackend, call: Call, result: Any) -> Awaitable[dict[str, Any]]:
+        return getattr(importlib.import_module(f"orch.host.{module}"), fn)(call, result)
+
+    return run
+
+
+async def _sub_open(backend: RegistryBackend, call: Call, result: Any) -> dict[str, Any]:
+    return backend._register(call, result)  # noqa: SLF001
+
+
+def _ops(*groups: Iterable[str], but: Iterable[str] = ()) -> list[str]:
+    return sorted({op for g in groups for op in g} - set(but))
+
+
+#: THE list of two-phase ops (review F3): op -> its second phase, on the event loop, given the worker's answer. That
+#: answer is internal (a plan, a checked launch, a pending read): :meth:`RegistryBackend.serve` hands it over as
+#: :func:`plain` data, never redacted, because a random base64url key, signature or payload in it can look like a token
+#: and would be rewritten before it is verified, signed or sent. :meth:`RegistryBackend.run` redacts the second phase's
+#: answer and error instead. Every other op's worker answer is the answer, and is redacted there.
+SECOND_PHASE: dict[str, SecondPhase] = {
+    **dict.fromkeys(_ops(GIT_OPS, QUICK_OPS), lambda b, call, r: b._git_read(call, r)),  # noqa: SLF001
+    "sub.open": _sub_open,
+    "run.sub": lambda b, call, r: b._register_runs(call, r),  # noqa: SLF001
+    **dict.fromkeys(_ops(TERM_OPS, {"run.stop"}), _in("terms", "complete")),
+    **dict.fromkeys(_ops(TRANSCRIPT_OPS), _in("transcripts", "complete")),  # focus/1: the runner reads the transcript
+    **dict.fromkeys(_ops(AGENT_OPS), _in("agents", "complete")),  # H11c: the launch intent, the worktree, the spawn
+    **dict.fromkeys(_ops(GRANT_OPS), _in("runnergrants", "complete")),  # H11c: the runner grant table
+    # H11d: runner git, then registration
+    **dict.fromkeys(_ops(WORKTREE_OPS, but={"worktree.list", "worktree.diff"}), _in("worktrees", "execute")),
+    **dict.fromkeys(_ops(PUBLISH_NETWORK_OPS, {"publish.list"}), _in("publishing", "execute")),  # P5: server calls
+    **dict.fromkeys(_ops(APP_NETWORK_OPS), _in("appops", "execute")),  # #1455: the upload, off the worker
+    **dict.fromkeys(_ops(HUB_NETWORK_OPS), _in("hubops", "execute")),  # V3 C2a: the hub link, off the worker
+    **dict.fromkeys(_ops(SHARE_NETWORK_OPS), _in("shareops", "execute")),  # V3 C6
+    **dict.fromkeys(_ops(MARKET_NETWORK_OPS), _in("marketops", "execute")),  # V3 G2: DNS and git, no lock held
+    **dict.fromkeys(_ops(SPACE_NETWORK_OPS), _in("spaceops", "execute")),  # V3 C13
+    **dict.fromkeys(_ops(ORG_NETWORK_OPS), _in("orgops", "execute")),  # M3 H-2: org.sync
+    **dict.fromkeys(_ops(PEER_NETWORK_OPS), _in("peerops", "execute")),  # V3 C12: peer.send / peer.reply
+}
+TWO_PHASE_OPS = frozenset(SECOND_PHASE)

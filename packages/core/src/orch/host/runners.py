@@ -56,10 +56,11 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from orch import childenv
+
 from . import frames
 from ._socket import pidfd_pid_now
 from .custody import ensure_private_dir, read_json, write_private
-from .enable import _default_run
 from .errors import HostError
 from .transport import Credentials, Session
 
@@ -126,13 +127,27 @@ def _iso(t: float | None = None) -> str:
 # -- the main-PID check ------------------------------------------------------------------------------------------------
 
 
+#: the time limit of the person's manager query: it runs in the serialized accept loop of the runner listener
+SYSTEMCTL_SECONDS = 3
+
+
+def _user_query(argv: list[str]) -> Any:
+    """The H7 command runner (it refuses under pytest and with ``ORCH_NO_SERVICE_MANAGER=1``), with its own
+    short time limit instead of the 30 s of the install commands."""
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
+        raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
+    return subprocess.run(  # noqa: S603 - fixed binary, fixed arguments
+        argv, capture_output=True, text=True, timeout=SYSTEMCTL_SECONDS, check=False, env=childenv.sanitize(os.environ)
+    )
+
+
 def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platform: str | None = None) -> int | None:
     """The runner unit's main PID from the person's service manager, or ``None``. ``run`` defaults to the H7 command
     runner, which refuses under pytest and with ``ORCH_NO_SERVICE_MANAGER=1`` (so a test never reaches launchctl)."""
     # lazy: orch.runner.service imports orch.host.enable, which imports back into the host package
     from orch.runner.service import LAUNCHD_LABEL, SYSTEMD_NAME
 
-    run = run or _default_run
+    run = run or _user_query
     platform = platform or sys.platform
     try:
         if platform == "darwin":
@@ -145,7 +160,7 @@ def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platfor
             found = re.fullmatch(r"\s*([0-9]+)\s*", res.stdout or "") if res.returncode == 0 else None
         else:
             return None
-    except OSError:
+    except (OSError, subprocess.SubprocessError):  # a hung manager (TimeoutExpired) is a denial, never a wait
         return None
     pid = int(found.group(1)) if found else 0
     return pid if pid > 1 else None
@@ -156,7 +171,6 @@ SYSTEMCTL = ("/usr/bin/systemctl", "/bin/systemctl")
 
 #: the environment and time limit of the system manager query: it runs in the serialized accept loop
 SYSTEMCTL_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
-SYSTEMCTL_SECONDS = 3
 
 
 def _system_query(argv: list[str]) -> Any:
@@ -369,6 +383,7 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
             "signal": {"type": ["string", "null"], "maxLength": 16},
             "at": _TIME,
             "cleanup": _CLEANUP,
+            "claim_released": {"type": "boolean"},
         },
         ("run", "code", "signal", "at", "cleanup"),
     ),
@@ -609,6 +624,10 @@ class RunnerHub:
             if rec.get("state") not in LIVE and "ended_ts" not in rec:
                 rec["ended_ts"] = time.time()
             self.store.records[rec["run"]] = rec
+            if rec.get("state") not in LIVE:  # the run is over: its company MCP capability goes (idempotent)
+                from . import orgmcp
+
+                orgmcp.revoke_run(self, rec["run"])
             # an evicted record's ``gone`` takes a fresh rev (a client keeps the higher rev per run, so the record's
             # old rev would be ignored); the saved record takes the next one, so the persisted maximum covers both
             gones = []
@@ -825,6 +844,8 @@ class RunnerHub:
                                              "reason": reason})  # fmt: skip
         if rec.get("cleanup") != args["cleanup"] and rec.get("cleanup") in (None, "incomplete"):
             new["cleanup"] = args["cleanup"]
+        if args.get("claim_released") is True:  # W31: the runner let go of the run's claim as the agent
+            new["claim_released"] = True
         if new != rec:
             await self._save(new)
         return {}
@@ -996,6 +1017,8 @@ class RunnerHub:
                 rec[extra] = fields[extra]
         if audit.get("spec"):  # an agent start: its idem names exactly this spec (a retry with another is a conflict)
             rec["spec"] = audit["spec"]
+        if audit.get("after_request"):
+            rec["after_request"] = audit["after_request"]
         saved = await self._save(rec)
         if audit:
             self._audit("run.intent", run=run, workspace_id=workspace_id, person=fields.get("person"), **audit)
@@ -1024,6 +1047,18 @@ class RunnerHub:
             await self._save({**self.store.records[run], "state": "exited", "exit": _exit("spawn_failed", exc.code)})
             if audit:
                 self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code)
+            if exc.code == "launch.no_grant" and payload.get("kind") == "agent" and not payload.get("run_grant"):
+                # the runner's word is the truth: it holds no grant the host believed current. Forget it, so the
+                # person sees the normal "give agent access" step instead of a dead end
+                person = self.store.records[run].get("person")
+                if person and payload.get("grant"):
+                    await self.grants.forget_stale(workspace_id, person, payload["grant"])
+                raise HostError(
+                    "launch.no_grant",
+                    "Agent access on this computer was lost, for example after a restart. Give agent access again, "
+                    "then start.",
+                    detail={"reason": "none"},
+                ) from None
             raise
         cur = self.store.records[run]
         pid = res.get("pid") if isinstance(res.get("pid"), int) and not isinstance(res.get("pid"), bool) else None
@@ -1324,6 +1359,9 @@ class RunnerHub:
         for task in self._checks.values():
             task.cancel()
         self._checks.clear()
+        from . import orgmcp
+
+        orgmcp.shutdown(self)  # host stop: the proxy listener and every capability go
         for sub in list(self.subs.values()):
             self.end_sub(sub, reason)
 
@@ -1486,13 +1524,19 @@ QUIET_SECONDS = 90.0
 
 
 def waiting_of(service: Any, hub: Any, rec: dict[str, Any]) -> dict[str, Any] | None:
-    """``{since, source}`` when the agent of this run may be waiting for the person in its terminal (the Notification
-    hook's marker, else the terminal quiet for :data:`QUIET_SECONDS`), else ``None``. Local to this machine and display
+    """``{since, source}`` when the agent of this run may be waiting for the person: inside ``orch wait`` on its ticket
+    (``wait``, :mod:`orch.host.agentwaits`), else in its terminal (the Notification hook's marker, else the terminal
+    quiet for :data:`QUIET_SECONDS`), else ``None``. Local to this machine and display
     only: it is never signed, logged or sent to a hub. New output clears it."""
     if hub is None or rec.get("kind") != "agent" or rec.get("state") not in LIVE or not rec.get("ticket"):
         return None
-    seen = hub.activity.get(rec["run"])
+    from . import agentwaits
+
     now = time.time()
+    since = agentwaits.of(service, rec, now)
+    if since is not None:  # run-10 J04: inside orch wait, whatever its terminal prints (the harness ticks a timer)
+        return {"since": _iso(since), "source": "wait"}
+    seen = hub.activity.get(rec["run"])
     session = rec.get("session")
     layout = getattr(service.store, "layout", None)
     if session and layout is not None:
@@ -1565,5 +1609,43 @@ def serve(call: Call) -> dict[str, Any]:
     from .terms import runner_info
 
     runner = runner_info(service, person)
-    runs = [view(r) | {"out_bytes": int(r.get("out") or 0), "waiting": waiting_of(service, hub, r)} for r in window]
+    contacted = _contacted(service, window)
+    runs = [
+        view(r)
+        | {"out_bytes": int(r.get("out") or 0), "waiting": waiting_of(service, hub, r)}
+        | contacted.get(r["run"], {})
+        for r in window
+    ]
     return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})
+
+
+def _contacted(service: Any, window: list[dict[str, Any]]) -> dict[str, dict[str, bool]]:
+    """W00: for each agent run with a session, ``{"contacted": bool}``: has that session made any host call yet (the
+    session records every column-G request with ``auth.session``). An agent whose orch never reaches the host shows
+    as such on the dashboard instead of "Taking longer than usual". Shells and runs without a session: nothing."""
+    from datetime import datetime
+
+    from .sessions import RETENTION, records
+
+    now = service.clock()
+    agents = []
+    for r in window:
+        if r.get("kind") != "agent" or not isinstance(r.get("session"), str):
+            continue
+        try:  # older than the session records keep: unknown (never a false "has not reached orch")
+            started = datetime.fromisoformat(str(r.get("started_at")).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+        if now - started < RETENTION:
+            agents.append(r)
+    if not agents:
+        return {}
+    try:
+        seen = [rec.session for rec in records(service).snapshot(now)]
+    except Exception:  # noqa: BLE001 - unknown is never "not contacted": the field is then left out
+        return {}
+
+    def reached(session: str) -> bool:  # the run's own session or one of its delegated children (s_….n)
+        return any(s == session or s.startswith(session + ".") for s in seen)
+
+    return {r["run"]: {"contacted": reached(r["session"])} for r in agents}

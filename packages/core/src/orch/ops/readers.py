@@ -197,7 +197,7 @@ class ReadersRefused(Exception):
             return (
                 "every other reader must declare that it understands convenience signing (orch keys reader declare "
                 "on a core; a current phone build declares itself), or be removed; meanwhile sign in your terminal "
-                "with orch sign CODE"
+                "with the action’s CLI command"
             )
         return (
             "the new reader must declare and prove that it understands convenience signing: its orch writes a "

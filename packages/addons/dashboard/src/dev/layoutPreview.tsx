@@ -7,7 +7,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import { fingerprintOf, reviewDigestOf, type HandoffEvent, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import type { QuickRow, RecordsStatus } from '@/api/quickRecords'
 import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
@@ -17,14 +16,14 @@ import { HostGates } from '@/app/pages/settings/host/Gates'
 import { HostGrants } from '@/app/pages/settings/host/Grants'
 import { HostMembers } from '@/app/pages/settings/host/Members'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
-import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
-import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
+import { BuiltInAddOns } from '@/app/pages/settings/host/AddOns'
 import { DropError, dropError } from '@/api/drop'
 import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop'
 import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
-import { WikiPage } from '@/app/pages/wiki'
+import { AddonNode } from '@/addon-ui/AddonNode'
+import { WIKI_PREVIEW_NODE, WIKI_PREVIEW_PAGES } from './wikiPreview'
 import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
 import { TerminalsPage } from '@/app/pages/terminals'
@@ -60,6 +59,7 @@ export const LAYOUT_SCENARIOS = [
   'quick-off',
   'wiki-empty',
   'wiki-created',
+  'wiki-many',
   'records-ok',
   'records-hidden-url',
   'records-first',
@@ -92,15 +92,6 @@ export const LAYOUT_SCENARIOS = [
   'agent-pill-stopped',
   'agent-pill-off',
   'setup-words',
-  // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
-  'pair-unavailable',
-  'pair-unavailable-click',
-  'pair-blocked-convenience',
-  'pair-offer',
-  'pair-pending',
-  'pair-cert',
-  'pair-failed',
-  'pair-devices',
   // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
   'readers-devices',
   'readers-solo',
@@ -269,233 +260,6 @@ const records = (scenario: LayoutScenario): RecordsStatus => {
   return base
 }
 
-/** The first request of a New ticket sequence as the dashboard server sends it: `ticket.created`, the whole intent in the material, one SignContent with the ticket and its text. */
-function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const order = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'findings', 'current_state']
-  const sections = Object.entries((action.sections ?? {}) as Record<string, string>).sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
-  const sets: Record<string, unknown> = {
-    ...(action.priority ? { priority: action.priority } : {}),
-    ...(action.size ? { size: action.size } : {}),
-    ...(Array.isArray(action.labels) && action.labels.length ? { labels: [...(action.labels as string[])].sort() } : {}),
-    ...(action.parent ? { parent: action.parent } : {}),
-  }
-  const criteria = ((action.acceptance as string[] | undefined) ?? []).filter(Boolean)
-  const people = (action.people as Record<string, string | string[]> | undefined) ?? {}
-  const asList = (v: string | string[]) => (Array.isArray(v) ? v : [v])
-  const peopleRows = (['assignees', 'reviewers', 'owner'] as const).flatMap((role) => asList(people[role] ?? []).map((p) => ({ field: `${role}: add`, before: null, after: String(p) })))
-  const intent = { v: 1, kind: 'new_ticket', title: action.title, ticket_type: action.type, set: sets, sections: Object.fromEntries(sections), ...(criteria.length ? { acceptance: criteria } : {}), ...(Object.keys(people).length ? { people } : {}) }
-  const of = 1 + (Object.keys(sets).length ? 1 : 0) + sections.length + criteria.length + peopleRows.length
-  const key = 'DEMO-0199'
-  const uid = '01J9ZP0000000000000000X0AB'
-  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }
-  const material = {
-    kind: 'payload' as const,
-    ticket: { key, uid },
-    sequence: { digest: 'sha256:' + 'c'.repeat(64), of, intent },
-    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
-  }
-  const digest = reviewDigestOf(material)
-  const events = [event] as unknown as HandoffEvent[]
-  const written = [sections.length ? `${sections.length} written section${sections.length === 1 ? '' : 's'}` : '', Object.keys(sets).length ? 'its details' : ''].filter(Boolean)
-  const headline = `Create ${key}: ${String(action.title)}`
-  const parts = [sections.length ? `its text (${sections.length} section${sections.length === 1 ? '' : 's'})` : '', criteria.length ? `${criteria.length} acceptance check${criteria.length === 1 ? '' : 's'}` : '', peopleRows.length ? 'its people' : ''].filter(Boolean)
-  const subline = parts.length ? `and ${parts.join(', ')}` : undefined
-  void written
-  const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op: 'new',
-    key,
-    fingerprint: fingerprintOf(digest, events, 'new'),
-    review_digest: digest,
-    gate_hash: null,
-    headline,
-    content: {
-      headline: `Create ${key} (key per host; signed id …${uid.slice(-8)}): ${String(action.title)}`,
-      title: headline.replace('Create ', 'New ticket '),
-      subline: subline?.replace(/^and /, 'Includes '),
-      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
-      sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
-      ...(criteria.length ? { acceptance: criteria.map((text, i) => ({ id: `AC${i + 1}`, text, checked: false })) } : {}),
-      fields_title: 'Details',
-      fields_changed: [
-        { field: 'type', before: null, after: String(action.type) },
-        { field: 'owner', before: null, after: 'you' },
-        ...Object.entries(sets).map(([field, v]) => ({ field, before: null, after: Array.isArray(v) ? v.join(', ') : String(v) })),
-        ...peopleRows,
-      ],
-      notes: [`One confirmation signs all ${of} steps. If the ticket changes meanwhile, signing stops and what is already signed stays.`],
-    },
-    material,
-    events,
-    origin: null,
-  } as unknown as HandoffRequest
-}
-
-/** The first request of a quick start as the dashboard server sends it (the plan is derived, shown verbatim). */
-function quickRequest(action: Record<string, unknown>): HandoffRequest {
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const title = String(action.title)
-  const description = String(action.description ?? title)
-  const checks = ((action.checks as { text: string; cmd?: string }[] | undefined) ?? [{ text: title }]).map((c) => ({ text: c.text, cmd: c.cmd ?? null }))
-  const agent = (action.agent as { hours: number } | undefined) ?? null
-  const plan = ['Quick task: do these steps in order.', ...checks.flatMap((c, i) => [`${i + 1}. ${c.text}`, ...(c.cmd ? [`   Checked by: ${c.cmd}`] : [])])].join('\n')
-  const of = 6 + 2 * checks.length + (agent ? 1 : 0)
-  const key = 'DEMO-0200'
-  const uid = '01J9ZP0000000000000000X0AC'
-  const intent = { v: 1, kind: 'quick_task', title, description, checks, agent: agent ? { hours: agent.hours, scope: 'workable' } : null }
-  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }
-  const material = {
-    kind: 'payload' as const,
-    ticket: { key, uid },
-    sequence: { digest: 'sha256:' + 'd'.repeat(64), of, intent },
-    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
-  }
-  const digest = reviewDigestOf(material)
-  const events = [event] as unknown as HandoffEvent[]
-  const headline = `Start task ${key}: ${title}`
-  const until = new Date(Date.now() + (agent?.hours ?? 0) * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op: 'new',
-    key,
-    fingerprint: fingerprintOf(digest, events, 'new'),
-    review_digest: digest,
-    gate_hash: null,
-    headline,
-    content: {
-      headline,
-      subline: 'creates the task and approves its requirements and plan',
-      ticket: { key, title, uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
-      sections: [
-        { id: 'requirements', title: 'Requirements', text: description },
-        { id: 'plan', title: 'Plan', text: plan },
-      ],
-      acceptance: checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text, checked: false })),
-      tasks: checks.map((c, i) => ({ n: i + 1, id: `T${i + 1}`, title: `${c.text} (proves AC${i + 1})`, ...(c.cmd ? { verify: [c.cmd] } : {}) })),
-      fields_changed: [
-        { field: 'type', before: null, after: 'chore' },
-        { field: 'labels', before: null, after: 'quick' },
-      ],
-      notes: [
-        'Approves the requirements as written above, and the plan as written above.',
-        'The task still ends with your own verdict: nothing closes it for you.',
-        ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
-        `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
-      ],
-    },
-    material,
-    events,
-    origin: null,
-  } as unknown as HandoffRequest
-}
-
-/** The first request of an edit sequence as the dashboard server sends it: the first change as the host prepared it, the whole intent in the material, one SignContent with every change. */
-function editRequest(action: Record<string, unknown>): HandoffRequest {
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const key = String(action.key)
-  const uid = '01J9ZP0000000000000000X0AD'
-  const sections = Object.entries((action.sections ?? {}) as Record<string, string>)
-  const acceptance = (action.acceptance ?? { edit: {}, add: [] }) as { edit: Record<string, string>; add: string[] }
-  const people = (action.people ?? {}) as Record<string, { add: string[]; remove: string[] }>
-  const peopleRows = Object.entries(people).flatMap(([role, c]) => [...c.add.map((p) => ({ field: `${role}: add`, before: null, after: p })), ...c.remove.map((p) => ({ field: `${role}: remove`, before: null, after: p }))])
-  const links = action.links as { repos: string[]; branches: Record<string, string> } | undefined
-  const linkRows = (links?.repos ?? []).map((repo) => ({ field: `repository ${repo}`, before: 'not linked', after: links?.branches[repo] ? `linked, branch ${links.branches[repo]}` : 'linked, no branch' }))
-  const of = sections.length + Object.keys(acceptance.edit).length + acceptance.add.length + (links ? 1 : 0) + Object.keys(people).length
-  const intent = { v: 1, kind: 'edit_ticket', ticket: { key, uid }, ticket_type: 'feature', head: 'sha256:' + 'e'.repeat(64), sections: Object.fromEntries(sections.map(([sid, text]) => [sid, { was: 'sha256:' + '0'.repeat(64), text }])) }
-  const first = sections[0] ?? null
-  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'e'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.updated', base_rev: { [`body.${first?.[0] ?? 'summary'}`]: 'sha256:' + '0'.repeat(64) }, sections: { [first?.[0] ?? 'summary']: { hash: 'sha256:' + '1'.repeat(64), refs: [] } } }
-  const material = {
-    kind: 'payload' as const,
-    ticket: { key, uid },
-    texts: first ? { [first[0]]: first[1] } : {},
-    sequence: { digest: 'sha256:' + 'f'.repeat(64), of, intent },
-    review: [{ event_id: id, type: 'ticket.updated', payload: { base_rev: event.base_rev, sections: event.sections }, derived: {} }],
-  }
-  const digest = reviewDigestOf(material)
-  const events = [event] as unknown as HandoffEvent[]
-  const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
-  const headline = `Edit ${key}`
-  const changed = [...Object.entries(acceptance.edit).map(([id2, text]) => ({ id: id2, text })), ...acceptance.add.map((text, i) => ({ id: `AC${i + 4}`, text }))]
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op: 'section.set',
-    key,
-    fingerprint: fingerprintOf(digest, events, 'section.set'),
-    review_digest: digest,
-    gate_hash: null,
-    headline,
-    content: {
-      headline,
-      subline: 'its text, acceptance checks, repositories and people, as shown below',
-      ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
-      sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
-      ...(changed.length ? { acceptance: changed.map((c) => ({ ...c, checked: false })) } : {}),
-      fields_changed: [...linkRows, ...peopleRows],
-      notes: [
-        'Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing stops and nothing more is signed.',
-        `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
-      ],
-    },
-    material,
-    events,
-    origin: null,
-  } as unknown as HandoffRequest
-}
-
-/** The op of each request this preview prepared (the state it answers must name the same op). */
-const opOf = new Map<string, string>()
-let serial = 0
-function request(action: Record<string, unknown>): HandoffRequest {
-  if (action.action === 'new_sequence') return sequenceRequest(action)
-  if (action.action === 'edit_sequence') return editRequest(action)
-  if (action.action === 'quick_start') return quickRequest(action)
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const type = action.action === 'new' ? 'ticket.created' : 'ticket.updated'
-  const event = action.action === 'new' ? { type, ticket: { key: 'DEMO-0199', type: 'chore', title: action.title } } : { type, ticket: action.key, labels: action.labels }
-  const events = [{ v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, ...event }] as unknown as HandoffEvent[]
-  const { type: t, ...payload } = event
-  const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: t, payload, derived: {} }] }
-  const digest = reviewDigestOf(material)
-  const op = String(action.action)
-  if (action.action === 'runner_grant') {
-    const grant = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'grant.issued', grant: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', scope: action.scope, verbs: 'agent', label: 'runner', hours: action.hours, issued_at: '2026-10-17T09:00:00Z', expires_at: '2026-10-18T09:00:00Z' }
-    const { type: gt, v: _v, id: _id, actor: _a, auth: _au, hash_v: _h, roster_v: _r, based_on: _b, ...gp } = grant
-    const gm = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: gt, payload: gp, derived: {} }] }
-    const gd = reviewDigestOf(gm)
-    const ge = [grant] as unknown as HandoffEvent[]
-    return { id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'), code: '7F3K-Q2MA', expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'), state: 'prepared', op: 'grant', key: null, fingerprint: fingerprintOf(gd, ge, 'grant'), review_digest: gd, gate_hash: null, material: gm, events: ge, origin: null }
-  }
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op,
-    key: null,
-    fingerprint: fingerprintOf(digest, events, op),
-    review_digest: digest,
-    gate_hash: null,
-    material,
-    events,
-    origin: null,
-  }
-}
-
 const RUN_BASE = 'r_01M4Y46B485AXD4CBEJZ15Z1'
 const fixtureRun = (id: string, over: Partial<Run> = {}): Run => ({
   run: RUN_BASE + id, rev: 1, kind: 'shell', ticket: null, harness: 'shell', mode: null, model: null, as_person: true, state: 'running',
@@ -575,49 +339,8 @@ function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
   return { sendInput() {}, resize() {}, close: () => clearTimeout(timer) }
 }
 
-const LONG_LABEL = `Severin’s iPhone 17 Pro Max ${LONG_WORD}`.slice(0, 80)
-const pairOffer = (state: PairOfferStatus['state'], over: Partial<PairOfferStatus> = {}): PairOfferStatus => ({
-  offer_id: '7'.repeat(32), state, created_ms: Date.now() - 60_000, expires_ms: Date.now() + 240_000, scopes: ['look', 'decide'], label: LONG_LABEL, ...over,
-})
-// `member.list` as core serves it (v1.9 read_ext/3, H12d-2): every device has every field; `paired_at` and
-// `cert_expires_at` are RFC 3339 times, `reader` the counted level or null (no verified record).
-const pairDevice = (i: number, over: Partial<MemberDevice> = {}): MemberDevice => ({
-  id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`,
-  paired_at: new Date(Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z'), relay: true,
-  cert_expires_at: '2027-10-12T09:00:00Z', reader: 1, ...over,
-})
-export const MAC_DEVICE: MemberDevice = { id: 'd_' + 'f'.repeat(32), auth: 'passphrase', scopes: ['look', 'decide', 'operate', 'type'], valid: true, label: null, paired_at: null, relay: false, cert_expires_at: null, reader: 1 }
-const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
-  const member = (devices: MemberDevice[]): PairMember[] => [
-    // The Mac's own device was not paired through the relay (`relay: false`): it is not listed as a paired device.
-    { person: 'p_' + 'a'.repeat(32), name: 'Severin', role: 'owner', devices: [MAC_DEVICE, ...devices] },
-  ]
-  const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
-  switch (scenario) {
-    case 'pair-unavailable':
-    case 'pair-unavailable-click':
-      return { served: false }
-    case 'pair-blocked-convenience':
-      return {
-        preview: { blocked: { code: 'sign.convenience_readers', message: `click-to-sign is on for this workspace; a phone cannot be added while it is on (${LONG_WORD})`, cause: 'flag' } },
-        members: member([]),
-      }
-    case 'pair-pending':
-      return { offers: [pairOffer('pending', { sas: 'K7Q2MA' })], members }
-    case 'pair-cert':
-      return { offers: [pairOffer('cert_pending', { cert_code: 'H4WZ7P' })], members }
-    case 'pair-failed':
-      // A failed offer is not live: the scenario follows it as the page would right after the failure.
-      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: '7'.repeat(32) }, members }
-    case 'pair-devices':
-      return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
-    default:
-      return { members }
-  }
-}
-/** The roster a scenario reads: the pair fixture's members for `pair-*`, else the readers fixture. */
+/** The roster a scenario reads: the readers fixture. */
 function rosterFor(scenario: LayoutScenario): RosterMember[] {
-  if (scenario.startsWith('pair-')) return ({ ...pairOptions(scenario), ...pairOverride }.members ?? []) as RosterMember[]
   if (scenario === 'settings-approvals-stuck') return readersRoster().slice(0, 1)
   return readersRoster()
 }
@@ -718,15 +441,6 @@ export const dropPreviewForTests = {
   fixture: () => dropFixture,
 }
 
-let undoPair: (() => void) | null = null
-let pairOverride: PairFixtureOptions | null = null
-let pairFixture: PairFixture | null = null
-/** Tests: options merged into the next pair scenario, and the fixture it installed (to drive `pair` items). */
-export const pairPreviewForTests = {
-  set: (o: PairFixtureOptions | null) => void (pairOverride = o),
-  fixture: () => pairFixture,
-}
-
 let current: LayoutScenario = 'quick-normal'
 let installed = false
 const originals = new Map<string, unknown>()
@@ -745,17 +459,12 @@ export function resetLayoutPreview() {
     else a[name] = fn
   }
   originals.clear()
-  undoPair?.()
-  undoPair = null
-  pairOverride = null
-  pairFixture = null
   undoDrop?.()
   undoDrop = null
   dropOverride = null
   dropFixture = null
   installed = false
   current = 'quick-normal'
-  serial = 0
 }
 
 /** Replaces the mock api's methods that these pages call. Done once; the answers follow `current`. */
@@ -783,7 +492,7 @@ function install() {
   r.preview = async () => ({
     spec: 'f'.repeat(64), display: `$SHELL -l -c 'exec "$0" "$@"' ${LONG_WORD}`, display_hidden: false, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing`,
     cwd_path_hidden: false, notice: 'acts as you, not as an agent', as_person: true, login_shell: true, env: ['PATH', 'HOME', 'LANG', 'TERM', 'ORCH_TICKET', 'SHELL', 'USER', 'LOGNAME'],
-    blocked: null, warnings: [`The working copy ${LONG_URL} has uncommitted changes.`],
+    blocked: current === 'terminal-preview' ? { code: 'runner.disabled', message: `The host refused to open a terminal ${LONG_URL}` } : null, warnings: [`The working copy ${LONG_URL} has uncommitted changes.`],
   })
   r.ticket = async () => ({ ticket: 'layout-preview', expires_in_ms: 30000 })
   r.stop = async () => ({ state: 'exited', cleanup: 'incomplete' })
@@ -794,7 +503,7 @@ function install() {
   ag.preview = async () => agentPreview(current)
   ag.runnerReview = async (_ws: string, b: { on: boolean; terminals?: boolean }) => ({
     view: { op: b.on ? 'runner.on' : 'runner.off', on: b.on, terminals: b.on && !!b.terminals, lines: b.on
-      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
+      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Agents and terminals you start here work as you on this computer. They can run programs and open your files, including secret keys, and so can anything that takes over this dashboard. Only continue on a computer you trust.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
       : ['Turn off dashboard execution for Demo.', 'Open terminals close within a second; agents already running keep running; the dashboard starts no new ones.'] },
     view_digest: 'sha256:' + 'a'.repeat(64),
   })
@@ -859,18 +568,13 @@ function install() {
     }
     throw new TypeError('fixture: the connection was lost')
   })
-  set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => {
-    const made = request(action)
-    opOf.set(made.id, made.op)
-    return made
-  })
   set('getAddOns', async () => ({
     available: true,
     add_ons: [
       { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
       { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this computer, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
-      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true },
-      { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
+      { id: 'terminals', title: 'Command window', desc: 'Open a window on this computer where you type commands. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true },
+      { id: 'worktrees', title: 'Work copies', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
       { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
     ],
@@ -891,28 +595,41 @@ function install() {
   set('getRoster', async () => rosterFor(current))
   set('listHostGrants', async (_ws: string, active: boolean) => accessGrants(current).filter((g) => !active || (!g.revoked && Date.parse(g.expires_at) > Date.now())))
   set('getReaders', async () => current === 'readers-solo' ? { available: true, required_reader: 1, readers: [{ device: 'd_00112233445566778899aabbccddeeff', person: 'p_me', reader: 0, level: 0 }] } : readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
-  set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
-  set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
 
-/** The Wiki page with a faked server: no wiki folder (`wiki-empty`), or the folder just created (`wiki-created`). */
-function WikiPreview({ created }: { created: boolean }) {
+/**
+ * The Wiki view (the declarative nav page of the wiki add-on) over a faked server: no wiki folder (`wiki-empty`), a few
+ * pages (`wiki-created`, with the first open), or a long list (`wiki-many`). The node is the package's own view.
+ */
+function WikiPreview({ scenario }: { scenario: string }) {
   const [ready] = useState(() => {
-    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'wiki'] })
     const real = window.fetch.bind(window)
-    let made = created
     window.fetch = async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (!url.includes('/wiki')) return real(input, init)
-      if ((init?.method ?? 'GET') === 'POST') made = true
-      const body = made
-        ? { available: true, state: 'ok', message: null, total: 1, cut: false, pages: [{ slug: 'readme', title: 'Wiki', updated: null, by: null, tickets: [], links: 0, too_large: false }] }
-        : { available: true, state: 'no_folder', message: 'No wiki folder in this project yet.', total: 0, cut: false, pages: [] }
-      return new Response(JSON.stringify((init?.method ?? 'GET') === 'POST' ? { created: true, path: 'wiki/readme.md' } : body), { status: 200, headers: { 'content-type': 'application/json' } })
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.href)
+      const read = url.pathname.split('/view/')[1]
+      if (!read) return real(input, init)
+      const pages = scenario === 'wiki-many' ? WIKI_PREVIEW_PAGES.concat(Array.from({ length: 140 }, (_, i) => ({ id: `note-${i}`, title: `Meeting notes ${i + 1}`, markdown: `# Meeting notes ${i + 1}\n\nShort note.` }))) : WIKI_PREVIEW_PAGES
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (read === 'wiki.tree')
+        return scenario === 'wiki-empty'
+          ? json({ state: 'no_folder', message: 'No wiki folder in this project yet.', nodes: [], total: 0, cut: false, offer: { label: 'Create the wiki folder', action: 'create' } })
+          : json({ state: 'ok', message: null, nodes: pages.map((p) => ({ id: p.id, label: p.title, hint: p.id, ...('badge' in p ? { badge: p.badge } : {}) })), total: pages.length, cut: false })
+      if (read === 'wiki.page') {
+        const p = pages.find((x) => x.id === url.searchParams.get('id'))
+        return p ? json({ id: p.id, title: p.title, markdown: p.markdown, updated: '2026-10-20T09:30:00Z', by: 'Mara' }) : json({ error: { code: 'not_found', message: 'x', retryable: false } })
+      }
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      const hits = pages.filter((p) => p.title.toLowerCase().includes(q) || p.markdown.toLowerCase().includes(q))
+      return json({ results: hits.map((p) => ({ id: p.id, label: p.title, snippet: p.markdown.split('\n').find((l) => l.toLowerCase().includes(q) && !l.startsWith('#')) ?? p.title })), total: hits.length, cut: false })
     }
     return true
   })
-  return ready ? <WikiPage /> : null
+  return ready ? (
+    <div className="w-full space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Wiki</h1>
+      <AddonNode node={WIKI_PREVIEW_NODE} addon="wiki" />
+    </div>
+  ) : null
 }
 
 export function LayoutPreview({ name }: { name: string }) {
@@ -922,18 +639,13 @@ export function LayoutPreview({ name }: { name: string }) {
     if (!(LAYOUT_SCENARIOS as readonly string[]).includes(name)) return null
     install()
     current = name as LayoutScenario
-    if (current.startsWith('pair-')) {
-      undoPair?.()
-      pairFixture = createPairFixture({ ...pairOptions(current), ...pairOverride })
-      undoPair = installPairFixture(pairFixture)
-    }
     if (current.startsWith('drop-')) {
       undoDrop?.()
       dropFixture = createDropFixture({ ...dropOptions(current), ...dropOverride })
       undoDrop = installDropFixture(dropFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers', 'click-status', 'add-ons']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'runner', 'drop', 'members', 'readers', 'click-status', 'add-ons']) qc.removeQueries({ queryKey: [key] })
     // The topbar is already mounted and watches this one: it is refetched, not removed.
     void qc.invalidateQueries({ queryKey: ['host-info'] })
     return current
@@ -945,7 +657,10 @@ export function LayoutPreview({ name }: { name: string }) {
     setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'quick'] })
     return <QuickPage />
   }
-  if (scenario.startsWith('wiki-')) return <WikiPreview created={scenario === 'wiki-created'} />
+  if (scenario.startsWith('wiki-')) {
+    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'wiki', 'addons'] })
+    return <WikiPreview scenario={scenario} />
+  }
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
@@ -1003,10 +718,11 @@ export function LayoutPreview({ name }: { name: string }) {
         </div>
       </section>
     )
-  if (scenario.startsWith('pair-') || scenario === 'readers-devices' || scenario === 'readers-solo')
+  if (scenario.startsWith('addons-')) return <div className="max-w-3xl"><BuiltInAddOns workspace={workspace} /></div>
+  if (scenario === 'readers-devices' || scenario === 'readers-solo')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostDevices workspace={scenario === 'pair-unavailable-click' ? { ...workspace, click: { custody: 'convenience', enabled: true, available: true } } : workspace} />
+        <HostDevices workspace={workspace} />
       </SettingsFrame>
     )
   if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>
@@ -1034,7 +750,7 @@ function TerminalPreview({ scenario }: { scenario: LayoutScenario }) {
       <p className="p-3 text-xs text-text-muted">Real-host terminal dock ({scenario}): fixture runs and a fixture socket.</p>
       <div className="flex-1" />
       <RealDock prefs={{ open: true, side: 'bottom', bottom: 360, right: 480, harness: 'shell' } as never} side="bottom" size={360} view={view} area={view.width}
-        rightFits={false} setPrefs={() => {}} focus={{ current: null }} memory={new Map()} collapse={() => {}} autoPreview={scenario === 'terminal-preview'} />
+        rightFits={false} setPrefs={() => {}} focus={{ current: null }} memory={new Map()} collapse={() => {}} />
     </div>
   )
 }

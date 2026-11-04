@@ -51,9 +51,48 @@ class HubError(Exception):
         self.code = code
 
 
-def sign_with(key, label: str, o: Json) -> Json:
-    """``{"o", "sig"}`` with ``sig = Sign(key, label || cj(o))`` (test support)."""
-    return {"o": o, "sig": b64u(S.sign(key, H.signing_bytes(H.L[label], o)))}
+#: the TLS exporter every in-process (socketless) test link pretends to have (the vectors' fake exporter)
+TEST_EXPORTER = bytes.fromhex(V["link_auth"]["exporter_hex"])
+LINK_LABELS = ("sig_hub_link", "sig_hub_route")
+
+
+def sign_with(key, label: str, o: Json, exporter: bytes = TEST_EXPORTER) -> Json:
+    """``{"o", "sig"}`` with ``sig = Sign(key, label || cj(o))`` (test support). A link message (``sig_hub_link``,
+    ``sig_hub_route``) binds the connection's TLS exporter: ``label || exporter || cj(o)`` (R1)."""
+    msg = H.signing_bytes(H.L[label], o)
+    if label in LINK_LABELS:
+        msg = H.L[label] + exporter + msg[len(H.L[label]) :]
+    return {"o": o, "sig": b64u(S.sign(key, msg))}
+
+
+def signed_publish_where(
+    *,
+    seq: int = 1,
+    server: str = "https://pub.example.org",
+    share: str = "https://apps.example.org",
+    hub_id: str | None = None,
+    dev: bool = True,
+    key: str = "hk_op",
+) -> Json:
+    """A ``hub.publish_where`` (protocol 10.9.1) signed by ``key`` (the vector HK_op by default), test support."""
+    from orch.canon.jcs import dumps as cj
+    from orch.hubclient.publish_where import SIG_PUBLISH_WHERE
+
+    o = {
+        "v": 2, "suite": 2, "kind": "hub.publish_where", "hv": 0, "hub_id": hub_id or V["ids"]["hub"], "server": server,
+        "share": share, "seq": seq, "issued_ms": V["now_ms"], "dev": dev,
+    }  # fmt: skip
+    return {"o": o, "sig": b64u(S.sign(private_key(key), SIG_PUBLISH_WHERE + cj(o)))}
+
+
+class BareLink:
+    """Mixin for an in-process ``HubTransport`` with a ``send(message)`` method: ``HubLink`` numbers and signs through
+    ``send_next`` like a real link (one counter per transport, the fake exporter ``TEST_EXPORTER``)."""
+
+    def send_next(self, op: str, build: Callable[[int, bytes], Json]) -> Json:
+        n = self.__dict__.get("_bare_seq", 0) + 1
+        self.__dict__["_bare_seq"] = n
+        return self.send(build(n, TEST_EXPORTER))  # type: ignore[attr-defined]
 
 
 def owner_proof_for(binding: Json, workspace_id: str, op: str, now_ms: int, *, request_id: str | None = None) -> Json:
@@ -127,7 +166,7 @@ class _Ws:
     log_pages: list[Json] = field(default_factory=list)  # every log_sync body the hub accepted, in order
 
 
-class FakeHub:
+class FakeHub(BareLink):
     def __init__(
         self,
         *,
@@ -163,11 +202,12 @@ class FakeHub:
         roles: dict[str, str],
         revoked_channels: list[str] | None = None,
         market_policy: Json | None = None,
+        ends_ms: dict[str, int] | None = None,
     ) -> Json:
         """Sign the next snapshot version of a joined workspace (``roles``: user_id hex -> read | edit | admin)."""
         ws = self.workspaces[workspace_id]
         ws.snapshot = self._snapshot(
-            workspace_id, ws.snapshot["o"]["version"] + 1, roles, revoked_channels or [], market_policy
+            workspace_id, ws.snapshot["o"]["version"] + 1, roles, revoked_channels or [], market_policy, ends_ms
         )
         return ws.snapshot
 
@@ -240,7 +280,13 @@ class FakeHub:
         return sign_with(self._hk_op, "sig_hub_route", o)
 
     def _snapshot(
-        self, ws_id: str, version: int, roles: dict[str, str], revoked: list[str], market_policy: Json | None = None
+        self,
+        ws_id: str,
+        version: int,
+        roles: dict[str, str],
+        revoked: list[str],
+        market_policy: Json | None = None,
+        ends_ms: dict[str, int] | None = None,
     ) -> Json:
         o = {
             "v": 2,
@@ -255,6 +301,7 @@ class FakeHub:
             "issued_ms": self.now_ms,
             "roles": dict(roles),
             "revoked_channels": sorted(set(revoked)),
+            "ends_ms": dict(ends_ms or {}),
             "market_policy": DEFAULT_POLICY if market_policy is None else market_policy,
             "dev": self.dev_mode,
         }
@@ -272,7 +319,14 @@ class FakeHub:
         else:
             wsk, mode = ws.wsk_pub, ws.mode
         o = H.verify_link(
-            msg, direction="w2h", hub_id_=self.hub_id, workspace_id=ws_id, mode=mode, pub=wsk, now_ms=self.now_ms
+            msg,
+            direction="w2h",
+            hub_id_=self.hub_id,
+            workspace_id=ws_id,
+            mode=mode,
+            pub=wsk,
+            now_ms=self.now_ms,
+            exporter=TEST_EXPORTER,
         )
         op = o["op"]
         if ws is not None and ws.binding["status"] == "unbound" and op not in ("join", "binding_put"):
@@ -294,6 +348,12 @@ class FakeHub:
         return wsk, mode if mode in H.MODES else "selective"
 
     # --- ops ------------------------------------------------------------------------------------------------------
+
+    def _op_hub_where(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
+        answer = getattr(self, "where_answer", None)  # set by a test; otherwise this fake knows no such op
+        if answer is None:
+            raise H.Refused("unknown_op")
+        return answer
 
     def _op_snapshot_get(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         assert ws is not None
@@ -340,7 +400,7 @@ class FakeHub:
         self.published_cards[ws_id] = body["card"]
         if self.invites is not None:
             self.invites.pop(body["invite"], None)  # single use, consumed by a successful join
-        return {}
+        return dict(getattr(self, "join_answer", None) or {})  # set by a test: {"publish_where": ...} (#1838)
 
     def _op_card_put(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         pin = self.pins.get(ws_id)
@@ -567,7 +627,12 @@ class HostLink:
     def open_reply(self, reply: Json, request: Json) -> Json:
         """The host's checks on an h2w reply: envelope and signature under ``HK_op``, then the link's identity."""
         o = H._envelope(reply, "hub.link")
-        H._signature(reply, H.L["sig_hub_route"], self.hk_op_pub)
+        try:
+            sig = unb64u(reply["sig"], 64)
+        except H.CanonError:
+            raise H.Refused("malformed") from None
+        if not S.verify(self.hk_op_pub, sig, H.link_signed_bytes("h2w", TEST_EXPORTER, o)):
+            raise H.Refused("bad_signature")
         H._fields(o, "hub.link")
         want = request["o"]
         known = want["op"] in H.LINK_OPS

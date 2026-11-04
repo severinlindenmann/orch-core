@@ -1,3 +1,4 @@
+vi.mock('@/components/sign/trustedPress', () => ({ trustedPress: () => true }))
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -55,19 +56,18 @@ describe('the work folder line on the ticket page', () => {
     await waitFor(() => expect(get).toHaveBeenCalled())
     expect(container.textContent).toBe('')
   })
-  it('shows what is there, keeps the path under technical details, and deletes only after a confirmation', async () => {
+  it('shows what is there, keeps the path under technical details, and deletes only after an inline second press', async () => {
     get.mockResolvedValue({ available: true, exists: true, codebase: false, folder: '.orch-work/DEMO-0001', files: 14, bytes: 2_200_000, truncated: false })
     remove.mockResolvedValue({ deleted: true })
     const user = userEvent.setup()
     show()
-    expect(await screen.findByText(/Work folder: 14 files, 2.1 MB, not artifacts/)).toBeTruthy()
-    expect(screen.getByText('Technical details')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: 'Delete work folder' }))
+    expect(await screen.findByText(/14 files, 2.1 MB/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'More information' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Delete working files' }))
     expect(remove).not.toHaveBeenCalled() // the question comes first
-    expect(await screen.findByText(/cannot be undone/)).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
     get.mockResolvedValue({ available: true, exists: false, codebase: false })
-    const buttons = screen.getAllByRole('button', { name: 'Delete work folder' })
-    await user.click(buttons[buttons.length - 1])
+    await user.click(screen.getByRole('button', { name: 'Press again to delete' }))
     await waitFor(() => expect(remove).toHaveBeenCalledWith('w1', 'DEMO-0001', expect.stringMatching(/^a_/)))
   })
   it('says why a delete was refused', async () => {
@@ -75,9 +75,8 @@ describe('the work folder line on the ticket page', () => {
     remove.mockRejectedValue(new ApiError(409, { code: 'worktree.in_use', message: 'x', retryable: false }))
     const user = userEvent.setup()
     show()
-    await user.click(await screen.findByRole('button', { name: 'Delete work folder' }))
-    const buttons = screen.getAllByRole('button', { name: 'Delete work folder' })
-    await user.click(buttons[buttons.length - 1])
+    await user.click(await screen.findByRole('button', { name: 'Delete working files' }))
+    await user.click(screen.getByRole('button', { name: 'Press again to delete' }))
     expect(await screen.findByRole('alert')).toBeTruthy()
   })
 })

@@ -42,9 +42,9 @@ def bad(**over):
 
 
 def test_core_declares_api_1_1_and_a_1_1_add_on_needs_it():
-    assert ADDON_API == "1.1"
+    assert ADDON_API == "1.2"
     assert incompatibility(load(), "2.0.0.dev0") is None
-    m = load_manifest(json.dumps(manifest(schema="orch.addon/3", api=">=1.2,<2")).encode())
+    m = load_manifest(json.dumps(manifest(schema="orch.addon/3", api=">=1.3,<2")).encode())
     assert incompatibility(m, "2.0.0.dev0") is not None
 
 
@@ -103,7 +103,9 @@ def mutate(fn):
         lambda s: s["properties"]["claude"]["properties"]["work"].update(format="uri"),
         lambda s: s["properties"]["claude"]["properties"]["work"].update(pattern="^a+$"),
         lambda s: s["properties"]["claude"]["properties"]["work"].update(description="x"),
-        lambda s: s["properties"]["claude"]["properties"]["work"].update(default="opus"),
+        lambda s: s["properties"]["claude"]["properties"]["work"].update(
+            default="not-in-enum"
+        ),  # D3: a default is allowed, an invalid one is not
         lambda s: s.pop("additionalProperties"),
         lambda s: s.update(additionalProperties=True),
         lambda s: s.update(additionalProperties={"type": "string"}),

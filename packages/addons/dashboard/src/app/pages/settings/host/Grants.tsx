@@ -20,7 +20,14 @@ import { RunnerGrantCard } from '@/app/terminal/real/StartAgentDialog'
 import { Mono } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { GrantReveal } from './GrantReveal'
+import { agentPrefKey, readPref, writePref } from '../../new-ticket/useStartPlan'
 import { useViewerPerson, useViewerRole } from './useViewerRole'
+
+/** " (given 9 Oct 11:36)" for the access a follow-up grant came from, when that access is listed; nothing when it is not. */
+const parentOf = (lists: HostGrant[], more: HostGrant[], id: string) => {
+  const p = [...lists, ...more].find((x) => x.id === id)
+  return p ? ` (given ${fmtDateTime(p.issued_at)})` : ''
+}
 
 const state = (g: HostGrant, now: number) => (g.revoked ? 'revoked' : Date.parse(g.expires_at) <= now ? 'expired' : 'active')
 
@@ -48,7 +55,7 @@ function StopDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGrant
   )
 }
 
-/** "Give agents access": the same sheet as the pill in the top bar ("Let agents work"). */
+/** "Give agents access": the runner grant sheet (the same one Start agent opens when access is missing). */
 function GiveAccess({ ws }: { ws: string }) {
   const [open, setOpen] = useState(false)
   const qc = useQueryClient()
@@ -117,6 +124,18 @@ function GiveToolAccess({ workspace, onChanged }: { workspace: Workspace; onChan
   )
 }
 
+/** The default of the New ticket button: start an agent or only create (P09). The same per-person, per-workspace choice the form keeps. */
+export function StartDefault({ ws, person }: { ws: string; person: string }) {
+  const key = agentPrefKey(person, ws)
+  const [on, setOn] = useState(() => readPref(key).start)
+  return (
+    <div className="flex items-center gap-2 text-[13px]">
+      <Switch id="start-default" checked={on} onCheckedChange={(v) => { setOn(v); writePref(key, { ...readPref(key), start: v }) }} />
+      <Label htmlFor="start-default" className="font-normal">Start an agent when I create a ticket</Label>
+    </div>
+  )
+}
+
 /** Agent access as the host gives it to this person: an owner sees everyone's, anyone else their own. Stopping is one step: a reason (optional) and one sign button. */
 export function HostGrants({ workspace }: { workspace: Workspace }) {
   const [ended, setEnded] = useState(false)
@@ -133,8 +152,14 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
   const served = hasFeature('do:grant.revoke', workspace.id)
   const now = nowMs()
   const rows = grants.data ?? []
-  const active = rows.filter((g) => state(g, now) === 'active')
+  const live = rows.filter((g) => state(g, now) === 'active')
   const past = rows.filter((g) => state(g, now) !== 'active')
+  // Active on paper, but the agent runner on this computer does not hold it (an update restarts the runner and it loses the secret): agents cannot use it.
+  const orphanOf = (g: HostGrant) => g.label === 'runner' && g.person === viewer && heldId !== undefined && heldId !== g.id
+  // W17: an orphan beside the runner grant that IS held is superseded: no card of its own, one line in the held card.
+  const heldLive = heldId ? live.find((g) => g.id === heldId) : undefined
+  const superseded = heldLive ? live.filter(orphanOf) : []
+  const active = live.filter((g) => !superseded.includes(g))
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -144,6 +169,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
       <p className="text-[13px] text-text-muted">
         {role === 'owner' ? 'Who has let agents work in this workspace, and until when.' : 'The access you have given to your agents.'}
       </p>
+      {viewer && hasFeature('agent_start', workspace.id) && <StartDefault ws={workspace.id} person={viewer} />}
       {!grants.data ? (
         <p className="text-[13px] text-text-muted">Reading the agent access…</p>
       ) : (
@@ -155,8 +181,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
             </div>
           )}
           {active.map((g) => {
-            // Active on paper, but the agent runner on this computer does not hold it (an update restarts the runner and it loses the secret): agents cannot use it.
-            const orphan = g.label === 'runner' && g.person === viewer && heldId !== undefined && heldId !== g.id
+            const orphan = orphanOf(g)
             const who = visible(name(g.person))
             return (
               <article key={g.id} data-testid="grant-card" aria-label={`${who}’s agents`} className="space-y-3 rounded-lg border border-border bg-surface p-4">
@@ -168,11 +193,23 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   {AGENTS.map((a) => <AgentName key={a} harness={a} />)}
                 </div>
-                <p className="text-[13px]">Can work on tickets they are allowed to.</p>
+                {g.parent ? (
+                  <p className="text-[13px]" data-testid="grant-parent">
+                    A follow-up run: one session on one ticket, with the rights of the access it came from{parentOf(live, past, g.parent)}. It ends when the run ends.
+                  </p>
+                ) : (
+                  <p className="text-[13px]">Can work on tickets they are allowed to.</p>
+                )}
                 <p className="text-[13px] tabular-nums text-text-muted">
                   Agents can work until {fmtDateTime(g.expires_at)}{g.sessions > 0 ? ` · ${plural(g.sessions, 'agent')} running` : ''}
                 </p>
-                {orphan && <p data-testid="grant-not-held" className="text-[12px] text-text-muted">The agent runner on this computer no longer holds this access (an update resets it), so agents cannot use it. Give access again from the top bar, or stop this one.</p>}
+                {orphan && <div data-testid="grant-not-held" className="space-y-2 text-[12px] text-text-muted"><p>The agent runner on this computer no longer holds this access (an update resets it), so agents cannot use it. Give access again, or stop this one.</p><GiveAccess ws={workspace.id} /></div>}
+                {g === heldLive && superseded.length > 0 && canRevokeHostGrant(role, g.person, viewer) && (
+                  <p data-testid="grant-superseded" className="flex flex-wrap items-center gap-2 text-[12px] text-text-muted">
+                    {superseded.length === 1 ? 'An older access of yours is not in use any more.' : `${superseded.length} older accesses of yours are not in use any more.`}
+                    <Button variant="link" size="sm" className="h-auto p-0 text-[12px]" disabled={!served} onClick={() => setStopping(superseded[0])}>Stop it</Button>
+                  </p>
+                )}
                 {canRevokeHostGrant(role, g.person, viewer) && (
                   <Button variant="outline" size="sm" className="border-danger/50 text-danger hover:text-danger" disabled={!served} title={served ? undefined : 'This host cannot stop access yet.'} aria-label={`Stop access for ${who}`} onClick={() => setStopping(g)}>
                     Stop access

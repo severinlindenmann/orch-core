@@ -1,7 +1,6 @@
 // An add-on's settings in a right-hand side panel (#1237 pick 1.2a): the list stays in view. The controls come from the
 // schema the add-on declares: a fixed choice is a picker, a boolean a switch, a number a stepper with its range, and
-// only an open-ended text setting is an input. Save is one click and one Approve (the popover), or just one click when
-// One click is on (the press itself signs).
+// only an open-ended text setting is an input. The Save press prepares the One click review; its armed Approve signs.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import type { SchemaProp } from '@/api/addOnSwitches'
@@ -92,8 +91,8 @@ export function SettingsSheet({ workspace, name, onClose }: { workspace: Workspa
     ask({
       title: `Save ${title} settings`,
       action: { action: 'addon_settings', name, value: now },
-      autoStart: true,
-      autoSign: true,
+
+
       confirmLabel: 'Approve and save',
       doneToast: `${title} settings saved`,
       summary: <p className="text-[13px] text-text-muted">Saves the settings of {title} for this workspace.</p>,

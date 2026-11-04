@@ -95,6 +95,7 @@ def test_subagents_act_under_the_parents_claim_and_other_sessions_do_not(w):
     g = w.grant("sev")
     parent = w.agent("sev", g, "s_" + ulid(1))
     w.tev(uid, "claim.taken", parent)
+    w.approve_plan(uid)
     sub = w.agent("sev", g, "s_" + ulid(1) + ".1")
     stranger = w.agent("sev", g, "s_" + ulid(3))
     assert refused(w, uid, "task.started", sub, task="T1") is None
@@ -113,6 +114,7 @@ def test_lease_lapses_after_lease_ttl_min(w):
     g = w.grant("sev")
     p = w.agent("sev", g, "s_" + ulid(1))
     w.tev(uid, "claim.taken", p)
+    w.approve_plan(uid)
     sub1, sub2 = w.agent("sev", g, p["session"] + ".1"), w.agent("sev", g, p["session"] + ".2")
     w.tev(uid, "task.started", sub1, task="T1")
     w.clock += timedelta(minutes=61)
@@ -125,6 +127,8 @@ def test_releasing_the_claim_frees_leases(w):
     uid = w.ticket()
     w.edit(uid, "sev", {"ticket.tasks": [{"id": "T1", "text": "a", "verify": None, "proves": []}]})
     a = w.claim(uid)
+    w.approve_plan(uid)
     w.tev(uid, "task.started", a, task="T1")
+    assert w.view(uid).tasks[0].leased_by == a["session"]
     w.tev(uid, "claim.released", a, session=a["session"], reason="handoff")
     assert w.view(uid).tasks[0].state == "open" and w.view(uid).tasks[0].leased_by is None

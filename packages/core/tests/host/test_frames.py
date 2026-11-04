@@ -756,3 +756,11 @@ def test_two_mib_of_empty_objects_is_fatal():
     frames = decoder.feed(wire(body) + encode(REQ))
     assert len(frames) == 1 and frames[0].code == "frame.invalid"
     assert frames[0].fate == "close" and decoder.failed
+
+
+@pytest.mark.parametrize("op", ["spawn", "stop", "attach.end", "grant.put", "grant.put_run", "grant.drop"])
+def test_runner_command_ops_pass_the_envelope(op):
+    """A host->runner command frame with each op the host sends: an op the schema rejects would end the whole runner
+    session (found by the follow-up real-host e2e: ``grant.put_run`` has an underscore)."""
+    item = {"id": "1.c", "cmd": "0" * 26, "op": op, "args": {}}
+    validate_envelope({"t": "evt", "sub": "sub_a", "cursor": "1", "items": [item]}, sender="host")

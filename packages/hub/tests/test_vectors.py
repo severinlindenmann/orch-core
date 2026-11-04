@@ -94,6 +94,11 @@ def test_every_case_has_a_phase_and_negatives_cover_the_brief():
         "log_sync_proj_refreshed_by_overlap",
         "proj_build_stale_ticket_head",
         "proj_build_hash_differs",
+        "space_item_by_missing",
+        "space_item_by_bad_kind",
+        "space_item_by_agent_ok",
+        "space_item_restored_from_ok",
+        "space_item_restored_from_bad",
     ):
         assert must in names
 
@@ -103,11 +108,12 @@ def test_signature_both_ways(e):
     canonical = bytes.fromhex(e["canonical_hex"])
     assert cj(loads_strict(canonical)) == canonical
     msg = bytes.fromhex(e["signed_hex"])
-    assert msg == e["label"].encode() + canonical
+    binding = bytes.fromhex(e["exporter_hex"]) if "exporter_hex" in e else b""  # a link message binds the exporter (R1)
+    assert msg == e["label"].encode() + binding + canonical
     sig = unb64u(e["sig"], 64)
     assert S.verify(pub(e["signer"]), sig, msg)
     assert S.sign(KEYS[e["signer"]], msg, deterministic=True) == sig
-    assert not S.verify(pub(e["signer"]), sig, b"orch/v2/hub-x|" + canonical)
+    assert not S.verify(pub(e["signer"]), sig, b"orch/v2/hub-x|" + binding + canonical)
 
 
 def test_custodial_bytes():

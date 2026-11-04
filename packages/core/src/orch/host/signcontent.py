@@ -37,6 +37,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons import event_words
+from orch.addons.manifest import EVENTS_KEY
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from .review import OWNER_PROOF_LINE
@@ -55,7 +57,7 @@ TECHNICAL_KEYS = frozenset(
         "v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig", "seq", "at", "prev", "ws_seq",
         "host_sig",
         # hashes and attestations the details carry
-        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash", "owner_proof",
+        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash", "owner_proof", "remote_v",
         # C10: the id of the grant.requested a host-actor grant.issued answers; a person never signs it
         "request",
     }
@@ -63,10 +65,23 @@ TECHNICAL_KEYS = frozenset(
 
 #: per event type, the payload keys the plain view shows (in a section, a list or a field row)
 SHOWN: dict[str, frozenset[str]] = {
+    "schedule.set": frozenset({"schedule", "rule", "starts", "ends", "brief", "run_hours", "label", "target", "title"}),
+    "schedule.cancelled": frozenset({"schedule"}),
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
-        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections", "runtime"}
+        {
+            "name",
+            "version",
+            "package_sha256",
+            "capabilities",
+            "artifact_kinds",
+            "fields",
+            "sections",
+            "runtime",
+            EVENTS_KEY,
+            "staged",
+        }
     ),
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
@@ -79,6 +94,21 @@ SHOWN: dict[str, frozenset[str]] = {
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
     "hub.joined": frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}),
     "hub.left": frozenset({"hub_id", "binding_seq"}),
+    "remote.changed": frozenset({"on", "level", "until_ms", "premises", "agents_risk", "hub_mode"}),
+    "remote.device_added": frozenset(
+        {
+            "name",
+            "level_cap",
+            "device_id",
+            "person",
+            "presence_kind",
+            "transport_pub",
+            "presence_pub",
+            "expires_ms",
+            "fingerprint",
+            "code_id",
+        }
+    ),  # fmt: skip
     "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant", "reason"}),
     "log.added": frozenset({"text"}),
@@ -92,7 +122,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "settings.changed": frozenset({"set"}),
     "task.done": frozenset({"task", "receipt", "log", "text"}),
     "ticket.closed": frozenset({"resolution", "duplicate_of", "text"}),
-    "ticket.created": frozenset({"key", "ticket_type", "title", "owner"}),
+    "ticket.created": frozenset({"key", "ticket_type", "title", "owner", "schedule", "via"}),
     "ticket.moved": frozenset({"from", "to", "reason"}),
     "ticket.reopened": frozenset({"text"}),
     "ticket.updated": frozenset({"set", "sections"}),
@@ -103,6 +133,23 @@ SHOWN: dict[str, frozenset[str]] = {
 DETAILS_ONLY: dict[str, frozenset[str]] = {
     "grant.issued": frozenset({"grant", "scope", "verbs", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant"}),
+    # R2: shown in words (an end date, the six words of a fingerprint), the raw values stay in the technical details
+    "remote.changed": frozenset({"on", "until_ms", "premises", "agents_risk", "hub_mode"}),
+    "remote.device_added": frozenset(
+        {
+            "device_id",
+            "person",
+            "presence_kind",
+            "transport_pub",
+            "presence_pub",
+            "expires_ms",
+            "fingerprint",
+            "code_id",
+        }
+    ),
+    "addon.granted": frozenset(
+        {"staged"}
+    ),  # D3: the stage id is an opaque handle; the digest and capabilities are shown
 }
 
 #: the keys of a gate input the plain view shows, and the ones that are hashes; of its ``fields``, a task, an
@@ -162,6 +209,17 @@ def _show(value: Any) -> str | None:
 def _short(digest: Any) -> str:
     """The first 12 hex digits of a ``sha256:`` digest."""
     return _s(digest).removeprefix("sha256:")[:12]
+
+
+def _remote_end(ms: Any) -> str:
+    """An end date of remote access or a remote device (UTC, to the minute), or "when you turn it off"."""
+    if ms is None:
+        return "when you turn it off"
+    if type(ms) is not int or ms < 0:
+        raise PlainUnavailable("the end date is not a time")
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(ms // 1000, UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _fp(value: Any) -> str:
@@ -253,17 +311,24 @@ def _share_summary(text: str) -> dict[str, Any] | None:
         names.append(m.group(1))
     if len(rows) != int(head.group(1)) or not 1 <= len(rows) <= ap.LIMITS["files"]:
         return None
-    n, days = int(head.group(1)), int(works.group(1))
+    days = int(works.group(1))
     who = "Anyone who has the link can open the files"
     if once:
         views = int(once.group(1))
         who += f", at most {views} time{'' if views == 1 else 's'}"
+    # r12-P11: plain and short. The exact signed text (names, sizes, both origins, who prepared it, the
+    # ticket, the staged copy and the manifest) is whole in the "What you sign" fold; the file list is the dashboard's
+    # lead. A person can still tell where it goes: the reach word here, the address in the fold.
+    sent, opens = _reach(server.group(1)), _reach(share.group(1))
+    where = (
+        f"The files go to {sent}; the link opens there too."
+        if sent == opens
+        else f"The files go to {sent}; the link opens at {opens}."
+    )
     out = [
-        f"Files: {n} ({head.group(2)}): " + ", ".join(names),
-        f"Who can open them: {who}.",
-        f"The link works for {days} day{'' if days == 1 else 's'} from the moment it is made.",
-        f"The files are sent to {server.group(1)}; the link opens at {share.group(1)}.",
-        f"Prepared by {prepared.group(1)}. From ticket {ticket.group(1)} (key per host).",
+        f"{who}, for {days} day{'' if days == 1 else 's'}.",
+        where,
+        *(["An agent prepared this copy."] if prepared.group(1) == "an agent" else []),
     ]
     return {"title": "Share these files", "lines": out}
 
@@ -470,7 +535,21 @@ def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> boo
     out.setdefault("notes", []).append(
         "Files you share go to this server, signed by this workspace. Only a person can change it."
     )
+    out["notes"].append(f"Files are sent to: {_reach(value['server'])}. Links open at: {_reach(value['share'])}.")
     return True
+
+
+def _reach(origin: str) -> str:
+    """Where an address points, in the plain tags of the review: this computer, the office network, a public address."""
+    host = origin.split("://", 1)[-1].split(":", 1)[0]
+    if host in ("localhost", "127.0.0.1"):
+        return "this computer"
+    parts = host.split(".")
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        a, b = int(parts[0]), int(parts[1])
+        if a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 100 and 64 <= b <= 127):
+            return "the office network"
+    return "a public address"
 
 
 def _leaf_word(v: Any) -> str:
@@ -518,38 +597,6 @@ def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str 
         f"{one(name)} gets exactly these values when orch runs it; keys go through 'orch addon login', not here."
     )
     return f"Settings of {one(name)} (add-on)"
-
-
-def _icon_word(v: Any) -> str | None:
-    """``Rocket, Pink`` for a plain pair of the closed lists, else ``None``."""
-    from orch.wsicons import COLOUR_LABELS, ICON_LABELS
-
-    if (
-        not isinstance(v, Mapping)
-        or set(v) != {"icon", "colour"}
-        or not isinstance(v["icon"], str)
-        or not isinstance(v["colour"], str)
-        or v["icon"] not in ICON_LABELS
-        or v["colour"] not in COLOUR_LABELS
-    ):
-        return None
-    return f"{ICON_LABELS[v['icon']]}, {COLOUR_LABELS[v['colour']]}"
-
-
-def _icon_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
-    """``settings.changed`` ``set.icon``: the workspace icon in words (``Rocket, Pink``); ``None`` removes it. ``False``
-    (the generic row, every byte) when the value, or the host's current one, is not a plain pair of the closed lists."""
-    new = "(removed: default icon)" if value is None else _icon_word(value)
-    if new is None:
-        return False
-    old = "(default icon)" if before is None else _icon_word(before)
-    if old is None:
-        return False
-    _row(out, "Workspace icon", new, old, ctx.note(False))
-    out.setdefault("notes", []).append(
-        "The icon is shown beside the workspace name in menus. It never replaces the prefix."
-    )
-    return True
 
 
 _LINK_KEYS = frozenset({"repos", "branches", "prs", "external"})
@@ -694,6 +741,11 @@ def _task_rows(out: dict[str, Any], value: Any, before: Any, note: str | None) -
             _task_words(was) if was is not None else None,
             note,
         )
+
+
+def who_approves(gate_id: str) -> str:
+    """The label of a gate's rule row, in plain words (the rule itself is :func:`policy_words`)."""
+    return "Who approves the " + {"verify": "verify step"}.get(gate_id, gate_id)
 
 
 def policy_words(policy: Mapping[str, Any]) -> str:
@@ -1025,7 +1077,7 @@ def _gate(
     if not isinstance(policy, Mapping):
         raise PlainUnavailable("a gate request without its policy")
     if ctx.verified:  # the policy is shown only when the signer recomputed its hash from it
-        _row(out, "rule for this gate", policy_words(policy))
+        _row(out, who_approves(gate_id), policy_words(policy))
 
 
 def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
@@ -1205,11 +1257,34 @@ def _event(
     ctx: _Ctx,
 ) -> str:
     """The headline of one event; everything it shows is added to ``out``."""
+    if typ == "schedule.set":
+        from orch.model.schedules import validate_target
+        from orch.ops.schedule import describe, risk
+
+        if error := validate_target(ev):
+            raise PlainUnavailable(error)
+
+        for key in ("schedule", "starts", "ends", "run_hours", "label", "target", "title"):
+            if key in ev:
+                _row(out, key, ev[key])
+        out.setdefault("sections", []).append(
+            {"id": "brief", "title": "Instructions for each run", "text": _s(ev["brief"])}
+        )
+        out.setdefault("notes", []).extend(
+            [risk(ev.get("target", "existing")), "No click or confirmation is required at firing time."]
+        )
+        return describe(ev["rule"], ref, ev["ends"], ev.get("target", "existing"), ev.get("title"))
+    if typ == "schedule.cancelled":
+        _row(out, "schedule", ev["schedule"])
+        return f"Cancel future automatic sessions on {ref}; existing-ticket run grants also end"
     if typ == "ticket.created":
         title = _s(ev.get("title"))
         out["ticket"] = {**(out.get("ticket") or {}), "key": _s(ev.get("key")), "title": one(title)}
         _row(out, "type", ev.get("ticket_type"))
         _row(out, "owner", ev.get("owner"))
+        for field in ("schedule", "via"):
+            if field in ev:
+                _row(out, field, ev[field])
         tail = (out.get("ticket") or {}).get("uid_tail")
         return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (
             f" (key per host; signed id …{tail})" if tail else ""
@@ -1217,7 +1292,7 @@ def _event(
     if typ == "ticket.updated":
         return _updated(ev, ref, out, before, texts, ctx)
     if typ == "log.added":
-        from orch.publishclient.approval import MARK
+        from orch.publishclient.approval import APP_MARK, MARK
 
         text = _s(ev.get("text"))
         if text.startswith(MARK + "\n"):  # P5: a share approval; the words are the whole of what is signed
@@ -1226,6 +1301,12 @@ def _event(
                 "Files leave this computer only after you sign. You will see the link once; orch keeps no copy of it."
             )
             return f"Share files of {ref} outside this computer"
+        if text.startswith(APP_MARK + "\n"):  # #1457: an app release; the words are the whole of what is signed
+            out.setdefault("sections", []).append({"id": "app", "title": "What will go live", "text": text})
+            out.setdefault("notes", []).append(
+                "The app goes live for the people it names only after you sign. It runs code in their browsers."
+            )
+            return "Let an app go live"
         out.setdefault("sections", []).append({"id": "note", "title": "Note", "text": text})
         return f"Add a note to {ref}"
     if typ in ("ticket.closed", "ticket.reopened"):
@@ -1274,8 +1355,6 @@ def _event(
                 continue
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
                 continue
-            if key == "icon" and _icon_rows(out, value, before.get(key), ctx):
-                continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours
             out.setdefault("notes", []).append(
@@ -1315,10 +1394,11 @@ def _event(
             )
             return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(
-            "Selective: the hub sees only what you choose to share. It never gets the workspace key and is not a "
-            "member of the workspace. You can leave at any time (orch hub leave), also while the hub is down."
+            "Selective: the hub sees only what you choose to share, plus this workspace's name. It never gets the "
+            "workspace key and is not a member of the "
+            "workspace. You can leave at any time (orch hub leave), also while the hub is down."
         )
-        return f"Join hub {hub} in selective mode: the hub sees only what you share"
+        return f"Join hub {hub} in selective mode: the hub sees only what you share, plus this workspace's name"
     if typ == "hub.left":
         _row(out, "hub", ev.get("hub_id"))
         _row(out, "binding", ev.get("binding_seq"))
@@ -1329,6 +1409,36 @@ def _event(
             "never gets."
         )
         return f"Leave hub {_short(ev.get('hub_id'))}"
+    if typ == "remote.changed":  # R2: the owner's remote policy; the words say what a remote device can then do
+        _row(out, "level", ev.get("level"))
+        _row(out, "ends", _remote_end(ev.get("until_ms")))
+        _row(out, "at a customer's place", "yes" if ev.get("premises") == "yes" else "no")
+        _row(out, "owner proof", OWNER_PROOF_LINE)
+        if ev.get("agents_risk") is True:
+            out.setdefault("notes", []).append("Agents on this computer can act as you.")
+        if ev.get("hub_mode") == "full":
+            out.setdefault("notes", []).append(
+                "The hub can already act for people in this workspace. Remote access does not change that."
+            )
+        out.setdefault("notes", []).append(
+            "Only devices you add at this computer can use this workspace from afar, and only up to this level. "
+            "You can turn it off here at any time."
+        )
+        return f"Turn on remote access ({_s(ev.get('level'))})"
+    if typ == "remote.device_added":  # R2: the six words are the device's own fingerprint, shown on both sides
+        from orch.hubclient import wire
+
+        try:
+            words = wire.fingerprint_words(bytes.fromhex(_s(ev.get("fingerprint"))))
+        except Exception:  # noqa: BLE001
+            raise PlainUnavailable("the device fingerprint is not a fingerprint") from None
+        _row(out, "device", ev.get("name"))
+        _row(out, "fingerprint", words)
+        _row(out, "level", ev.get("level_cap"))
+        _row(out, "ends", _remote_end(ev.get("expires_ms")))
+        _row(out, "owner proof", OWNER_PROOF_LINE)
+        out.setdefault("notes", []).append("Check that the device shows the same six words before you sign.")
+        return f"Add the remote device {_s(ev.get('name'))}"
     if typ == "people.changed":
         role = _s(ev.get("role"))
         add, remove = ev.get("add") or [], ev.get("remove") or []
@@ -1430,6 +1540,10 @@ _CAPABILITY_WORDS = {
     "credential": "get the key you store for this add-on with 'orch addon login' and send it over the internet",
 }
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+#: The plain name of a built-in add-on in "Turn on ...": one name everywhere (setup, Settings, the sign card).
+#: Display only, and only for the real built-in package (checked by digest).
+#: The signed ``name`` row stays the raw value.
+_ADDON_PLAIN_NAMES = {"terminals": "Command window"}
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
 
 
@@ -1456,6 +1570,12 @@ EXPLORER_ROW = (
 )
 
 
+def _is_builtin_package(ev: Mapping[str, Any], name: str) -> bool:
+    from orch.addons import builtin
+
+    return builtin.is_builtin_package(ev, name)
+
+
 def _is_builtin_explorer(ev: Mapping[str, Any]) -> bool:
     from orch.addons import builtin
 
@@ -1470,13 +1590,32 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     name = _s(ev.get("name"))
     named = _ADDON_NAME.fullmatch(name) is not None
     nice = name.replace("-", " ").replace("_", " ").capitalize() if named else name
+    if named and name in _ADDON_PLAIN_NAMES and _is_builtin_package(ev, name):
+        # only the real built-in package (by digest); a package that merely carries the name keeps the mechanical one
+        nice = _ADDON_PLAIN_NAMES[name]
     if typ == "addon.disabled":
+        # turning off is the safe direction and carries no package: the display name goes by id alone
+        nice = _ADDON_PLAIN_NAMES.get(name, nice) if named else nice
+        if named:
+            _row(out, "add-on", name)  # the real signed value stays visible next to the display name
+            # W07: the same compact review as turning on: what changes, in plain lines (the signed value is the row)
+            out["title"] = f"Turn off {nice}"
+            out["summary"] = {
+                "title": f"Turn off {nice}",
+                "lines": [
+                    f"{nice} stops working in this workspace until you turn it on again.",
+                    "Its settings and saved data stay in this workspace.",
+                    # Opus W07 N1: these do not come back when it is turned on again
+                    "Waiting follow-ups and scheduled runs that depend on it are cancelled and do not come back.",
+                ],
+            }
         return f"Turn off {nice}" if named else f"Disable the add-on {name}"
     if typ == "addon.purged":
         return f"Purge the add-on {name}"
     version = ev.get("version")
     words = _capability_words(ev.get("capabilities"))
-    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
+    keys = ("fields", "sections", "artifact_kinds", "runtime", EVENTS_KEY)
+    declares = any(ev.get(k) not in (None, [], {}) for k in keys)
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
@@ -1505,6 +1644,9 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
+    if ev.get(EVENTS_KEY):
+        _row(out, "can wake", ev[EVENTS_KEY])
+        out.setdefault("notes", []).extend(_events_words(ev[EVENTS_KEY], ev.get("capabilities") or ()))
     if ev.get("runtime") is not None:
         runtime = ev["runtime"]
         _row(out, "dependencies", runtime)
@@ -1531,6 +1673,25 @@ def _deps_words(deps: Any) -> str:
     ):
         raise PlainUnavailable("the plain view does not know these packages")
     return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)
+
+
+def _events_words(events: Any, capabilities: Any = ()) -> list[str]:
+    """addon-api 1.2 (#718): a signed `events` declaration in words (the shared phrasing). Any other shape is the full
+    review."""
+    if (
+        not isinstance(events, list)
+        or not 1 <= len(events) <= 8
+        or not all(
+            isinstance(e, Mapping)
+            and set(e) == {"kind", "title", "statuses", "ref", "interval_s"}
+            and isinstance(e["title"], str)
+            and type(e["interval_s"]) is int
+            for e in events
+        )
+        or not isinstance(capabilities, (list, tuple))
+    ):
+        raise PlainUnavailable("the plain view does not know these events")
+    return event_words.event_lines(events, capabilities, one)
 
 
 _RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}

@@ -1,0 +1,9 @@
+[Unit]
+Description=orch server health check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -P -m orch.install.ops health --config /home/u/h.json
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes

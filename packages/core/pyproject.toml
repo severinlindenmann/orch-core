@@ -8,6 +8,7 @@ license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=43",
+    "fido2>=2",  # R5: FIDO2 presence key where there is no Secure Enclave (remote client, custody kind remote-presence)
     "jsonschema>=4.26.0",
     "packaging>=24",  # lockfile and marker parsing (marketplace spec 15.2-11)
     "pip>=24",  # installs add-on wheels offline into their own environment (spec 8.2, design G4)
@@ -19,7 +20,15 @@ dependencies = [
 orch = "orch.cli.main:entry"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-xdist>=3.6", "hypothesis>=6", "ruff>=0.6"]
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3.6",
+    "pytest-timeout>=2.3",
+    "hypothesis>=6",
+    "ruff>=0.6",
+    "markdown-it-py>=3",
+    "pyyaml==6.0.3",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -33,9 +42,15 @@ artifacts = ["src/orch/_build.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--durations=15"
+# a hung test fails with every thread's stack instead of blocking the run (thread: works under xdist and on Windows)
+timeout = 300
+timeout_method = "thread"
 markers = [
     "needs_os_users: requires root and ORCH_TEST_OS_USERS=1 to exercise a second real OS user",
     "slow: takes more than ~2 s (builds wheels, property sweeps); a quick loop skips it with -m 'not slow'",
+    "linux_root: creates real system users/units as root on a CI Linux runner; CI runs it alone, serially, after the parallel run",
+    "linux_root: creates real system users/units as root on a CI Linux runner; CI runs it serially after the parallel run, and in orch-core-root.yml",
+    "real_private_group: runs the real private-group lookup of orch.privdir (the default is a shared group)",
     "windows_smoke: part of the Windows smoke job (pure unit, runs on every OS)",
     "t2_long: a T2 test with its own longer real-time budget, t2_long(seconds); runs once, on the default cap",
 ]

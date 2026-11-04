@@ -155,13 +155,12 @@ def test_i2_this_server_has_no_hub_code_no_hub_client_and_no_outbound_fetch():
         }, name
 
 
-def test_click_status_reports_the_mode_and_prepare_is_refused_in_full_mode(client, token, stub, script, monkeypatch):
+def test_click_status_reports_the_mode_and_prepare_is_open_in_full_mode(client, token, stub, script, monkeypatch):
     monkeypatch.setattr(click, "mode_of", lambda gateway, ws: "full")
     assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["mode"] == "full"
-    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
     res = prepare(client, token, stub)
-    assert res.status_code == 403 and res.json()["error"]["code"] == "sign.hub_only"
-    assert script.prepared == 0  # the signer is never asked
+    assert res.json().get("error", {}).get("code") != "sign.hub_only"
+    assert script.prepared == 1  # A1: a local signature is valid in every hub mode
 
 
 def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, backup, monkeypatch):
@@ -172,27 +171,122 @@ def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, b
     assert script.prepared == 1  # the signer was asked: the full-mode refusal did not fire
 
 
-def test_unknown_mode_is_refused_like_full(client, token, stub, script, monkeypatch):
-    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "unknown")
-    assert prepare(client, token, stub).json()["error"]["code"] == "sign.hub_only"
+RID = "hr_01J9ZP0000000000000000HND1"
+ADDON = {
+    "mode": "full", "where": "hub", "kind": "addon", "pending": True,
+    "summary": {"kind": "addon", "name": "wiki", "version": "1.2.0", "package_sha256": "sha256:" + "a" * 64,
+                "capabilities": ["network"]},
+    "short_hash": "aaaa aaaa aaaa",
+    "url": f"https://hub.example.test:4443/#/w/{WS}/addon/eyJhIjoxfQ",
+}  # fmt: skip
 
 
-def test_selective_and_standalone_prepare_as_before(client, token, stub, script, monkeypatch):
-    for mode in ("selective", "standalone", None):
-        monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws, m=mode: m)
-        assert prepare(client, token, stub).json().get("error", {}).get("code") != "sign.hub_only"
+def test_an_add_on_approval_is_relayed_with_a_closed_shape():
+    link = Link({"hub.handoff": ADDON})
+    res = post(app_for(link), {"kind": "addon", "request": RID})
+    assert res.status_code == 200
+    summary = {"kind": "addon", "name": "wiki", "version": "1.2.0", "capabilities": ["network"]}
+    assert res.json() == {"mode": "full", "kind": "addon", "summary": summary, "short_hash": "aaaa aaaa aaaa",
+                          "url": ADDON["url"]}  # fmt: skip
+    assert link.calls == [("hub.handoff", {"kind": "addon", "request": RID})]
 
 
-def test_the_today_rows_say_sign_hub_in_full_mode_only(client, token, stub, rich, monkeypatch):
-    path = f"/api/w/{stub.ws}/today"
-    plain = client.get(path, headers=hdr(token, False)).json()
-    assert all("sign" not in n for n in plain["needs_you"])
-    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
-    full = client.get(path, headers=hdr(token, False)).json()
-    assert full["needs_you"] and all(n["sign"] == "hub" for n in full["needs_you"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"kind": "addon"},
+        {"kind": "addon", "request": "x"},
+        {"kind": "addon", "request": RID, "ticket": "DEMO-0001"},
+        {"kind": "gate", "request": RID},
+        {"kind": "gate"},
+    ],
+)
+def test_an_add_on_approval_and_a_ticket_approval_never_mix(body):
+    assert post(app_for(Link({"hub.handoff": ADDON})), body).status_code in (400, 422)
 
 
-def test_the_error_code_is_allowed_through_and_is_a_403():
-    res = host_response(fail("sign.hub_only", exit=3))
-    assert res.status_code == 403
-    assert ORIGIN
+BAD_ADDON = [
+    {"url": f"https://hub.example.test/#/w/{WS}/addon/a b"},
+    {"url": "https://evil.example/x"},
+    {"summary": {"name": 1}},
+]
+
+
+@pytest.mark.parametrize("bad", BAD_ADDON)
+def test_an_add_on_answer_off_the_grammar_is_dropped(bad):
+    res = post(app_for(Link({"hub.handoff": {**ADDON, **bad}})), {"kind": "addon", "request": RID})
+    assert res.status_code == 500 or res.json()["error"]["code"] == "internal"
+
+
+def test_the_add_on_link_is_moved_to_the_hubs_web_console_origin(monkeypatch):
+    """Round 3: the host's link names the hub LINK port; the person signs in at the web console."""
+    from orch_dashboard import switch
+
+    monkeypatch.setattr(switch, "browser_origin", lambda request: "http://127.0.0.1:8200")
+    rail = {"hub": {"name": "Hub", "origin": "http://127.0.0.1:8100"}, "workspaces": []}
+    link = Link({"hub.handoff": ADDON, "hub.switch": rail})
+    res = post(app_for(link), {"kind": "addon", "request": RID})
+    assert res.json()["url"] == f"http://127.0.0.1:8100/#/w/{WS}/addon/eyJhIjoxfQ"
+    assert ("hub.switch", {"kind": "rail", "origin": "http://127.0.0.1:8200"}) in link.calls
+
+
+def test_the_add_on_link_for_this_computer_names_the_other_device_form(monkeypatch):
+    from orch_dashboard import switch
+
+    monkeypatch.setattr(switch, "browser_origin", lambda request: "http://127.0.0.1:8200")
+    rail = {"hub": {"name": "Hub", "origin": "http://127.0.0.1:8100", "network_origin": "http://100.71.14.98:8100"}}
+    res = post(app_for(Link({"hub.handoff": ADDON, "hub.switch": rail})), {"kind": "addon", "request": RID})
+    assert res.json()["url"] == f"http://127.0.0.1:8100/#/w/{WS}/addon/eyJhIjoxfQ"
+    assert res.json()["other_url"] == f"http://100.71.14.98:8100/#/w/{WS}/addon/eyJhIjoxfQ"
+    rail["hub"]["network_origin"] = "javascript:alert(1)"  # off the origin grammar: dropped
+    res = post(app_for(Link({"hub.handoff": ADDON, "hub.switch": rail})), {"kind": "addon", "request": RID})
+    assert "other_url" not in res.json()
+
+
+def test_without_a_console_origin_the_hosts_link_stands():
+    res = post(
+        app_for(Link({"hub.handoff": ADDON, "hub.switch": RuntimeError("no rail")})), {"kind": "addon", "request": RID}
+    )
+    assert res.json()["url"] == ADDON["url"]
+
+
+SETTINGS = {
+    "mode": "full", "where": "hub", "kind": "settings", "short_hash": None,
+    "summary": {"kind": "settings", "set": {"grant_hours": 24}},
+    "url": f"https://hub.example.test:4443/#/w/{WS}/settings/eyJncmFudF9ob3VycyI6MjR9",
+}  # fmt: skip
+
+
+def test_a_settings_change_is_relayed_with_a_closed_shape():
+    link = Link({"hub.handoff": SETTINGS})
+    res = post(app_for(link), {"kind": "settings", "set": {"grant_hours": 24}})
+    assert res.status_code == 200
+    summary = {"kind": "settings", "set": {"grant_hours": 24}}
+    assert res.json() == {"mode": "full", "kind": "settings", "summary": summary, "short_hash": None,
+                          "url": SETTINGS["url"]}  # fmt: skip
+    assert link.calls == [("hub.handoff", {"kind": "settings", "set": {"grant_hours": 24}})]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"kind": "settings"},
+        {"kind": "settings", "set": {"grant_hours": 1}, "request": RID},
+        {"kind": "gate", "set": {"grant_hours": 1}},
+    ],
+)
+def test_a_settings_change_names_only_its_settings(body):
+    assert post(app_for(Link({"hub.handoff": SETTINGS})), body).status_code in (400, 422)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"summary": {"kind": "settings", "set": {"retention_days": 1}}},  # not a setting the grammar knows
+        {"summary": {"kind": "settings", "set": {"grant_hours": 999}}},
+        {"url": "https://evil.example/x"},
+    ],
+)
+def test_a_settings_answer_off_the_grammar_is_dropped(bad):
+    res = post(app_for(Link({"hub.handoff": {**SETTINGS, **bad}})), {"kind": "settings", "set": {"grant_hours": 24}})
+    assert res.status_code == 500 or res.json()["error"]["code"] == "internal"

@@ -22,6 +22,8 @@ import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
 import { INTERNAL_LINK, MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown, SafeMarkdownChunk } from './SafeMarkdown'
+import { TreeNode } from './TreeNode'
+import { SearchNode } from './SearchNode'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
 import { roleReason, useRunAddonAction, type ActionError } from './useRunAddonAction'
@@ -40,6 +42,7 @@ import { useMe } from '@/app/useMe'
 const ThemedForm = lazyWithPreload(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
 const DecisionNode = lazyWithPreload(() => import('./DecisionNode'))
+const FollowupsList = lazyWithPreload(() => import('@/app/pages/schedules/FollowupsPanel'))
 const TerminalView = lazyWithPreload(() => import('@/app/terminal/TerminalView'))
 // Ticket widgets (parser, core types, template frames) load on first use too.
 const WidgetNodeView = lazyWithPreload(() => import('@/app/pages/ticket/widgets/WidgetNode'))
@@ -47,7 +50,7 @@ const WidgetIndexView = lazyWithPreload(() => import('@/app/pages/ticket/widgets
 
 /** Loads the renderers above (and markdown, charts) ahead of use: see preloadNodes.ts. Never rejects. */
 export function preloadAddonNodes(): Promise<void> {
-  const all = [ThemedForm, DecisionNode, TerminalView, WidgetNodeView, WidgetIndexView, SafeMarkdownChunk, AddonChartChunk]
+  const all = [ThemedForm, DecisionNode, FollowupsList, TerminalView, WidgetNodeView, WidgetIndexView, SafeMarkdownChunk, AddonChartChunk]
   return Promise.allSettled(all.map((c) => c.preload())).then(() => undefined)
 }
 
@@ -144,6 +147,7 @@ export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = f
 
 function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
   const { addon, glance } = useContext(RuntimeCtx)
+  const workspaceId = useWorkspace().workspace?.id
   const parsed = depth > MAX_DEPTH ? ({ ok: false } as const) : parseNode(raw)
   if (!parsed.ok) return <AddonUnavailable addon={addon} />
   const n = parsed.node
@@ -216,6 +220,12 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
           <GuardedDecision addon={addon} id={n.id} />
         </Suspense>
       )
+    case 'followups':
+      return addon === 'schedules' ? (
+        <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+          <FollowupsList />
+        </Suspense>
+      ) : null
     case 'widget':
       return (
         <Suspense fallback={<Skeleton className="h-24 w-full" />}>
@@ -234,6 +244,17 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return <FoldView node={n} depth={depth} />
     case 'popover':
       return <PopoverView node={n} depth={depth} />
+    case 'tree':
+      return (
+        <TreeNode
+          node={n}
+          addon={addon}
+          ws={workspaceId}
+          renderOffer={(o) => <NodeView node={{ type: 'button', label: o.label, action: o.action, variant: 'primary' }} depth={depth + 1} />}
+        />
+      )
+    case 'search':
+      return <SearchNode node={n} addon={addon} ws={workspaceId} />
     case 'link':
       if (INTERNAL_LINK.test(n.href)) return <InternalLink href={n.href} label={n.label} />
       if (n.copy) return <CopyableLink href={n.href} label={n.label} />

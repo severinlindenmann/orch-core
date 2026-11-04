@@ -3,15 +3,20 @@
     orch publish setup   --server ADDRESS --share ADDRESS     a person: where files go (signed)
     orch publish register                                      a person: tell the server this workspace exists
     orch publish prepare REF FILE... [--once [N]] [--days D]   copy artifacts of a ticket aside; nothing leaves
+    (D for prepare: 1, 3, 7 or 30 days; default 7)
     orch publish share   STAGED                                a person: sign, then send; the link shows once
     orch publish send    STAGED                                a person: send a copy that is already signed
     orch publish revoke  SHARE [--yes]                          a person: the link stops working at once (asks first)
-    orch publish list    [REF] [--live]                        staged copies and shares (never a link)
+    orch publish extend  SHARE --days D                         a person: the link works D more days from now (1..30)
+    orch publish password SHARE                                 a person: a generated password for the link, shown once
+    orch publish list    [REF] [--local]                       staged copies and shares (never a link)
+    (list asks the server for each share's state and views; --local shows only this computer's record)
     orch publish discard STAGED                                drop a staged copy
 
 An agent (``ORCH_GRANT`` set) may ``prepare``, ``list`` and ``discard`` on its own ticket and nothing else: ``share``,
-``send``, ``revoke``, ``setup`` and ``register`` are refused here (``op.not_allowed``), and the host refuses them again
-(column P only). Every share needs a person's signature over the exact files, server, link kind and days.
+``send``, ``revoke``, ``extend``, ``password``, ``setup`` and ``register`` are refused here (``op.not_allowed``), and
+the host refuses them again (column P only). Every share needs a person's signature over the exact files, server,
+link kind and days.
 
 The link is written to the person's own terminal (``/dev/tty``) and nowhere else: not stdout, not a pipe, not a log.
 This command keeps no copy. Without a terminal ``share`` and ``send`` stop before anything is sent.
@@ -28,12 +33,22 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch.ops.human import review_prompt
+from orch.publishclient import approval
+
 __all__ = ["main"]
 
 _USAGE = (
     "usage: orch publish {setup --server ADDRESS --share ADDRESS | register | prepare REF FILE... [--once [N]] "
-    "[--days D] | share STAGED | send STAGED | revoke SHARE | list [REF] [--live] | discard STAGED} [--json]"
+    "[--days D] | share STAGED | send STAGED | revoke SHARE | extend SHARE --days D | password SHARE | "
+    "list [REF] [--local] | discard STAGED} [--json]"
 )
+_NOT_CHECKED = "(not checked with the server: showing this computer's record)"
+_WHY = {
+    "unreachable": "(the server could not be reached: this is this computer's last record)",
+    "not_allowed": "(the hub has not switched on publishing for this workspace: this is this computer's last record)",
+    "refused": "(the publish server did not take the request: this is this computer's last record)",
+}  # `local` says nothing
 _AGENT_OK = frozenset({"prepare", "list", "discard"})
 _PERSON_ONLY_MESSAGE = "a person does this; an agent only prepares (orch publish prepare)"
 
@@ -50,13 +65,17 @@ def _parser() -> argparse.ArgumentParser:
             raise PubError("invalid.input", f"{message}\n{_USAGE}", 2)
 
     p = Quiet(prog="orch publish", add_help=False)
-    p.add_argument("cmd", choices=("setup", "register", "prepare", "share", "send", "revoke", "list", "discard"))
+    p.add_argument(
+        "cmd",
+        choices=("setup", "register", "prepare", "share", "send", "revoke", "extend", "password", "list", "discard"),
+    )
     p.add_argument("rest", nargs="*")
     p.add_argument("--server")
     p.add_argument("--share", dest="share_addr")
     p.add_argument("--once", nargs="?", const=1, type=int, default=None)
-    p.add_argument("--days", type=int, default=7)
-    p.add_argument("--live", action="store_true")
+    p.add_argument("--days", type=int, default=None)
+    p.add_argument("--live", action="store_true")  # a no-op alias: the live view is the default now
+    p.add_argument("--local", action="store_true")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--workspace")
@@ -96,32 +115,6 @@ def _tty_ok() -> bool:
         return False
     try:
         return os.isatty(fd)
-    finally:
-        os.close(fd)
-
-
-def _confirm(prompt: str, word: str) -> bool:
-    """Ask on the person's own terminal (``/dev/tty``) and go on only if they type ``word``; no terminal is a plain
-    refusal that names ``--yes``. Tests replace this."""
-    from orch.ops.caps import open_tty
-
-    try:
-        fd = open_tty(os.O_RDWR)
-    except OSError:
-        raise PubError("invalid.input", "no terminal to confirm on: run this in a terminal, or add --yes", 5) from None
-    try:
-        if not os.isatty(fd):
-            raise PubError("invalid.input", "no terminal to confirm on: run this in a terminal, or add --yes", 5)
-        os.write(fd, prompt.encode())
-        line = bytearray()
-        while True:
-            c = os.read(fd, 1)
-            if not c or c == b"\n":
-                break
-            line += c
-        return bytes(line).strip().decode("utf-8", "replace") == word
-    except (KeyboardInterrupt, OSError):
-        return False
     finally:
         os.close(fd)
 
@@ -189,6 +182,7 @@ def _allow_on_local_server(info: Mapping[str, Any], env: Mapping[str, str]) -> b
     workspace on it, as its admin would. False when no publish server is installed here or the admin tool fails."""
     import subprocess
 
+    from orch import childenv
     from orch.install.state import Layout, load
 
     ws, owner = info.get("workspace"), info.get("owner")
@@ -197,9 +191,10 @@ def _allow_on_local_server(info: Mapping[str, Any], env: Mapping[str, str]) -> b
     if not rec or not ws or not owner:
         return False
     base = [str(rec["binary"]), "admin", "--data", str(lay.data("publish"))]
+    child = childenv.sanitize(env)  # the admin tool is a program of the person's: no loader variable reaches it
     for tail in (["owners", "add", str(owner)], ["ws", "allow", str(ws), str(owner)]):
         try:
-            if subprocess.run([*base, *tail], capture_output=True, timeout=30).returncode != 0:
+            if subprocess.run([*base, *tail], capture_output=True, timeout=30, env=child).returncode != 0:
                 return False
         except (OSError, subprocess.SubprocessError):
             return False
@@ -275,6 +270,34 @@ def _send(target: Any, staged: str, env: Mapping[str, str], out: TextIO, as_json
     return 0
 
 
+def _password(target: Any, share_id: str, env: Mapping[str, str], out: TextIO, as_json: bool) -> int:
+    """The generated password goes to the person's terminal only, like a link: not stdout, not a pipe, not a log."""
+    from orch.ops import human
+
+    if not _tty_ok():
+        raise PubError(
+            "invalid.input", "no terminal to show the password on: run this in a terminal; nothing was set", 5
+        )
+    got = _call(target, "publish.password", {"share_id": share_id}, env)
+    password = got.pop("password", None)
+    if not isinstance(password, str):
+        raise PubError("internal", "the host sent no password", 1)
+    try:
+        human.show_secret(
+            f"\n  The password (shown once, on this terminal only):\n\n    {password}\n\n"
+            "  Give it to the people you share the link with, by another way than the link.\n"
+            "  It is not kept anywhere. To change it: orch publish password again (a new one replaces this).\n\n"
+        )
+    except Exception:  # noqa: BLE001 - the password is set; say so, never print it anywhere else
+        out.write(f"the password is set but could not be shown; set a new one: orch publish password {share_id}\n")
+        return 1
+    if as_json:
+        out.write(json.dumps({"ok": True, "data": {**got, "password_shown": True}}) + "\n")
+    else:
+        out.write(f"ok publish password {got.get('share_id')}: the password is on your terminal only\n")
+    return 0
+
+
 def _local(iso: Any) -> Any:
     """A server time in this computer's time with the zone (``--json`` keeps the UTC text)."""
     from orch.host.signcontent import local_time
@@ -336,7 +359,7 @@ def main(
             return _register(target, env, out)
         if a.cmd == "prepare":
             ref, files = a.rest[0], a.rest[1:]
-            args: dict[str, Any] = {"ref": ref, "artifacts": files, "days": a.days}
+            args: dict[str, Any] = {"ref": ref, "artifacts": files, "days": 7 if a.days is None else a.days}
             if a.once is not None:
                 args.update(kind="once", views=a.once)
             data = _call(target, "publish.prepare", args, env)
@@ -362,9 +385,9 @@ def main(
             if a.cmd == "share":
                 if not _tty_ok():
                     raise PubError(
-                        "invalid.input",
+                        "tty.required",
                         "no terminal to sign on and show the link: run this in a terminal; nothing was signed",
-                        5,
+                        3,
                     )
                 _sign(target, "publish.share", {"staged_id": staged})
                 try:
@@ -373,21 +396,41 @@ def main(
                     out.write(f"your signature stays good for an hour: orch publish send {staged}\n")
                     raise
             return _send(target, staged, env, out, as_json)
+        if a.cmd == "extend":
+            got = _call(target, "publish.extend", {"share_id": a.rest[0], "days": a.days}, env)
+            out.write(
+                f"ok publish extended {got.get('share_id')}: the link works until {_local(got.get('expires_at'))}\n"
+            )
+            return 0
+        if a.cmd == "password":
+            return _password(target, a.rest[0], env, out, as_json)
         if a.cmd == "revoke":
-            if not a.yes and not _confirm(
-                f"Revoke share {a.rest[0]}? Its link stops working at once. Type revoke: ", "revoke"
+            if not a.yes and not review_prompt(
+                f"Revoke share {a.rest[0]}? Its link stops working at once.", verb="continue"
             ):
-                raise PubError("invalid.input", "not confirmed: nothing was revoked", 5)
+                raise PubError("sign.cancelled", "not confirmed: nothing was revoked", 3)
             got = _call(target, "publish.revoke", {"share_id": a.rest[0]}, env)
             out.write(f"ok publish revoked {got.get('share_id')}: the link no longer works\n")
             return 0
-        data = _call(
-            target,
-            "publish.list",
-            {**({"ref": a.rest[0]} if a.rest else {}), **({"live": True} if a.live else {})},
-            env,
-        )
-        out.write((json.dumps({"ok": True, "data": data}) if as_json else _list_text(data)) + "\n")
+        # One source: the same `publish.list {live}` the dashboard's Shares page reads. `--local` skips the check.
+        ref = {"ref": a.rest[0]} if a.rest else {}
+        note = None
+        if a.local:
+            data = _call(target, "publish.list", ref, env)
+        else:
+            try:
+                data = _call(target, "publish.list", {**ref, "live": True}, env)
+            except OrchError as exc:
+                if exc.code != "op.not_allowed":
+                    raise
+                note = _NOT_CHECKED  # an agent may only read this computer's record
+                data = _call(target, "publish.list", ref, env)
+        if as_json:
+            out.write(json.dumps({"ok": True, "data": data}) + "\n")
+        else:
+            if note is None and data.get("live") is False:
+                note = _WHY.get(str(data.get("why")))
+            out.write((note + "\n" if note else "") + _list_text(data) + "\n")
         return 0
     except PubError as exc:
         return fail(exc)
@@ -398,11 +441,17 @@ def main(
 def _check_shape(a: argparse.Namespace) -> None:
     """The counts and values of a command's arguments (no host needed)."""
     want = {"prepare": (2, 10**6), "share": (1, 1), "send": (1, 1), "revoke": (1, 1), "discard": (1, 1),
+            "extend": (1, 1), "password": (1, 1),
             "list": (0, 1), "register": (0, 0), "setup": (0, 0)}[a.cmd]  # fmt: skip
     if not want[0] <= len(a.rest) <= want[1]:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "setup":
         _check_setup(a)
+    if a.cmd == "prepare" and a.days is not None and a.days not in approval.DAYS:
+        days = ", ".join(str(d) for d in approval.DAYS[:-1]) + f" or {approval.DAYS[-1]}"
+        raise PubError("invalid.input", f"a link works for {days} days: use --days {days}\n" + _USAGE, 2)
+    if a.cmd == "extend" and (a.days is None or not 1 <= a.days <= 30):
+        raise PubError("invalid.input", "extend needs --days D with D from 1 to 30\n" + _USAGE, 2)
 
 
 def _check_setup(a: argparse.Namespace) -> None:
@@ -423,7 +472,7 @@ def _check_setup(a: argparse.Namespace) -> None:
 
 def _setup(a: argparse.Namespace, target: Any, env: Mapping[str, str], out: TextIO) -> int:
     if not _tty_ok():
-        raise PubError("invalid.input", "no terminal to sign on: run this in a terminal; nothing was signed", 5)
+        raise PubError("tty.required", "no terminal to sign on: run this in a terminal; nothing was signed", 3)
     _sign(target, "settings.set", {"set": {"publish": {"server": a.server, "share": a.share_addr}}})
     out.write("ok publish setup\n")
     return _register(target, env, out)

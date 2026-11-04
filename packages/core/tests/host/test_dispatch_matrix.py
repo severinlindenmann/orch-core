@@ -13,7 +13,9 @@ import pytest
 import orch.ops as ops
 from orch.host import frames
 from orch.host.agents import AGENT_OPS
+from orch.host.appops import APP_OPS
 from orch.host.columns import Column, refusal, resolve
+from orch.host.cosmeticops import COSMETIC_OPS
 from orch.host.dispatch import (
     FILE_OPS,
     GIT_OPS,
@@ -28,15 +30,17 @@ from orch.host.errors import HostError, disposition
 from orch.host.hubops import HUB_OPS
 from orch.host.human import HUMAN_OPS
 from orch.host.marketops import MARKET_OPS, MARKET_READS
+from orch.host.orgops import ORG_OPS, ORG_READS
 from orch.host.peerops import PEER_OPS, PEER_READS
 from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
+from orch.host.remote import REMOTE_OPS, REMOTE_READS
 from orch.host.review import HOST_PERSON_OPS
 from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
 from orch.host.shareops import SHARE_OPS, SHARE_READS
-from orch.host.spaceops import SPACE_OPS, SPACE_READS
+from orch.host.spaceops import SPACE_AGENT_WRITES, SPACE_OPS, SPACE_READS
 from orch.host.terms import TERM_OPS
 from orch.host.transcripts import LINK_OPS, TRANSCRIPT_OPS
 from orch.host.worktrees import WORKTREE_OPS
@@ -96,11 +100,15 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(WORKTREE_OPS)  # H11d
     host |= set(TRANSCRIPT_OPS)  # focus/1
     host |= set(PUBLISH_OPS)  # P5
+    host |= set(APP_OPS)  # #1455
     host |= set(HUB_OPS)  # V3 C2a
+    host |= set(REMOTE_OPS)  # R2 #1590
     host |= set(PEER_OPS)  # V3 C12
     host |= set(SPACE_OPS)  # V3 C13
+    host |= set(ORG_OPS)  # M3 H-2
     host |= set(MARKET_OPS)  # V3 G2
     host |= set(SHARE_OPS)  # V3 C6
+    host |= set(COSMETIC_OPS)  # run 13 D6
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
     host |= {"phone.request", "phone.cancel"}  # B10 Part B
@@ -117,6 +125,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "settings.set",
         "people.set",
         "publish.share",
+        "app.release",
         "ac.accept",
         "ac.unaccept",
         "task.mark_done",
@@ -126,6 +135,8 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "device.mark_exposed",
         "device.rotate",
         "device.remove",
+        "remote.set",
+        "remote.device_confirm",
     }  # H12c-e, B12D, P5, R3, V3 C2a, C2b, #1097
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"import.v1"}
@@ -239,18 +250,41 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                 "publish.list": ("pg_read", "read"),
             }.get(op, ("person_write", "write"))
             assert kind == want
+        elif op in APP_OPS:  # #1455: prepare and discard P and G, list reads, send P only
+            want = {
+                "app.prepare": ("pg_write", "write"),
+                "app.discard": ("pg_write", "write"),
+                "app.list": ("pg_read", "read"),
+            }.get(op, ("person_write", "write"))
+            assert kind == want
         elif op in HUB_OPS:  # V3 C2a: P only (the op checks the owner role); status reads
             assert kind == (
                 ("person_read", "read")
-                if op in ("hub.status", "hub.handoff", "hub.link")
+                if op
+                in ("hub.status", "hub.handoff", "hub.link", "hub.switch", "hub.directory", "hub.shared", "hub.network")
                 else ("person_write", "write")
             )
+        elif op in REMOTE_OPS:  # R2 #1590: P only (owner role); status, pending, sessions read
+            assert kind == (("person_read", "read") if op in REMOTE_READS else ("person_write", "write"))
+        elif op in COSMETIC_OPS:  # D6: column P only (owner role)
+            assert kind == ("person_write", "write")
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
-            assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
+            assert kind == (
+                ("person_read", "read") if op in SHARE_READS | {"share.audience"} else ("person_write", "write")
+            )
         elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself
             assert kind == (("pg_read", "read") if op in MARKET_READS else ("pg_write", "write"))
+        elif op in ORG_OPS:  # M3 H-2: offers, sync P and G; show, accept, decline, tool P only (owner)
+            assert kind == {
+                "org.offers": ("pg_read", "read"),
+                "org.sync": ("pg_write", "write"),
+                "org.show": ("person_read", "read"),
+                "org.secrets": ("person_read", "read"),
+            }.get(op, ("person_write", "write"))
+            assert op in ORG_READS or kind[1] == "write" or op in ("org.show", "org.secrets")
         elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
-            assert kind == (("pg_read", "read") if op in SPACE_READS else ("person_write", "write"))
+            want = ("pg_read", "read") if op in SPACE_READS else ("person_write", "write")
+            assert kind == (("pg_write", "write") if op in SPACE_AGENT_WRITES else want)
         elif op in PEER_OPS:  # V3 C12: reads for P and G, writes P only (owner role)
             assert kind == (("pg_read", "read") if op in PEER_READS else ("person_write", "write"))
         elif op in AGENT_OPS:  # H11c: P only
@@ -406,6 +440,7 @@ def test_a_replay_comes_before_the_workspace_state(served):
 def test_whoami_per_column(served):
     c = served.client()
     p = ok(c.req("whoami", session=SESSION))["data"]
+    assert p["runner"].pop("now").endswith("Z")  # D2: the host's clock (renewal threshold)
     assert p == {
         "peer": {"uid": UID, "class": "person"},
         "person": served.lab.owner,
@@ -533,3 +568,47 @@ def test_the_session_start_hook_runs_for_an_agent_with_a_verified_grant_and_for_
     assert refusal(resolve("agent", "absent", False), kind[0]) == "op.not_allowed"
     assert refusal(resolve("agent", "unverified", False), kind[0]) == "op.not_allowed"
     assert refusal(resolve("agent", "verified", False), op_kind("instructions.sync")[0]) == "op.not_allowed"
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_hub_profile_dispatch_get_and_put(lab, role):
+    from orch.host.hubops import _DEFAULT_PROFILE
+
+    person = lab.add_member() if role == "member" else lab.ws.owner
+    s = Served.__new__(Served)
+    s.lab = lab
+    s.h = lab.host(clock=lambda: lab.ws.clock[0])
+    s.h.__enter__()
+    s.control = s.h.client()
+    s.wid = ok(lab.register(s.control, peers=lab.peers(person.ref)))["data"]["workspace_id"]
+    s.service = s.h.host.services[s.wid]
+    s.clients = []
+    try:
+        c = s.client()
+        profile = {**_DEFAULT_PROFILE, "description": "local"}
+        for args in ({}, {"profile": profile}):
+            response = c.req("hub.profile", args)
+            if role == "member":
+                assert err(response) == "role.denied"
+            else:
+                data = ok(response)["data"]
+                assert data == ({"profile": profile, "pushed": False} if args else {"profile": _DEFAULT_PROFILE})
+    finally:
+        s.close()
+
+
+def test_a_non_owner_member_is_role_denied_on_org_secrets(lab):
+    """#1434: the list of company secrets is the owner's: a member (a person, column P) gets role.denied."""
+    person = lab.add_member()
+    s = Served.__new__(Served)
+    s.lab = lab
+    s.h = lab.host(clock=lambda: lab.ws.clock[0])
+    s.h.__enter__()
+    s.control = s.h.client()
+    s.wid = ok(lab.register(s.control, peers=lab.peers(person.ref)))["data"]["workspace_id"]
+    s.service = s.h.host.services[s.wid]
+    s.clients = []
+    try:
+        assert err(s.client().req("org.secrets", {})) == "role.denied"
+    finally:
+        s.close()

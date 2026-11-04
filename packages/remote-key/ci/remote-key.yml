@@ -1,0 +1,16 @@
+# PROPOSED workflow: copy to .github/workflows/remote-key.yml (the bot token cannot push under .github/workflows).
+name: remote-key
+on:
+  pull_request:
+    paths: ["packages/remote-key/**"]
+  push:
+    branches: [develop]
+    paths: ["packages/remote-key/**"]
+jobs:
+  build-test:
+    runs-on: macos-14
+    defaults: { run: { working-directory: packages/remote-key } }
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build -c release
+      - run: swift test

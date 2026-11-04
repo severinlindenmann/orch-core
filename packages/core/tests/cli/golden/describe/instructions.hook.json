@@ -7,7 +7,7 @@
     "cli": "orch instructions hook",
     "summary": "The text a harness hook injects at session start or before compaction: at most six lines.",
     "who": "read",
-    "usage": "orch instructions hook session-start|pre-compact|waiting",
+    "usage": "orch instructions hook session-start|pre-compact|waiting|stop [--input PATH]",
     "pre": [],
     "emits": [],
     "input": {
@@ -19,10 +19,17 @@
           "enum": [
             "session-start",
             "pre-compact",
-            "waiting"
+            "waiting",
+            "stop"
           ],
           "description": "which hook",
           "x-metavar": "EVENT"
+        },
+        "input": {
+          "type": "string",
+          "description": "read the text from PATH, or - for stdin",
+          "x-metavar": "PATH",
+          "x-file": true
         }
       },
       "x-positional": [
@@ -47,6 +54,9 @@
           "silent": {
             "type": "boolean",
             "description": "print nothing"
+          },
+          "raw": {
+            "type": "string"
           }
         },
         "required": [

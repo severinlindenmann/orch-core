@@ -116,6 +116,11 @@ class Grant:
     #: C8 (L2-P5-1): the hub whose ``auth: "hub"`` request line this grant answers, else ``None``. Such a grant ends at
     #: that hub's ``hub.left`` (state, no new line). Set by the C10 host-actor ``grant.issued`` that names its request.
     hub_id: str | None = None
+    parent: str | None = None
+    root_kind: str = "grant"  # schedule roots have no bearer credential
+    #: a follow-up grant that has served its run (its outcome is recorded): unusable, but not a revocation, so
+    #: later follow-ups set during that run keep a valid chain
+    ended: bool = False
 
 
 @dataclass
@@ -131,6 +136,8 @@ class Addon:
     purged: bool = False
     #: V3 G4 (D6): ``{kind, lock, packages}`` when the grant also installs dependencies, else ``None``
     runtime: dict[str, Any] | None = None
+    #: addon-api 1.2 (#718): the wake events the grant declared (flat, sorted by kind); empty for most add-ons
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def binds(self) -> dict[str, Any]:
@@ -156,6 +163,9 @@ class WsCore:
     members: dict[str, Member] = field(default_factory=dict)
     former: dict[str, Member] = field(default_factory=dict)
     roster_v: int = 0
+    #: the `at` (ms) of the event being judged / last applied: the deterministic "now" of every hub role decision (an
+    #: end date in the pinned snapshot is read against it, never the wall clock, so a replay gives the same answer)
+    at_ms: int = 0
     devices: dict[str, Device] = field(default_factory=dict)
     # Effective revocation evidence and tombstones: device id -> person id -> {revocation, device_cert, pk_pub}.
     # Keyed by (device, person) (§5.10): another person's evidence for one device id is kept, never merged or replaced.
@@ -170,10 +180,18 @@ class WsCore:
     # alias_book: {hub_id: aliases} of every hub ever joined, member?: {kind: "hub", hub_id}}; empty until the first
     # hub.joined. ``binding_seq`` only grows. ``member`` exists only in full mode and only while joined (C2b).
     hub: dict[str, Any] = field(default_factory=dict)
+    # Remote access (R2, #1590; hub-remote spec D84-D93, contract 10.2c): the owner's policy and the devices, derived
+    # from the signed ``remote.*`` lines. {} until the first one. {on, level, until_ms, premises, agents_risk, hub_mode,
+    # off_reason: None | owner | device | expired | hub_full, wrk_fp, device_version, devices: {rd_id: {name, person,
+    # presence_kind, transport_pub, presence_pub, level_cap, expires_ms, added_ms, confirmed_by, fingerprint, code_id}}}
+    remote: dict[str, Any] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
     #: C10 (hub protocol 8.8): the admitted ``grant.requested`` lines by event id: ``{person, role, scope, verbs, hours,
-    #: label?, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
+    #: label?, handoff, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
     requests: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: FB15 (hub protocol 8.8b): the admitted ``addon.requested`` lines by event id: ``{person, role, name, version,
+    #: package_sha256, capabilities, runtime, at, hub_id, used}``. A host-actor ``addon.granted`` consumes one, once.
+    addon_requests: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -250,18 +268,76 @@ class ArtifactCore:
 
 
 @dataclass
+class FollowupRec:
+    id: str
+    state: str
+    trigger: str
+    set_at: str
+    due: str | None
+    deadline: str | None
+    brief: str
+    setter_session: str
+    person: str
+    parent_grant: str
+    set_event_id: str
+    fired_at: str | None = None
+    grant: str | None = None
+    run: str | None = None
+    outcome: str | None = None
+    reason: str | None = None
+    fallback: str | None = None
+    cancelled_at: str | None = None
+    cancelled_by: str | None = None
+    cancel_prev_state: str | None = None
+    cancel_reason: str | None = None
+    label: str | None = None
+    on: dict[str, Any] | None = None  # the event match of an orch/webhook follow-up
+    hook: str | None = None  # sha256 of the webhook id (never the id)
+    event: dict[str, Any] | None = None  # the event that woke it (closed shape)
+
+
+@dataclass
+class ScheduleRec:
+    id: str
+    set_event: str
+    person: str
+    device: str
+    rule: dict[str, Any]
+    starts: str
+    ends: str
+    brief: str
+    run_hours: int
+    set_at: str  # the `at` of schedule.set: no occurrence before set_at + min lead is ever fired or settled
+    label: str | None = None
+    cancelled: bool = False
+    target: str = "existing"
+    title: str | None = None
+    set_sig_hash: str = ""
+    # occurrence -> {"fired_at", "grant", "run", "released"?: true when the firing cleared the setter's claim,
+    # "outcome"?, "reason"?}
+    occurrences: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+@dataclass
 class TCore:
     uid: str
     key: str
     owner: str
     status: str
     fields: dict[str, Any]
+    anchor_schedule: str | None = None
+    via: dict[str, str] | None = None
+    close_resolution: str | None = None
     sections: dict[str, dict[str, Any]] = field(default_factory=dict)  # id -> {"hash", "refs"}
     people: dict[str, set[str]] = field(
         default_factory=lambda: {"assignees": set(), "reviewers": set(), "watchers": set()}
     )
     overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     gates: dict[str, GateCore] = field(default_factory=lambda: {g: GateCore() for g in GATES})
+    schedules: dict[str, ScheduleRec] = field(default_factory=dict)
+    followups: dict[str, FollowupRec] = field(default_factory=dict)
+    fu_chain: dict[str, Any] = field(default_factory=dict)
+    fu_sessions: dict[str, str] = field(default_factory=dict)
     claim: ClaimCore | None = None
     takeovers: list[dict[str, Any]] = field(default_factory=list)
     leases: dict[str, Lease] = field(default_factory=dict)

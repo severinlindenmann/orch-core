@@ -22,11 +22,11 @@ const REAL_REVIEW = [
   'needs rule r1 for agent: Nothing to check here',
 ]
 useFakeHost(() => [
-  workspace({ id: A, features: [...READS, 'actions', 'market'], market: { markets: [market()] }, marketInstalled: { addons: [installedAddon()] }, marketStage: stage({ review: REAL_REVIEW }) }),
+  workspace({ id: A, features: [...READS, 'actions', 'market'], market: { markets: [market()] }, marketInstalled: { addons: [installedAddon({ state: 'active' })] }, marketStage: stage({ review: REAL_REVIEW }) }),
 ])
 it('every host review line that carries manifest text sits inside an AddonFrame', async () => {
-  show('/w/DEMO/addons?tab=browse')
-  await userEvent.click(await screen.findByRole('button', { name: 'Install...' }, { timeout: 5000 }))
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Update...' }, { timeout: 5000 }))
   const d = await screen.findByRole('dialog', {}, { timeout: 5000 })
   for (const needle of ['Verified safe by orch', 'Approve without reading', 'Nothing to check here']) {
     const el = within(d).getByText(needle, { exact: false })

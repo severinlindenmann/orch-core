@@ -11,7 +11,7 @@ from typing import Any
 
 from orch.canon import ARTIFACT_KINDS
 
-from . import addon_rules, claims, gates, generations, source
+from . import addon_rules, claims, gates, generations, policies, source
 from .accept import WORKABLE, criterion_hash, may_accept, parse_label, parse_withdraw_label
 from .codes import Code, Refusal
 from .types import ArtifactCore, Lease, TaskCore, TCore, WsCore, ts
@@ -36,6 +36,15 @@ def task_ids(t: TCore) -> list[str]:
     return [x["id"] for x in t.fields["tasks"]]
 
 
+PLAN_OPEN = "the plan is not approved yet: wait (orch wait); build after the person approves it"
+
+
+def plan_open(ws: WsCore, t: TCore) -> bool:
+    """r10-P02: the plan gate applies to this ticket and is not approved at its current generation, so an agent may
+    not build yet (the same source of truth as ``orch wait`` and the views: ``policies.applies``/``gates.approved``)."""
+    return policies.applies(ws, t, "plan") and not gates.approved(ws, t, "plan")
+
+
 def lease_active(ws: WsCore, lease: Lease, at: int) -> bool:
     return at - lease.at <= ws.settings["lease_ttl_min"] * 60
 
@@ -48,6 +57,8 @@ def task_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return r
     if tid not in task_ids(t):
         return Refusal(Code.TASK_UNKNOWN, tid)
+    if a["kind"] == "agent" and typ in ("task.started", "task.done") and plan_open(ws, t):
+        return Refusal(Code.TASK_PLAN_OPEN, PLAN_OPEN)
     tk = t.tasks.get(tid) or TaskCore()
     if tk.state not in _FROM[typ]:
         return Refusal(Code.TASK_STATE, f"{typ} from {tk.state}")
@@ -174,6 +185,8 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.TICKET_BAD_REFERENCE, f"unknown acceptance criterion {e['ac']}")
     if "task" in e and e["task"] not in task_ids(t):
         return Refusal(Code.TICKET_BAD_REFERENCE, f"unknown task {e['task']}")
+    if "task" in e and a["kind"] == "agent" and plan_open(ws, t):
+        return Refusal(Code.TASK_PLAN_OPEN, PLAN_OPEN)
     old = t.artifacts.get(name)
     if typ == "artifact.added":
         if old is not None:

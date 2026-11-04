@@ -1,24 +1,37 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fingerprintOf, reviewDigestOf, type FollowUpAction, type HandoffEvent, type HandoffRequest } from '@/api/handoff'
-import { fakeRequest, spies, state } from '@/test/handoffHarness'
+import { api } from '@/api/client'
+import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
+import type { FollowUpAction } from '@/api/handoff'
+import { ApiError } from '@/api/types'
+import * as gesture from '@/components/sign/trustedPress'
+import { fakeRequest, state } from '@/test/handoffHarness'
 import { CompleteDetails } from './CompleteDetails'
 import { EMPTY, handoffNewTicket, ownKey } from './index'
 
+vi.mock('@/app/workspace', () => ({ useWorkspace: () => ({ workspaces: [{ id: 'w_1', prefix: 'DEMO', name: 'Demo', click: { enabled: true, available: true, custody: 'convenience' } }] }) }))
+vi.mock('@/app/useMe', () => ({ useMe: () => ({ data: { person: 'p_sev' } }) }))
+
 const T = { timeout: 5000 }
 const KEY = 'DEMO-0044'
-let s: ReturnType<typeof spies>
+const REQ = (n: number) => 'hr_' + '0'.repeat(25) + n
+const view = (line: string): ClickViewAnswer => ({
+  view_digest: 'sha256:' + 'c'.repeat(64),
+  view: {
+    risk: CLICK_RISK, op: 'set', workspace: { id: 'w_1', name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines: [line], checks: [],
+    confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
+  },
+})
+let s: { prepare: ReturnType<typeof vi.spyOn>; view: ReturnType<typeof vi.spyOn>; sign: ReturnType<typeof vi.spyOn>; postAction: ReturnType<typeof vi.spyOn> }
 
-/** A prepared `set` or `section.set` request as the host would send it, with hashes that recompute. */
-function prepared(op: 'set' | 'section.set', extra: Record<string, unknown>, id: string): HandoffRequest {
-  const event: HandoffEvent = { v: 2, id, type: 'ticket.updated', actor: { kind: 'person', id: 'p_sev', device: null }, auth: null, hash_v: 1, roster_v: 4, based_on: 'sha256:' + 'a'.repeat(64), ...extra }
-  const payload = Object.fromEntries(Object.entries(event).filter(([k]) => !['v', 'id', 'type', 'actor', 'auth', 'hash_v', 'roster_v', 'based_on', 'sig'].includes(k)))
-  const base = fakeRequest({ key: KEY, events: [event], material: { kind: 'payload', review: [{ event_id: id, type: 'ticket.updated', payload, derived: {} }] } })
-  const material = { kind: 'payload' as const, ticket: base.material.ticket, review: base.material.review }
-  const digest = reviewDigestOf(material)
-  return { ...base, id: 'hr_' + '0'.repeat(25) + (op === 'set' ? '3' : '4'), op, material, review_digest: digest, fingerprint: fingerprintOf(digest, [event], op), gate_hash: null }
+/** The armed Sign of the open review, pressed (fireEvent stands in for a real press: trustedPress is mocked). */
+async function signOpenReview(label: string) {
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  const b = within(panel.closest('[role="dialog"]') as HTMLElement).getByRole('button', { name: label })
+  await waitFor(() => expect(b).toBeEnabled(), { timeout: ARM_MS + 2000 })
+  fireEvent.pointerDown(b)
+  fireEvent.click(b)
 }
 
 const DETAILS: FollowUpAction = { action: 'details', key: '', priority: 'high', labels: ['api'], parent: 'DEMO-0003' }
@@ -26,19 +39,31 @@ const SECTION: FollowUpAction = { action: 'section', key: '', section: 'requirem
 
 function mount(steps: FollowUpAction[], onFinish = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const user = userEvent.setup()
   render(
     <QueryClientProvider client={client}>
       <CompleteDetails ws="w_1" ticketKey={KEY} steps={steps} onFinish={onFinish} />
     </QueryClientProvider>,
   )
-  return { user, onFinish }
+  return { onFinish }
 }
 
 beforeEach(() => {
-  s = spies()
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) // fireEvent is untrusted: stand in for a real press of the outcome button
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+  vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ(1), state: 'cancelled' })
+  s = {
+    prepare: vi.spyOn(api, 'prepareClick'),
+    view: vi.spyOn(api, 'viewClick'),
+    sign: vi.spyOn(api, 'signClick'),
+    // One click only: an unsigned action is never used.
+    postAction: vi.spyOn(api, 'postAction'),
+  }
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(async () => {
+  cleanup()
+  await new Promise((r) => setTimeout(r, 20))
+  vi.restoreAllMocks()
+})
 
 describe('Complete details after a signed new ticket', () => {
   it('is offered with what it will set, and prepares nothing until the person asks', async () => {
@@ -50,41 +75,48 @@ describe('Complete details after a signed new ticket', () => {
     expect(lines).toHaveTextContent('Labels: api')
     expect(lines).toHaveTextContent('Parent epic: DEMO-0003')
     expect(dialog).toHaveTextContent(`${KEY} is created`)
+    expect(dialog).not.toHaveTextContent('orch sign')
     expect(s.prepare).not.toHaveBeenCalled()
   })
 
-  it('prepares the follow-up for the created ticket, then the next one after it is signed, then finishes', async () => {
-    const first = prepared('set', { set: { 'ticket.priority': 'high' }, base_rev: { 'ticket.priority': 'sha256:' + 'c'.repeat(64) } }, '01J9ZP000000000000000000C1')
-    const second = prepared('section.set', { sections: { requirements: { hash: 'sha256:' + 'd'.repeat(64), refs: [] } }, base_rev: { 'body.requirements': 'sha256:' + 'e'.repeat(64) } }, '01J9ZP000000000000000000C2')
-    s.prepare.mockResolvedValueOnce(first).mockResolvedValueOnce(second)
-    s.get.mockImplementation(async (_ws, id) => state(id === first.id ? first : second, { state: 'submitted', event_ids: ['x'], seq: 5 }))
-    const { user, onFinish } = mount([DETAILS, SECTION])
-    await user.click(await screen.findByRole('button', { name: 'Prepare details' }))
-    expect(s.prepare).toHaveBeenNthCalledWith(1, 'w_1', { ...DETAILS, key: KEY }, 0)
+  it('prepares the follow-up for the created ticket on the press, signs it after the arm, then the next one, then finishes', async () => {
+    s.prepare
+      .mockResolvedValueOnce({ request_id: REQ(3), expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'set', confirm: 'click' })
+      .mockResolvedValueOnce({ request_id: REQ(4), expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'section.set', confirm: 'click' })
+    s.view.mockImplementation(async (_ws: string, id: string) => view(id === REQ(3) ? 'Set DEMO-0044 priority high' : 'Set DEMO-0044 requirements'))
+    s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: KEY, seq: 5 })
+    const { onFinish } = mount([DETAILS, SECTION])
+    fireEvent.click(await screen.findByRole('button', { name: 'Prepare details' }))
+    await waitFor(() => expect(s.prepare).toHaveBeenNthCalledWith(1, 'w_1', { ...DETAILS, key: KEY }, 0))
+    expect(s.sign).not.toHaveBeenCalled() // the press prepares; only the armed Sign signs
+    await signOpenReview('Prepare details')
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Complete details (2 of 2)' })).toBeInTheDocument(), { timeout: 9000 })
     expect(screen.getByTestId('complete-details-lines')).toHaveTextContent('Requirements: Empty months export a header row')
     expect(onFinish).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Prepare section' }))
-    expect(s.prepare).toHaveBeenNthCalledWith(2, 'w_1', { ...SECTION, key: KEY }, 0)
+    fireEvent.click(screen.getByRole('button', { name: 'Prepare section' }))
+    await waitFor(() => expect(s.prepare).toHaveBeenNthCalledWith(2, 'w_1', { ...SECTION, key: KEY }, 0))
+    await signOpenReview('Prepare section')
     await waitFor(() => expect(onFinish).toHaveBeenCalledWith(2), { timeout: 9000 })
+    expect(s.sign).toHaveBeenCalledTimes(2)
     expect(s.postAction).not.toHaveBeenCalled()
   }, 30000)
 
   it('cancel signs nothing, prepares nothing and ends the offer', async () => {
-    const { user, onFinish } = mount([DETAILS])
-    await user.click(await screen.findByRole('button', { name: 'Cancel' }))
+    const { onFinish } = mount([DETAILS])
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
     expect(onFinish).toHaveBeenCalledWith(0) // cancelled with nothing signed: the caller says what is not saved
     expect(s.prepare).not.toHaveBeenCalled()
+    expect(s.sign).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
   })
 
   it('shows the host refusing a follow-up and does not move on', async () => {
-    const { ApiError } = await import('@/api/types')
     s.prepare.mockRejectedValue(new ApiError(400, { code: 'invalid.input', message: 'a feature ticket has no section nope', retryable: false }))
-    const { user, onFinish } = mount([SECTION, DETAILS])
-    await user.click(await screen.findByRole('button', { name: 'Prepare section' }))
-    expect(await screen.findByText('Could not prepare', {}, T)).toBeInTheDocument()
+    const { onFinish } = mount([SECTION, DETAILS])
+    fireEvent.click(await screen.findByRole('button', { name: 'Prepare section' }))
+    expect(await screen.findByText('a feature ticket has no section nope', {}, T)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Complete details (1 of 2)' })).toBeInTheDocument()
+    expect(s.sign).not.toHaveBeenCalled()
     expect(onFinish).not.toHaveBeenCalled()
   })
 })

@@ -16,23 +16,15 @@ describe('Settings > Relay & devices (Preview, simulated)', () => {
     const mac = screen.getByText("Severin's MacBook Pro").closest('tr')!
     expect(within(mac).getByText('This device')).toBeInTheDocument()
     expect(within(mac).getByText('epoch 1')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Pair a device' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Pair a device' })).toBeNull() // phones pair through the hub
     expect(within(screen.getByRole('list', { name: 'Sync queue' })).getAllByText('Queued').length).toBeGreaterThan(0)
   })
-  it('Connect is signed, then the link comes online and pairing works end to end', async () => {
+  it('Connect is signed, then the link comes online (no device pairing here)', async () => {
     const { user } = renderApp('/settings/relay')
     await user.click(await screen.findByRole('button', { name: 'Connect' }, T))
     await user.click(await screen.findByRole('button', { name: 'Sign and connect' }, T))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Online'), T)
-    await user.click(screen.getByRole('button', { name: 'Pair a device' }))
-    const dialog = await screen.findByRole('dialog', { name: /Pair a device/ }, T)
-    expect(within(dialog).getByRole('img', { name: /Mock QR code/ })).toBeInTheDocument()
-    expect(within(dialog).getByText(/Valid for/)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: /Simulate: a phone scans/ }))
-    expect(await within(dialog).findByText(/wants to join/, {}, T)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Codes match' }))
-    await user.click(await screen.findByRole('button', { name: 'Sign and add device' }, T))
-    expect(await screen.findByText("Severin's iPad", {}, T)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Pair a device' })).toBeNull()
   })
   it('removing a device is signed and starts a new epoch', async () => {
     const { user } = renderApp('/settings/relay')

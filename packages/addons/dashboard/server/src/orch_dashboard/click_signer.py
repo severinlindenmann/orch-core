@@ -16,9 +16,17 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from .errors import HostError, fail
+from orch import childenv
 
-CONTRACTS = (3,)  # 3: click-only confirmation (no typed word); the signer hands a runner grant to the runner
+from .errors import HostError, fail
+from .remote_identity import REMOTE_STREAM
+
+#: 4 (run 13 C3): the View carries `headline` and `risk_lines` (the signer's own risk lines); 3 was click-only
+#: confirmation (no typed word). This server announces the contract it speaks on `prepare`, `view` and `sign`, and the
+#: signer refuses another one (`contract.mismatch`, answered as `click.contract` here).
+CONTRACTS = (4,)
+#: the ops whose answer is read under the contract (the View and what is signed after it)
+ANNOUNCED = frozenset({"prepare", "view", "sign"})
 #: `ORCH_DASHBOARD_CLICK=off` never starts a signer (a kill switch; the tests use it unless they test the signer).
 SWITCH = "ORCH_DASHBOARD_CLICK"
 RESTART_AFTER = 1.0  # seconds: a signer that dies at once is not respawned in a tight loop
@@ -29,6 +37,8 @@ TIMEOUT = {
     "view": 30.0,
     "sign": 60.0,
     "cancel": 30.0,
+    "cancel_holds": 8.0,
+    "session_alive": 2.0,
     "stash": 30.0,
     "custody_on": 60.0,
     "custody_off": 60.0,
@@ -36,7 +46,20 @@ TIMEOUT = {
     "github_token": 30.0,  # a sealed GitHub token is opened and written: memory and one small file
     "rotate": 120.0,  # the recovery code is stretched (scrypt) and the host signs the rotation
     "stepup": 8.0,  # a passkey step-up nonce: memory only
+    # R3 (D88): a stream's presence. The signer holds the nonces and the batches; the device key signs.
+    "presence_nonce": 8.0,
+    "presence": 30.0,
+    "presence_take": 8.0,
 }
+#: The arguments only `Signer._call` may add, and only inside a stream (R3, design I2): a caller that passes any of them
+#: while a stream is running is a bug, and raises instead of being believed.
+STREAM_ARGS = frozenset({"remote", "stream", "stepup"})
+
+
+class CallerSuppliedRemote(RuntimeError):
+    """A handler passed `remote`, `stream` or `stepup` to a signer call made inside a stream."""
+
+
 #: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
 CUSTODY_FEATURE = "custody"
 IMAGES_FEATURE = "images"  # `stash` and `prepare {sequence}` naming pasted screenshots (core R3 part B)
@@ -56,8 +79,9 @@ SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures 
 
 def child_env(state: Path) -> dict[str, str]:
     """The signer's environment: ours, with the state directory made explicit (it must be the registry we read) and
-    no PYTHONPATH (`-I` ignores it, and a path to another core is never part of a running server)."""
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    no loader variable (PYTHONPATH, DYLD_*, LD_*: `-I` ignores the first, and none belongs to a running server);
+    the one cleaner is `orch.childenv`."""
+    env = childenv.sanitize(os.environ)
     env["ORCH_STATE_DIR"] = str(state)
     return env
 
@@ -82,7 +106,7 @@ class Signer:
         self.unsettled: Callable[[], bool] = lambda: False  # set by the routes: is a signature's outcome unknown?
         self.client = None
         self.core: str | None = None
-        self.contract: int | None = None  # the running signer's contract (3), once started
+        self.contract: int | None = None  # the running signer's contract (4), once started
         self.features: frozenset[str] = frozenset()  # the running signer's `status.features` (strings only)
         self.last_spawn = -1e9
         self.refused: tuple[float, HostError] | None = None  # a signer of another contract: until this time
@@ -116,7 +140,7 @@ class Signer:
                 pass
 
     def _ensure(self):
-        """The running signer, started (or restarted) if needed, and checked: its status must say `contract` 3."""
+        """The running signer, started (or restarted) if needed, and checked: its status must say `contract` 4."""
         if self.off:
             raise unavailable("Click-to-sign is switched off for this server.")
         if self.refused and self.clock() < self.refused[0]:
@@ -143,7 +167,7 @@ class Signer:
                 pass
             raise unavailable() from None
         contract = status.get("contract")
-        if type(contract) is not int or contract not in CONTRACTS:  # strict: True is not 1, "3" is not 3
+        if type(contract) is not int or contract not in CONTRACTS:  # strict: True is not 1, "4" is not 4
             try:
                 client.close()
             except Exception:  # noqa: BLE001
@@ -255,12 +279,38 @@ class Signer:
                 return False
             return IMAGES_FEATURE in self.features
 
+    def restart(self) -> None:
+        """Fail closed: destroy unsigned holds even when a sign reply was lost.
+
+        The next call starts a fresh helper; durable signed claims survive.
+        """
+        with self.lock:
+            proc = getattr(self.client, "proc", None)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.kill()  # do not allow a deadline to run while waiting for graceful shutdown
+                except ProcessLookupError:
+                    pass  # it exited between poll and kill
+            self._drop()
+            self.last_spawn = -1e9
+
     def close(self) -> None:
         with self.lock:
             self.stopped = True
             self._drop()
 
     # -- calls -----------------------------------------------------------------------------------------------------
+    def session_alive(self, session: str, live: Callable[[], bool]) -> None:
+        """Wait for the channel at most 1 s (a renewal skipped for a busy channel would let the 5 s lease lapse and
+        cancel a live hold); recheck session liveness after taking it."""
+        if not self.chan.acquire(timeout=1.0):
+            return
+        try:
+            if live():
+                self._call("session_alive", {"session": session})
+        finally:
+            self.chan.release()
+
     def call(self, op: str, args: dict, lost: "HostError | None" = None) -> dict:
         """One request on the channel (one at a time). See `_call`."""
         with self.chan:
@@ -276,6 +326,14 @@ class Signer:
         outcome is unknown, never "gone")."""
         from orch.click.protocol import ClickError
 
+        stream = REMOTE_STREAM.get()
+        if stream is not None:
+            # THE one place a stream's calls are stamped (design I2): `remote: true` and the stream id, from the
+            # context value only the stream adapter sets. The signer asks the host what the stream is; it takes the
+            # level, device, person and handshake hash from there, never from this process.
+            if STREAM_ARGS & args.keys():
+                raise CallerSuppliedRemote(op)
+            args = {**args, "remote": True, "stream": stream}
         with self.lock:
             if self.suspect and self.client is not None and not self.unsettled():
                 self._drop()  # hung but alive, and nothing could be mid-submit: replace it
@@ -286,6 +344,8 @@ class Signer:
                 raise
             except Exception:  # noqa: BLE001 - local failure before the sign request reaches the channel
                 raise unavailable() from None
+            if op in ANNOUNCED:  # the contract this server reads the answer under (run 13 C3)
+                args = {**args, "contract": self.contract}
         try:
             result = client.call(op, args, timeout=TIMEOUT[op])
         except ClickError as exc:
@@ -325,15 +385,18 @@ class Signer:
             return {}
         finally:
             self.chan.release()
-        self._last = {
-            w["workspace_id"]: w for w in got.get("workspaces", []) if isinstance(w, dict) and "workspace_id" in w
-        }
-        return self._last
+        rows = {w["workspace_id"]: w for w in got.get("workspaces", []) if isinstance(w, dict) and "workspace_id" in w}
+        if REMOTE_STREAM.get() is None:  # a stream's answer is not the loopback page's cache
+            self._last = rows
+        return rows
 
 
 def refusal(exc) -> HostError:
     """The signer's `ClickError` as the server's error: `code`, `reason` and `retry_after_ms` are kept (the UI
-    branches on them); the message is the signer's display text."""
+    branches on them); the message is the signer's display text. The signer's `contract.mismatch` (this server
+    announced another contract than the signer speaks) is `click.contract`, like a status of another contract."""
+    if exc.code == "contract.mismatch":
+        return fail("click.contract", "Update orch-core: its signing helper speaks another contract.", exit=9)
     error = {"code": exc.code, "message": exc.message, "retryable": bool(exc.retryable)}
     if exc.reason is not None:
         error["reason"] = exc.reason

@@ -10,9 +10,9 @@ describe('hubChip (A5.1)', () => {
   it('is grey and quiet when standalone', () => {
     expect(hubChip(base)).toMatchObject({ tone: 'neutral', label: 'Local only', icon: 'none' })
   })
-  it('is violet for selective and solid violet for full, saying what the hub can read', () => {
-    expect(hubChip(status({ mode: 'selective' }))).toMatchObject({ tone: 'violet', label: 'Hub sees only what you share', icon: 'eye-off' })
-    expect(hubChip(status({ mode: 'full', member: true }))).toMatchObject({ tone: 'violet-solid', label: 'Hub can read everything', icon: 'eye' })
+  it('is quiet grey for selective and full: online, connected (the access level lives in Settings)', () => {
+    expect(hubChip(status({ mode: 'selective' }))).toMatchObject({ tone: 'neutral', label: 'Online · connected to hub', icon: 'dot' })
+    expect(hubChip(status({ mode: 'full', member: true }))).toMatchObject({ tone: 'neutral', label: 'Online · connected to hub', icon: 'dot' })
   })
   it('is amber when the hub is offline, not told, or needs attention', () => {
     expect(hubChip(status({ reachable: false }))?.tone).toBe('amber')
@@ -61,14 +61,6 @@ describe('the mock hub (what the pages are built against)', () => {
     const p = await api.getHubPreview('ws', { add: { kind: 'tag', value: 'team' } })
     expect(p.new).toBe(1)
     expect(await api.getHubShare('ws')).toEqual(before)
-  })
-
-  it('builds Terminal commands and never a hub write of its own', async () => {
-    const join = await api.getHubCommand('ws', { kind: 'join', invite: 'INV-7QK2-M9XD', card: 'hub card.json', mode: 'selective' })
-    expect(join.command).toBe("orch hub join INV-7QK2-M9XD --hub-card 'hub card.json' --mode selective")
-    expect((await api.getHubCommand('ws', { kind: 'mode_full', card: 'c.json' })).command).toBe('orch hub mode full --hub-card c.json')
-    expect((await api.getHubCommand('ws', { kind: 'leave' })).command).toBe('orch hub leave')
-    expect((await api.getHubCommand('ws', { kind: 'share_remove', rule: { kind: 'ticket', value: 'DEMO-0045' } })).command).toBe('orch hub share rule remove --ticket DEMO-0045')
   })
 
   it('reads the hub id of a pasted hub card, and nothing else', () => {

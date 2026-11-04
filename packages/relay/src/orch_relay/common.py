@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from fastapi.responses import JSONResponse
 
 from . import db
+from .forwarded import parse_trusted, rate_key
 
 MINUTE, HOUR, DAY = 60_000, 3_600_000, 86_400_000
 # Buckets kept per key class (ORCH_RELAY_THROTTLE_TABLE), evicting full buckets first.
@@ -105,31 +106,6 @@ class Send:
     expiration: int
     deadline_ms: int
     token: bytes = field(default=b"", repr=False)
-
-
-def canonical_address(peer, forwarded, trusted_proxy):
-    """Trust a single proxy hop only; ignore caller-supplied XFF otherwise."""
-    try:
-        address = ipaddress.ip_address(peer)
-        if address.version == 6 and address.ipv4_mapped:
-            address = address.ipv4_mapped
-        proxy = ipaddress.ip_address(trusted_proxy) if trusted_proxy else None
-        if proxy and proxy.version == 6 and proxy.ipv4_mapped:
-            proxy = proxy.ipv4_mapped
-        if address == proxy and not forwarded:
-            logging.getLogger(__name__).warning("Trusted proxy sent no X-Forwarded-For")
-        if address == proxy and forwarded:
-            # Caddy appends its immediate peer; never trust an attacker-chosen leftmost hop.
-            address = ipaddress.ip_address(forwarded.split(",")[-1].strip())
-            if address.version == 6 and address.ipv4_mapped:
-                address = address.ipv4_mapped
-        return (
-            str(ipaddress.ip_network(f"{address}/64", strict=False))
-            if address.version == 6
-            else str(address)
-        )
-    except ValueError:
-        return peer  # A malformed forwarded header never creates a fresh budget identity.
 
 
 def ipv6_parent(address):
@@ -242,7 +218,10 @@ class Core:
     """The process lock, the in-memory budgets and the pooled SQLite connections."""
 
     def __init__(self, path, trusted_proxy=None):
-        self.path, self.trusted_proxy = path, trusted_proxy
+        self.path = path
+        self.trusted_proxy = (
+            trusted_proxy  # addresses or CIDR networks (comma-separated); default none
+        )
         self.lock = threading.RLock()
         # In-memory rate windows. Taken alone by pre-checks and inside self.lock by transactions,
         # never the other way round; held only for dict/heap updates.
@@ -276,28 +255,34 @@ class Core:
         with self.budget:
             window_rate(self, purpose, identity, duration, cap, now, charge)
 
-    def client_address(self, peer, headers):
-        """canonical_address(), warning once (N4) when a proxy forwards but none is trusted."""
-        forwarded = headers.get("x-forwarded-for")
-        if forwarded and not self.trusted_proxy and not self.proxy_warned:
+    @property
+    def trusted_proxy(self):
+        return self._trusted_text
+
+    @trusted_proxy.setter
+    def trusted_proxy(self, value):
+        self._trusted_nets = parse_trusted(value)  # a malformed entry refuses to start
+        self._trusted_text = value or None
+
+    def client_address(self, peer, raw_headers):
+        """The rate-limit key of a request (forwarded.py; ``raw_headers`` is the ASGI ``scope['headers']`` list).
+        Never a trust or locality input."""
+        key = rate_key(peer, raw_headers, self._trusted_nets)
+        if (
+            not self._trusted_nets
+            and not self.proxy_warned
+            and any(k.lower() == b"x-forwarded-for" for k, _ in raw_headers)
+        ):
             self.proxy_warned = True
             logging.getLogger(__name__).warning(
-                "X-Forwarded-For received but ORCH_RELAY_TRUSTED_PROXY is unset: behind a reverse "
-                "proxy every client shares the proxy's address (address windows); set "
-                "it to the proxy's IP address"
+                "X-Forwarded-For received but ORCH_RELAY_TRUSTED_PROXY is unset: behind a reverse proxy every "
+                "client shares the proxy's address (address windows); set it to the proxy's network"
             )
-        return canonical_address(peer, forwarded, self.trusted_proxy)
+        return key
 
 
 def install(app, data):
     core = Core(data / db.DB_NAME, os.environ.get("ORCH_RELAY_TRUSTED_PROXY"))
     core.table_limit = throttle_table(os.environ)
-    behind = os.environ.get("ORCH_RELAY_BEHIND_PROXY", "").strip().lower()
-    if behind not in ("", "0", "false", "no") and not core.trusted_proxy:
-        # N4: behind Caddy without a trusted proxy every client has the proxy's address.
-        logging.getLogger(__name__).warning(
-            "ORCH_RELAY_BEHIND_PROXY is set but ORCH_RELAY_TRUSTED_PROXY is unset: every client "
-            "shares the proxy's address (shared address windows)"
-        )
     app.state.core = core
     return core

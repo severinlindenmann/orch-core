@@ -24,7 +24,7 @@ from .tlsadapter import parse_addr
 
 __all__ = ["Link", "parse_link", "resolve"]
 
-_FRAG = re.compile(r"h1\.([0-9a-f]{32})\.([A-Za-z0-9_-]{1,64})(?:\.(.{1,300}))?")
+_FRAG = re.compile(r"h1\.([0-9a-f]{32})\.([A-Za-z0-9_-]{1,64})(?:\.([^~]{1,300}))?(?:~([0-9a-f]{32}))?")
 MAX_CARD = 64 * 1024
 TIMEOUT = 8.0
 
@@ -35,6 +35,7 @@ class Link:
     hub_id: str
     code: str
     endpoint: str | None
+    owner_user: str | None = None  # the hub user the minting admin named as this workspace's owner (`~<hex32>`)
 
     @property
     def card_url(self) -> str:
@@ -58,13 +59,13 @@ def parse_link(text: Any) -> Link:
     m = _FRAG.fullmatch(u.fragment)
     if m is None:
         raise HubRefused("malformed")
-    hub_id, code, endpoint = m.groups()
+    hub_id, code, endpoint, owner_user = m.groups()
     if endpoint is not None and endpoint != "local":
         try:
             parse_addr(endpoint)
         except HubRefused:
             raise HubRefused("malformed") from None
-    return Link(f"{u.scheme}://{u.netloc}", hub_id, code, endpoint)
+    return Link(f"{u.scheme}://{u.netloc}", hub_id, code, endpoint, owner_user)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -73,7 +74,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def fetch_card(link: Link) -> dict[str, Any]:
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)  # never the environment's proxy
     url, host_header = local_url(link.card_url)  # this computer's own address is dialled on loopback
     headers = {"Accept": "application/json", **({"Host": host_header} if host_header else {})}
     req = urllib.request.Request(url, headers=headers)  # noqa: S310
@@ -81,8 +82,9 @@ def fetch_card(link: Link) -> dict[str, Any]:
         with opener.open(req, timeout=TIMEOUT) as r:  # noqa: S310
             raw = r.read(MAX_CARD + 1)
     except urllib.error.HTTPError as exc:
-        # a hub whose address changed answers 503 "unavailable" (its api origin is pinned to the operation certificate)
-        raise HubRefused("hub_address_changed" if exc.code == 503 else "hub_unreachable") from None
+        # a hub whose address changed answers 503 "unavailable" (its api origin is pinned to the operation certificate);
+        # W08: any other HTTP answer means a server is there but it is not this hub (another program on the port)
+        raise HubRefused("hub_address_changed" if exc.code == 503 else "not_a_hub") from None
     except (urllib.error.URLError, OSError, ValueError):
         raise HubRefused("hub_unreachable") from None
     if len(raw) > MAX_CARD:
@@ -90,10 +92,10 @@ def fetch_card(link: Link) -> dict[str, Any]:
     try:
         doc = json.loads(raw)
     except ValueError:
-        raise HubRefused("malformed") from None
+        raise HubRefused("not_a_hub") from None  # W08: something answered, but not with a hub card
     card = doc.get("card") if isinstance(doc, dict) else None
     if not isinstance(card, dict):
-        raise HubRefused("malformed")
+        raise HubRefused("not_a_hub")
     return card
 
 
@@ -110,6 +112,7 @@ def resolve(text: Any, *, now_ms: int, dev_mode: bool) -> dict[str, Any]:
         "code": link.code,
         "endpoint": None if link.endpoint in (None, "local") else link.endpoint,
         "local": link.endpoint == "local",
+        "owner_user": link.owner_user,
         "name": link.name,
         "dev": bool(verified["card"].get("dev")),
     }

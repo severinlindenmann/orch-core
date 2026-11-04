@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 
+from orch import childenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .adapters.addons import prose, records
@@ -27,6 +28,7 @@ ACTIONS = {
     "mark": ["remote-private", "--yes"],
     "unmark": ["remote-private", "--off"],
     "push-initial": ["push", "--initial", "--yes"],
+    "auto-on": ["auto", "on", "--yes"],
 }
 NEEDS_URL = frozenset({"mark", "push-initial"})
 
@@ -255,7 +257,7 @@ class RecordsChild:
         try:
             proc = subprocess.Popen(
                 argv,
-                env=env,
+                env=childenv.sanitize(env, absolute_pythonpath=True),
                 cwd=env["ORCH_STATE_DIR"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,

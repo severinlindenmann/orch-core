@@ -153,21 +153,34 @@ def test_another_version_in_the_block_list_and_an_allowed_id_pass(served, hub, r
 
 
 def test_the_grant_rechecks_block_allow_and_ceiling_under_the_lock(served, human, hub, ready):
-    st = ok(stage(served))["data"]
     for kw, code in (
         ({"block": ["standup"]}, "market.blocked"),
         ({"allow": ["other"]}, "market.addon_not_allowed"),
         ({"ceiling": []}, "market.capability_ceiling"),
         ({"markets": []}, "market.not_allowed"),
     ):
+        hub.set()
+        st = ok(stage(served))["data"]
         hub.set(**kw)
-        prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+        prepared = human.prepare(
+            "addon.grant",
+            {
+                "name": "standup",
+                "staged": st["stage"],
+                "digest": st["package_sha256"],
+                "caps": st["grant"]["capabilities"],
+            },
+        )
         signed = human.sign(prepared)
         assert err(human.submit_res(prepared["request"]["id"], signed.events)) == code
         assert mfiles(served).installs() == {"addons": {}, "seen": {}, "keys": {}}
         assert not addon_dir(served).exists()
-    hub.set()  # undone: the same stage is signed and installs
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    hub.set()  # a refusal consumed its stage; a fresh review can now install
+    st = ok(stage(served))["data"]
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
     assert addon_dir(served).exists()
 
@@ -191,7 +204,10 @@ def test_a_listed_company_marketplace_needs_no_isolation_and_its_pin_replaces_to
     assert add["class"] == "company" and add["verified"] is True
     st = ok(stage(served))["data"]
     assert st["market"]["class"] == "company" and st["market"]["publisher"]["tofu"] == "pinned"
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     assert prepared["material"]["market"]["publisher"]["tofu"] == "pinned"
     ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
     rec = mfiles(served).installs()
@@ -222,7 +238,10 @@ def test_a_company_key_the_hub_stops_pinning_stops_the_grant(served, human, comp
     ok(person(served, "market.add", {"url": ACME}))
     st = ok(stage(served))["data"]
     company.set(markets=[{"url": ACME, "class": "company", "keys": [OTHER_B64]}, _official()])
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     assert err(human.submit_res(prepared["request"]["id"], signed.events)) in (
         "market.index_unsigned",

@@ -1,7 +1,5 @@
-"""V3 A7: the hub pages' routes relay the host's reads through a closed shape and build Terminal commands; they sign
-nothing and send no hub write to the host."""
-
-import shlex
+"""V3 A7: the hub pages' routes relay the host's reads through a closed shape; they sign nothing and send no hub write
+to the host."""
 
 import pytest
 from fastapi import FastAPI
@@ -96,6 +94,36 @@ def test_not_told_and_pending_key_change_are_passed_on():
     assert got["not_told"] and got["owed"] == 1 and got["key_change_pending"]
 
 
+@pytest.mark.parametrize(
+    "notice,want",
+    [
+        ({"target_version": "0.2.0"}, "0.2.0"),
+        (None, None),
+        ({"target_version": "go <b>here</b>"}, None),
+        ("0.2.0", None),
+    ],
+)
+def test_update_request_from_the_hub_is_only_a_plain_version(notice, want):
+    got = client(Link({"hub.status": {**STATUS, "update_notice": notice}})).get(f"/api/w/{WS}/hub").json()
+    assert got["update_target"] == want
+
+
+@pytest.mark.parametrize(
+    "closing,want",
+    [
+        ({"since_ms": 1, "ends_ms": 2}, {"since_ms": 1, "ends_ms": 2}),
+        (None, None),
+        ({"since_ms": 1, "ends_ms": 2, "removal_id": "x"}, None),  # exactly the two members, nothing else passes
+        ({"since_ms": "1", "ends_ms": 2}, None),
+        ({"since_ms": True, "ends_ms": 2}, None),
+        ("closing", None),
+    ],
+)
+def test_closing_is_only_the_hosts_two_integers(closing, want):
+    got = client(Link({"hub.status": {**STATUS, "closing": closing}})).get(f"/api/w/{WS}/hub").json()
+    assert got["closing"] == want
+
+
 def test_share_view_lists_rules_and_shared_tickets():
     link = Link({"share.rules": RULES, "share.preview": PREVIEW})
     got = client(link).get(f"/api/w/{WS}/hub/share").json()
@@ -134,6 +162,16 @@ def test_preview_passes_one_rule_to_the_host():
     assert link.calls[1] == ("share.preview", {"remove": {"kind": "ticket", "ticket": "PRD-0014"}})
 
 
+def test_the_hosts_too_many_people_refusal_reaches_the_page_in_its_own_words():
+    """A review over the host's hard limits (core shareops.TOO_MANY) is relayed with its code and plain sentence: the
+    page matches the sentence, so the relay must not reword or drop it."""
+    too_many = "This rule reaches too many people. Narrow it to share."
+    link = Link({"share.preview": fail("invalid.input", too_many)})
+    res = client(link).post(f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "type", "value": "Bug"}})
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "invalid.input" and too_many in res.json()["error"]["message"]
+
+
 @pytest.mark.parametrize("body", [
     {"add": {"kind": "type", "value": "x"}, "remove": {"kind": "type", "value": "y"}},
     {"add": {"kind": "type"}}, {"add": {"kind": "needs_you", "value": "x"}},
@@ -150,47 +188,9 @@ def test_preview_refuses_malformed_rules(body):
     assert link.calls == []
 
 
-def cmd(c, body):
-    return c.post(f"/api/w/{WS}/hub/command", json=body)
-
-
-def test_commands_are_the_terminal_lines_and_nothing_is_sent_to_the_host():
-    link = Link({})
-    c = client(link)
-    got = cmd(c, {"kind": "join", "invite": "INV-7QK2-M9XD", "card": "/tmp/my hub.json", "mode": "selective"})
-    assert got.json()["command"] == "orch hub join INV-7QK2-M9XD --hub-card '/tmp/my hub.json' --mode selective"
-    assert (
-        cmd(c, {"kind": "mode_full", "card": "card.json"}).json()["command"]
-        == "orch hub mode full --hub-card card.json"
-    )
-    assert cmd(c, {"kind": "leave"}).json()["command"] == "orch hub leave"
-    assert cmd(c, {"kind": "leave_hub_down"}).json()["command"] == "orch hub leave"
-    assert cmd(c, {"kind": "stop_telling"}).json()["command"] == "orch hub unbind"
-    assert cmd(c, {"kind": "share_sync"}).json()["command"] == "orch hub share sync"
-    assert cmd(c, {"kind": "share_revoke", "ref": "PRD-0014"}).json()["command"] == "orch hub share revoke PRD-0014"
-    r = {"kind": "share_add", "rule": {"kind": "tag", "value": "team; rm -rf ~"}}
-    line = cmd(c, r).json()["command"]
-    assert shlex.split(line) == ["orch", "hub", "share", "rule", "add", "--tag", "team; rm -rf ~"]
-    assert (
-        cmd(c, {"kind": "share_remove", "rule": {"kind": "needs_you"}}).json()["command"].endswith("remove --needs-you")
-    )
-    assert link.calls == []
-
-
-@pytest.mark.parametrize("body", [
-    {"kind": "join", "invite": "INV-1234", "card": "c.json"},  # mode missing
-    {"kind": "join", "invite": "bad invite", "card": "c.json", "mode": "full"},
-    {"kind": "join", "invite": "INV-1234", "card": "-c.json", "mode": "full"},
-    {"kind": "join", "invite": "INV-1234", "card": "c\n.json", "mode": "full"},
-    {"kind": "join", "invite": "INV-1234", "card": "c.json", "mode": "all"},
-    {"kind": "leave", "card": "c.json"}, {"kind": "mode_full"}, {"kind": "share_add"},
-    {"kind": "share_revoke", "ref": "a b"}, {"kind": "hub.join"}, {"kind": "leave", "extra": 1},
-])  # fmt: skip
-def test_commands_refuse_malformed_requests(body):
-    assert cmd(client(Link({})), body).status_code in (
-        400,
-        422,
-    )  # 400 in the real app (invalid.input); the bare test app says 422
+def test_there_is_no_terminal_command_route():
+    """The old 'run this in your Terminal' lines are gone: every hub change is signed with one click."""
+    assert client(Link({})).post(f"/api/w/{WS}/hub/command", json={"kind": "leave"}).status_code in (404, 405)
 
 
 def test_old_core_says_so():
@@ -208,10 +208,27 @@ def test_module_never_names_a_hub_write():
 
     src = Path(hub.__file__).read_text()
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
-    # connect: C11's one write; addon.list: a read (the join-pause check)
-    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list"}
+    # connect: C11's one write; addon.list: a read (the join-pause check); member.list: the owner check of the
+    # one-click share reductions
+    allowed = {
+        "hub.status",
+        "share.rules",
+        "share.preview",
+        "share.audience",
+        "hub.shared",
+        "hub.connect",
+        "hub.refresh",
+        "hub.link",
+        "addon.list",
+        "member.list",
+    }
     assert set(calls) <= allowed
-    assert src.count("write=True") == 1
+    # the other writes: `reduce` (only the two ops that take sharing away) and `add` (the two click-only ops that
+    # share more: a full local session, an owner, a plan this session was shown; see test_hub_share_add)
+    assert src.count("write=True") == 4
+    assert set(re.findall(r"\"(share\.[a-z_]+)\"", src)) == {"share.rules", "share.preview", "share.revoke",
+                                                             "share.rule_remove", "share.rule_add",
+                                                             "share.sync", "share.audience"}  # fmt: skip
     assert "hubclient" not in src and "import orch" not in src
 
 
@@ -246,6 +263,15 @@ class Auth:
 
     def login_kind(self, token):
         return self.kind
+
+    def switch_workspace(self, token):
+        return None
+
+    def listener_of(self, token):
+        return "loopback"
+
+    def passkey_session(self, token):
+        return True
 
     def stepup_take(self, token, action, digest):
         return False, None  # no passkey step-up was made
@@ -305,7 +331,7 @@ def connect(c, **over):
 def test_connect_relays_the_invite_and_card_to_the_host_as_one_write():
     link = Link({"hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1}})
     got = connect(connect_client(link))
-    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
+    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective", "confirmed": False}
     assert link.calls == [
         (
             "hub.connect",
@@ -325,7 +351,7 @@ def test_connect_works_while_the_dashboard_add_on_is_paused_by_the_join():
         }
     )
     got = connect(connect_client(link, gw=PausedGw))
-    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
+    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective", "confirmed": False}
     assert [c[0] for c in link.calls] == ["addon.list", "hub.connect"]
 
 
@@ -365,3 +391,244 @@ def test_connect_failure_is_the_hosts_own_answer_and_never_says_connected():
     res = connect(connect_client(link))
     assert res.status_code >= 400 and "connected" not in res.text.lower().replace("not connected", "")
     assert res.json()["error"]["code"] == "hub.unreachable"
+
+
+def test_connect_says_confirmed_only_when_the_host_pinned_a_snapshot():
+    for sent, want in ((3, True), (None, False), (0, False), (True, False)):
+        link = Link({"hub.connect": {"mode": "selective", "snapshot_version": sent}})
+        assert connect(connect_client(link)).json()["confirmed"] is want
+
+
+def refresh(c):
+    return c.post(f"/api/w/{WS}/hub/refresh")
+
+
+PAUSED = {"addons": [{"name": "dashboard", "state": "paused", "paused": {"cause": "unverified"}}]}
+
+
+def test_refresh_runs_while_the_add_on_is_paused_and_reports_the_pinned_version():
+    link = Link({"hub.refresh": {"hub_id": HUB32, "changed": True, "snapshot": {"version": 2}}, "addon.list": PAUSED})
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code == 200 and got.json() == {"confirmed": True}
+    assert [c[0] for c in link.calls] == ["addon.list", "hub.refresh"] and link.calls[1][2]["write"] is True
+
+
+def test_refresh_says_not_confirmed_when_the_hub_does_not_answer():
+    link = Link({"hub.refresh": fail("hub.unreachable"), "addon.list": PAUSED})
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code == 200 and got.json() == {"confirmed": False}
+
+
+def test_refresh_does_not_lift_a_pause_with_another_cause():
+    link = Link(
+        {
+            "hub.refresh": {"snapshot": {"version": 2}},
+            "addon.list": {"addons": [{"name": "dashboard", "state": "disabled"}]},
+        }
+    )
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code != 200 and got.json()["error"]["code"] == "addon.disabled"
+    assert not any(c[0] == "hub.refresh" for c in link.calls)
+
+
+def test_refresh_from_a_remote_session_is_refused_before_the_host_is_asked():
+    link = Link({"hub.refresh": {"snapshot": {"version": 2}}, "addon.list": PAUSED})
+    res = refresh(connect_client(link, kind="remote", gw=PausedGw))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required" and link.calls == []
+
+
+def test_refresh_passes_on_a_real_refusal_instead_of_saying_not_confirmed():
+    link = Link({"hub.refresh": fail("role.denied"), "addon.list": PAUSED})
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code >= 400 and got.json()["error"]["code"] == "role.denied"
+
+
+def test_refresh_is_refused_for_a_local_session_that_is_not_a_full_one(monkeypatch):
+    link = Link({"hub.refresh": {"snapshot": {"version": 2}}, "addon.list": PAUSED})
+    monkeypatch.setattr(hub, "full_session", lambda auth, token: False)
+    res = refresh(connect_client(link, gw=PausedGw))
+    assert res.status_code in (401, 403) and link.calls == []
+
+
+def test_the_audience_list_is_a_closed_shape_of_names_ids_and_team_counts():
+    raw = {
+        "people": [
+            {"user_id": "a" * 32, "name": "Ben Test", "email": "x"},
+            {"user_id": "zz", "name": "Bad"},
+            {"name": "x"},
+        ],
+        "teams": [{"group": "team-a", "members": 3, "list": ["a" * 32]}, {"group": "Bad Name", "members": 1}],
+        "secret": 1,
+    }
+    got = client(Link({"share.audience": raw})).get(f"/api/w/{WS}/hub/share/audience").json()
+    assert got == {"people": [{"user_id": "a" * 32, "name": "Ben Test"}], "teams": [{"group": "team-a", "members": 3}],
+                   "note": "from the hub, not signed"}  # fmt: skip
+
+
+def test_a_rule_with_readers_reaches_the_host_in_core_s_form_and_a_notes_rule_may_not_have_them():
+    link = Link({"share.preview": PREVIEW})
+    rule = {
+        "kind": "tag",
+        "value": "public",
+        "audience": {"users": ["a" * 32], "groups": ["team-a"]},
+        "description": True,
+    }
+    r = client(link).post(f"/api/w/{WS}/hub/share/preview", json={"add": rule})
+    assert r.status_code == 200
+    aud = {"users": ["a" * 32], "groups": ["team-a"]}
+    assert link.calls[0] == (
+        "share.preview",
+        {"add": {"kind": "tag", "tag": "public", "audience": aud, "description": True}},
+    )
+    body = {"add": {"kind": "needs_you", "description": True}}
+    bad = client(link).post(f"/api/w/{WS}/hub/share/preview", json=body)
+    assert bad.status_code == 422
+    worse = client(link).post(f"/api/w/{WS}/hub/share/preview",
+                              json={"add": {**rule, "audience": {"users": ["nope"], "groups": []}}})  # fmt: skip
+    assert worse.status_code == 422
+
+
+def test_the_review_shows_readers_by_name_and_the_widened_items():
+    raw = {**PREVIEW, "review": {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": [],
+                                 "readers": {"people": ["Ben Test"], "teams": ["team-a"], "note": "from the hub"},
+                                 "widened": [{"line": "ticket PRD-1: T", "people_added": ["Ben Test"],
+                                              "teams_added": [], "description_added": True}]}}  # fmt: skip
+    got = (
+        client(Link({"share.preview": raw}))
+        .post(f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}})
+        .json()
+    )
+    assert (
+        got["review"]["readers"]["people"] == ["Ben Test"] and got["review"]["widened"][0]["description_added"] is True
+    )
+
+
+def test_shared_with_you_is_a_closed_read_only_shape():
+    good = {
+        "workspace_id": "w" * 32, "key": "DEMO-0007", "title": "Invoice export", "shared_by": "Anna",
+        "status": "open", "type": "feature", "deadline": None, "description": "Export invoices as CSV.",
+        "labels": ["x"], "item_id": "i",
+    }  # fmt: skip
+    raw = {"items": [good, {**good, "key": "bad key"}, {**good, "shared_by": None}, "x"], "extra": 1}
+    link = Link({"hub.shared": raw})
+    got = client(link).get(f"/api/w/{WS}/hub/shared").json()
+    assert got == {"items": [{"workspace_id": "w" * 32, "key": "DEMO-0007", "title": "Invoice export",
+                              "shared_by": "Anna", "status": "open", "type": "feature", "deadline": None,
+                              "description": "Export invoices as CSV."}]}  # fmt: skip
+    assert link.calls == [("hub.shared", None)]
+
+
+@pytest.mark.parametrize("code", ["hub.not_joined", "hub.state_mismatch"])
+def test_shared_with_you_is_empty_not_an_error_without_a_hub(code):
+    err = HostError({"code": code, "message": "x", "retryable": False}, 3)
+    res = client(Link({"hub.shared": err})).get(f"/api/w/{WS}/hub/shared")
+    assert res.status_code == 200 and res.json() == {"items": []}
+
+
+def test_shared_with_you_still_surfaces_other_errors():
+    err = HostError({"code": "hub.unreachable", "message": "x", "retryable": True}, 4)
+    res = client(Link({"hub.shared": err})).get(f"/api/w/{WS}/hub/shared")
+    assert res.status_code != 200 and res.json()["error"]["code"] == "hub.unreachable"
+
+
+def _review_of(**over):
+    review = {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": [],
+              "readers": {"people": ["Ben"], "teams": [], "note": "n", "info": "i"}, "widened": [], **over}  # fmt: skip
+    got = client(Link({"share.preview": {**PREVIEW, "review": review}})).post(
+        f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}}
+    )
+    return got.json()["review"]
+
+
+def test_review_passes_readers_with_info_and_widened():
+    got = _review_of(
+        widened=[
+            {"line": "ticket PRD-1: T", "people_added": ["Ana"], "teams_added": [], "description_added": True, "x": 1}
+        ]
+    )
+    assert got["readers"] == {"people": ["Ben"], "teams": [], "note": "n", "info": "i"}
+    assert got["widened"] == [
+        {"line": "ticket PRD-1: T", "people_added": ["Ana"], "teams_added": [], "description_added": True}
+    ]
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {
+            "widened": [{"line": "ticket PRD-1: T", "people_added": [], "teams_added": [], "description_added": False}]
+            * 201
+        },
+        {
+            "widened": [
+                {"line": "ticket PRD-1: T", "people_added": [], "teams_added": [], "description_added": False},
+                "x",
+            ]
+        },
+        {"widened": [{"line": 5}]},
+        {"widened": [{"line": "ticket PRD-1: T", "people_added": ["Ana", 7], "teams_added": []}]},
+        {"widened": None},
+        {"widened": "x"},
+        {"readers": {"people": [f"P{i}" for i in range(501)], "teams": []}},
+        {"readers": {"people": ["Ben", 5], "teams": []}},
+        {"readers": {"people": ["Ben"]}},
+        {"readers": None},
+    ],
+)
+def test_a_cut_or_malformed_readers_or_widened_list_means_no_review(over):
+    assert _review_of(**over) is None
+
+
+def test_a_long_review_below_the_hard_limits_is_passed_on_whole():
+    row = {"line": "ticket PRD-1: T", "people_added": [f"A{i}" for i in range(500)], "teams_added": [],
+           "description_added": False}  # fmt: skip
+    got = _review_of(readers={"people": [f"P{i}" for i in range(500)], "teams": [], "note": "n"}, widened=[row] * 200)
+    assert len(got["readers"]["people"]) == 500 and len(got["widened"]) == 200
+    assert len(got["widened"][0]["people_added"]) == 500
+
+
+def test_a_review_without_readers_or_widened_keys_means_no_review():
+    review = {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": []}
+    got = client(Link({"share.preview": {**PREVIEW, "review": review}})).post(
+        f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}}
+    )
+    assert got.json()["review"] is None
+
+
+def test_a_rule_row_carries_its_readers_and_description_so_stop_sharing_sends_the_rule_core_has():
+    """Run 9 (J03): core matches a rule removal exactly; the row had only a readers COUNT, so the page sent
+    `{kind, value}` for a rule stored with `description: true` and core answered not_found (HTTP 404). The row carries
+    the reader ids and the flag, and that row, sent back, reaches the host as the stored rule."""
+    aud = {"users": ["a" * 32], "groups": ["team-a"]}
+    stored = {"kind": "ticket", "ticket": "PW-0001", "audience": aud, "description": True}
+    rules = {"rules": [{**stored, "count": 1, "describes": "the ticket"}], "shared": 1, "refused_items": []}
+    link = Link({"share.rules": rules, "share.preview": PREVIEW})
+    (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    assert row["audience"] == aud and row["readers"] == 2 and row["description"] is True and row["removable"] is True
+    sent = {k: row[k] for k in ("kind", "value", "audience", "description")}  # what ShareRules.tsx sends back
+    assert hub.Rule.model_validate(sent).host() == stored  # the remove route's body -> core's stored form
+
+
+BAD_AUDIENCES = [
+    {"users": ["nope"], "groups": []},
+    {"users": "x"},
+    {"users": ["a" * 32] * 33, "groups": []},
+    "not an object",
+    {},
+]
+
+
+@pytest.mark.parametrize("aud", BAD_AUDIENCES)
+def test_a_malformed_audience_in_a_rule_row_is_left_out_so_a_removal_fails_closed(aud):
+    rules = {"rules": [{"kind": "tag", "tag": "public", "audience": aud, "count": 0}], "shared": 0}
+    link = Link({"share.rules": rules, "share.preview": PREVIEW})
+    (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    assert row["audience"] is None and row["removable"] is False  # never sent back as a bare rule
+
+
+def test_a_rule_without_readers_is_removable():
+    rules = {"rules": [{"kind": "tag", "tag": "public", "count": 0}], "shared": 0}
+    (row,) = (
+        client(Link({"share.rules": rules, "share.preview": PREVIEW})).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    )
+    assert row["audience"] is None and row["removable"] is True

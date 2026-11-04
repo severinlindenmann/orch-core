@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.full",
+    "message": "this workspace already has the most remote devices it can hold",
+    "hint": "remove a device you no longer use",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -40,7 +40,7 @@ def rotate(call: Call, epochs: Any) -> dict[str, Any]:
     from . import hubops, hubsign
     from .workspace import ok_result
 
-    if hubops.signing_mode(call.service) in hubsign.HUB_ONLY:
+    if hubops.signing_mode(call.service) in hubsign.SEALS_TO_HUB:
         raise HostError(
             "keys.joined",
             "a hub is joined in full mode: rotating now would make an epoch the hub never gets; leave first",

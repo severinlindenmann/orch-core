@@ -209,8 +209,8 @@ const CASES: Case[] = [
     path: '/ticket/DEMO-0041',
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
-      expect(dialog).toHaveAccessibleName('Give verdict (Verify)')
-      await user.click(within(dialog).getByRole('radio', { name: /^Pass on .*: the evidence is enough$/ }))
+      expect(dialog).toHaveAccessibleName('Give verdict')
+      await user.click(within(dialog).getByRole('radio', { name: /^Pass on / }))
       return dialog
     },
     confirm: press('Pass'),
@@ -218,7 +218,7 @@ const CASES: Case[] = [
     arg: 1,
     skip: ['action'],
     // The verdict signs the commit (owner decision 2026-10-10): the head is in the choice and the covers, in full.
-    shown: { result: (v) => (v === 'pass' ? 'Pass on ' : 'Send back ·'), source_sha: (v) => `Commit ${v} on ` },
+    shown: { result: (v) => (v === 'pass' ? 'Pass on ' : 'Send back'), source_sha: (v) => `Commit ${v} on ` },
   },
   {
     // Owner decision 2026-10-10 (1): the opt-in code review gate signs exactly the commit the verdict signed.
@@ -553,26 +553,6 @@ const CASES: Case[] = [
     verbOnly: true,
   },
   {
-    name: 'relay pair.confirm (add a device)',
-    path: '/settings/relay',
-    open: async (user) => {
-      await user.click(await screen.findByRole('button', { name: 'Connect' }, T))
-      await user.click(await screen.findByRole('button', { name: 'Sign and connect' }, T))
-      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Online'), T)
-      await user.click(screen.getByRole('button', { name: 'Pair a device' }))
-      const pair = await dialogNamed(/Pair a device/)
-      await user.click(within(pair).getByRole('button', { name: /Simulate: a phone scans/ }))
-      await user.click(await within(pair).findByRole('button', { name: 'Codes match' }, T))
-      return dialogNamed(/^Add .* to /)
-    },
-    confirm: press('Sign and add device'),
-    method: 'postRelay',
-    arg: 1,
-    op: 'pair.confirm',
-    skip: ['op'],
-    shown: { pairing: (v) => `pairing ${v}`, fingerprint: (v) => `(${v})` },
-  },
-  {
     name: 'relay device.remove',
     path: '/settings/relay',
     open: async (user) => {
@@ -704,29 +684,6 @@ describe('signing surface: these dialogs show exactly what is signed, in core\'s
   }, 40_000)
 })
 
-// The terminal hand-off (M3, real host): core's dialog does not sign. It shows the host's material, the fingerprint, the
-// code and the command; the title and buttons keep core's words; nothing is posted through the signing methods.
-describe('hand-off dialog', () => {
-  it('shows only the host material, core words in the title, and signs nothing itself', async () => {
-    const { fakeRequest, mount, spies, state } = await import('./handoffHarness')
-    const { setFeatures } = await import('@/api/features')
-    const s = spies()
-    const request = fakeRequest()
-    s.prepare.mockResolvedValue(request)
-    s.get.mockResolvedValue(state(request))
-    const { ticket } = await mount({ kind: 'approve', gate: 'plan' })
-    const dialog = await screen.findByRole('dialog', {}, T)
-    await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(within(dialog).getByRole('heading', { name: 'Approve plan' })).toBeInTheDocument()
-    expect(dialog.textContent).toContain('HOST-MATERIAL task text')
-    expect(dialog.textContent).not.toContain(ticket.tasks[0].text)
-    expect(within(dialog).getByTestId('handoff-fingerprint')).toHaveTextContent(request.fingerprint)
-    for (const method of ['postAction', 'runAddonAction', 'issueGrant', 'revokeGrant', 'postAddonOp', 'postSettings'] as const) expect(vi.spyOn(api, method)).not.toHaveBeenCalled()
-    setFeatures(null)
-  })
-})
-
-
 it('records current-destination confirmation warning preserves the exact URL through Raw', async () => {
   const { ExportWarning } = await import('@/app/pages/settings/host/Records')
   const url = 'https://git.example.test/records\u202e.git'
@@ -746,8 +703,7 @@ describe('start agent', () => {
     const { RunnerGrantCard, StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
     const WS = 'b'.repeat(32)
     vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 8, click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
-    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click' } as Awaited<ReturnType<typeof api.getSignDefault>>)
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ } as Awaited<ReturnType<typeof api.getHostSettings>>)
     const display = "codex 'work on DEMO-7'‮"
     vi.spyOn(agentsApi, 'preview').mockResolvedValue({
       spec: 'e'.repeat(64), ticket: 'DEMO-7', display, display_hidden: false, cwd: { kind: 'workspace' }, cwd_path: '/w/demo', cwd_path_hidden: false,
@@ -768,7 +724,14 @@ describe('start agent', () => {
       const shown = await screen.findByTestId('agent-preview', {}, T)
       expect(shown.textContent).toContain("codex 'work on DEMO-7'\\u{202e}") // escaped, never repaired
       await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
-      screen.getByTestId('agent-start').click() // "Sign and start agent": the access is signed in the popover
+      screen.getByTestId('agent-start').click() // opens the popover: the access length is chosen there, nothing is prepared yet
+      expect(prepare).not.toHaveBeenCalled()
+      // The trusted press of the popover's outcome button prepares (C2); the 1 s arm stays the only sign trigger.
+      const gesture = await import('@/components/sign/trustedPress')
+      vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+      const outcome = await screen.findByRole('button', { name: 'Sign and start agent' }, T)
+      const { fireEvent } = await import('@testing-library/react')
+      fireEvent.click(outcome)
     } else {
       await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled(), T)
       screen.getByTestId('runner-grant-issue').click()
@@ -777,30 +740,13 @@ describe('start agent', () => {
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
     expect(within(panel).queryByRole('textbox')).toBeNull() // nothing is typed
-    expect(within(panel).getByTestId('access-length')).toHaveTextContent('Let agents work for you for 8 h.')
+    expect(within(panel).getByTestId('access-length')).toHaveTextContent('Agents (Claude Code) may work for you for 8 h.')
     expect(screen.getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until armed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
   })
 })
 
-it('shows the host refusal and recovery hint when removing one click would strand a custody key', async () => {
-  const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
-  const { SignPopover } = await import('@/components/sign/SignPopover')
-  const { ApiError } = await import('@/api/types')
-  const message = 'sign_methods cannot leave out click while click-to-sign is on for this workspace: the key is in convenience custody'
-  const hint = 'move the key back first: orch host convenience off --workspace W and orch keys custody passphrase --workspace W --in-place'
-  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click', 'phone'] })
-  const prepare = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(400, { code: 'invalid.input', message, hint, retryable: false }))
-  const click = vi.spyOn(api, 'prepareClick')
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws="w" title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'phone'] }} autoStart onClose={() => {}} /></QueryClientProvider>)
-  expect(await screen.findByText(message)).toBeVisible()
-  expect(screen.getByText(hint)).toBeVisible()
-  expect(prepare).toHaveBeenCalledWith('w', { action: 'settings_set', sign_methods: ['terminal', 'phone'] }, 0)
-  expect(click).not.toHaveBeenCalled()
-})
 
 
 it('setup Create posts the review digest shown with core rows and terminal fingerprint', async () => {
@@ -812,7 +758,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
     let value: unknown = {ok:true}
     if (String(url).endsWith('/state')) value = {
       phase:'profile',mode:'finish',dir:'/demo',dir_name:'demo',suggested:{name:'Demo',prefix:'TST'},
-      addons:[{id:'worktrees',title:'Worktrees',desc:'Copies',required:false,default:false,kind:'addon',capabilities:[]}],
+      addons:[{id:'worktrees',title:'Work copies',desc:'Copies',required:false,default:false,kind:'addon',capabilities:[]}],
       methods:['terminal'],click_available:false,click_reason:'',agent_hours:[8],
       relay:{available:false,enabled:false},missing:['addon:worktrees'],labels:{},
       current:{name:'Demo',prefix:'TST',addons_on:[],agent_hours:8,runner:{enabled:false,terminals:false},runner_grant:false,method:'terminal'},
@@ -828,11 +774,11 @@ it('setup Create posts the review digest shown with core rows and terminal finge
   })
   render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch)}/>)
   await screen.findByRole('heading',{name:'Finish setting up your workspace'})
-  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByLabelText(/Work copies/))
   fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
   await screen.findByRole('heading',{name:'Review your setup'})
   expect(screen.getByText('Agents: 8 hours')).not.toBeVisible() // collapsed, but in the page
-  fireEvent.click(screen.getByText(/^Everything you approve \(/))
+  fireEvent.click(screen.getByText('Details', { selector: '.review-technical > summary' })) // r9-P10: the fold is 'Details', no count
   expect(screen.getByText('Agents: 8 hours')).toBeVisible()
   expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeVisible()
   fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))
@@ -841,69 +787,20 @@ it('setup Create posts the review digest shown with core rows and terminal finge
 
 
 
-it('addon enable confirms the grant name and renders the workspace review without a ticket', async () => {
-  const { workspaceConfirmWord, fingerprintOf, reviewDigestOf, requestIsConsistent } = await import('@/api/handoff')
-  const { clickEligible } = await import('@/api/click')
-  const { HandoffPanel } = await import('@/components/sign/HandoffPanel')
-  const { fakeRequest } = await import('@/test/handoffHarness')
-  const publish = { server: 'https://files.example.test', share: 'https://links.example.test' }
-  const event = { id: 'event-settings', type: 'settings.changed', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, set: { publish } }
-  const material = {
-    kind: 'payload' as const, ticket: null,
-    review: [{ event_id: event.id, type: event.type, payload: { set: { publish } }, derived: {} }],
-    sequence: { digest: 'sha256:demo', of: 2, intent: { v: 1, kind: 'addon_enable', name: 'publish', settings: { publish } } },
-  }
-  const request = { ...fakeRequest(), key: null, op: 'settings.set', events: [event], material,
-    review_digest: reviewDigestOf(material), content: { headline: 'Turn on Publish', notes: ['Files are sent to the server. Settings first, then turn on Publish.'] },
-  }
-  request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
-  const workspace = { prefix: 'DEMO', id: '0123456789abcdef0123456789abcdef' }
-  expect(requestIsConsistent(request)).toBe(true)
-  expect(workspaceConfirmWord(request, workspace)).toBe('publish~89abcdef')
-  expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://files.example.test', share: 'https://links.example.test' } })).toBe(true) // Publish: click (#1198 C2)
-  expect(clickEligible({ action: 'addon_grant', name: 'publish' })).toBe(true)
-  expect(clickEligible({ action: 'addon_grant', name: 'usage' })).toBe(true)
-  render(<HandoffPanel request={request} workspace={workspace} />)
-  expect(screen.getByTestId('handoff-command')).toHaveTextContent('orch sign')
-  expect(screen.getByText('Files are sent to the server. Settings first, then turn on Publish.')).toBeVisible()
-  expect(screen.getAllByText('publish~89abcdef').length).toBeGreaterThan(0)
-})
-it('reviews the exact task edit and relays that action through the existing handoff', async () => {
-  const { fakeRequest, state } = await import('./handoffHarness')
-  const ws = 'a'.repeat(32)
-  const { fingerprintOf, reviewDigestOf } = await import('@/api/handoff')
-  const action = { action: 'edit_sequence' as const, key: 'DEMO-0043', head_seq: 7, tasks: { edit: { T3: { text: 'Check every header', verify: null } }, add: [] } }
-  const payload = { base_rev: { 'ticket.tasks': 'sha256:' + '0'.repeat(64) }, set: { 'ticket.tasks': [{ id: 'T3', text: 'Check every header', verify: null, proves: [] }] } }
-  const event = { id: 'event-task', type: 'ticket.updated', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, ...payload }
-  const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: event.id, type: event.type, payload, derived: {} }] }
-  const request = { ...fakeRequest(), op: 'task.edit', material, events: [event], review_digest: reviewDigestOf(material), content: { headline: 'Edit task', fields_changed: [{ field: 'text', before: 'Check header', after: 'Check every header' }, { field: 'check', before: 'check-header', after: null }] } }
-  request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
-  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', is_default: true, allowed: ['terminal'] })
-  const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
-  vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Edit task" action={action} onClose={() => {}} /></QueryClientProvider>)
-  const button = await screen.findByRole('button', { name: 'Sign in a terminal' })
-  await waitFor(() => expect(button).toBeEnabled())
-  button.click()
-  await waitFor(() => expect(prepare).toHaveBeenCalled())
-  expect(await screen.findByText('Check every header')).toBeInTheDocument() // in the closed "Show exactly what is signed" fold (owner rule)
-  expect(screen.getByText('(not set)')).toBeInTheDocument()
-  expect(prepare).toHaveBeenCalledWith(ws, action, 0)
-})
 
-// R3: each manual authority path uses the existing host signing dialog, posting only its reviewed intent.
+// R3: each manual authority path uses the one-click signing popover: its trusted outcome press prepares only the reviewed
+// intent; a host refusal signs and posts nothing.
+const clickWorkspace = (ws: string) => vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: ws, prefix: 'DEMO', name: 'Demo', click: { custody: 'convenience', enabled: true, available: true } }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
 describe('manual acceptance signing paths', () => {
   it.each(['accept', 'withdraw', 'done'] as const)('reviews and prepares %s without signing after a host refusal', async kind => {
     const { ManualDialog } = await import('@/app/pages/ticket/ManualAcceptance')
-    const { refusal } = await import('./handoffHarness')
-    const { setFeatures } = await import('@/api/features')
+    const { ApiError } = await import('@/api/types')
+    const gesture = await import('@/components/sign/trustedPress')
     const ws = 'a'.repeat(32)
-    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
-    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal' } as Awaited<ReturnType<typeof api.getSignDefault>>)
-    const prepare = vi.spyOn(api, 'prepareHandoff').mockRejectedValue(refusal('role.denied', 403))
+    clickWorkspace(ws)
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    const prepare = vi.spyOn(api, 'prepareClick').mockRejectedValue(new ApiError(403, { code: 'role.denied', message: 'Host said role.denied', retryable: false }))
+    const sign = vi.spyOn(api, 'signClick')
     const post = vi.spyOn(api, 'postAction')
     const ticket = { key: 'DEMO-0001' } as import('@/api/types').TicketDocument
     const ac = { id: 'AC2', text: 'Exact criterion wording' } as import('@/api/types').AcceptanceStatus
@@ -912,58 +809,177 @@ describe('manual acceptance signing paths', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(<QueryClientProvider client={client}><ManualDialog ticket={ticket} ws={ws} choice={kind === 'done' ? { kind, task } : { kind, ac }} onClose={() => {}} /></QueryClientProvider>)
     const dialog = await screen.findByRole('dialog')
+    const name = kind === 'accept' ? 'Accept manually' : kind === 'withdraw' ? 'Withdraw acceptance' : 'Mark done'
+    const button = await within(dialog).findByRole('button', { name }, T)
     expect(dialog).toHaveTextContent(kind === 'done' ? task.text : ac.text)
     if (kind !== 'done') await user.type(within(dialog).getByRole('textbox'), ' Checked personally ')
-    const button = await within(dialog).findByRole('button', { name: 'Sign in a terminal' })
     await waitFor(() => expect(button).toBeEnabled())
+    expect(prepare).not.toHaveBeenCalled() // opening and typing prepare nothing
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
     await user.click(button)
     const expected = kind === 'done' ? { action: 'mark_task_done', key: ticket.key, task: 'T2' }
       : kind === 'accept' ? { action: 'accept_criterion', key: ticket.key, ac: 'AC2', note: 'Checked personally' }
       : { action: 'withdraw_acceptance', key: ticket.key, ac: 'AC2', reason: 'Checked personally' }
     await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, expected, 0))
+    expect(await within(dialog).findByText('Host said role.denied', {}, T)).toBeInTheDocument()
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(sign).not.toHaveBeenCalled()
     expect(post).not.toHaveBeenCalled()
-    setFeatures(null)
   })
 })
 
-it('market approval (terminal fallback) displays the exact package name and stage sent; it is click-eligible, Publish too', async () => {
-  const { workspaceRequest } = await import('./hostHarness')
-  const { state } = await import('./handoffHarness')
-  const { clickEligible } = await import('@/api/click')
-  const { visible } = await import('@/components/sign/visible')
-  const action = { action: 'market_grant' as const, name: 'calendar', staged: 'demo-stage\u202e' }
-  const request = workspaceRequest('addon.grant', { type: 'addon.granted', name: action.name, staged: action.staged })
-  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', is_default: true, allowed: ['terminal'] })
-  const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
-  vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={"a".repeat(32)} title="Approve add-on package" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
-  await waitFor(() => expect(prepare).toHaveBeenCalledWith('a'.repeat(32), action, 0))
-  expect(await screen.findByText(visible(action.staged), { exact: false })).toBeVisible()
-  expect(screen.getAllByText(action.name, { exact: false }).length).toBeGreaterThan(0)
-  expect(clickEligible(action)).toBe(true) // V3-D38: one click where click-to-sign is on, this Terminal review where it is off
-  expect(clickEligible({ ...action, name: 'publish' })).toBe(true)
+
+
+it.each([
+  { action: { action: 'followup_reschedule' as const, key: 'DEMO-0001', id: 'fu_' + '0'.repeat(26), when: '2026-10-28T09:00:00.123Z' }, op: 'follow_up.reschedule', event: 'followup.rescheduled' },
+  { action: { action: 'followup_undo' as const, key: 'DEMO-0001', id: 'fu_' + '0'.repeat(26) }, op: 'follow_up.undo', event: 'followup.restored' },
+])('follow-up signing surface: $op preserves the exact action', async ({ action, op, event }) => {
+  const { CLICK_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const expires = new Date(Date.now() + 6e5).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op, confirm: 'click' })
+  // The signer's View names the event exactly as the host will record it.
+  const lines = [`${event} ${action.id}`, ...('when' in action ? [`due ${action.when}`] : [])]
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: { risk: CLICK_RISK, op, workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines, checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null } })
+  vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change follow-up" action={action} inline onClose={() => {}} /></QueryClientProvider>)
+  const outcome = await screen.findByRole('button', { name: /follow-up/i }, T)
+  expect(prepare).not.toHaveBeenCalled()
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.setup().click(outcome)
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(within(panel).getByText(action.id, { exact: false })).toBeVisible()
+  if ('when' in action) expect(within(panel).getByText(action.when!, { exact: false })).toBeVisible()
+  expect(sign).not.toHaveBeenCalled() // only the 1 s arm signs
 })
 
-it('a terminal-only action with One click on shows the terminal hand-off: why line, exact command, pending, no click prepare', async () => {
-  const { workspaceRequest } = await import('./hostHarness')
-  const { state } = await import('./handoffHarness')
-  const ws = 'b'.repeat(32)
-  const action = { action: 'pair_device' as const, offer: 'offer-1' }
-  const request = workspaceRequest('relay.pair_device', { type: 'device.added' })
-  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: ws, click: { custody: 'convenience', enabled: true, available: true } }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: true, allowed: ['terminal', 'click'] })
-  const clickPrepare = vi.spyOn(api, 'prepareClick')
-  const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
-  vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Turn on Publish" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
+it('D3: staged install shows exact settings inline and keeps capability risk on a second press', async () => {
+  const { CLICK_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  const action = { action: 'market_grant' as const, name: 'calendar', staged: 'st_' + '1'.repeat(32),
+    grant: { name: 'calendar', version: '1.0.0', package_sha256: 'sha256:' + 'a'.repeat(64), capabilities: ['network'], fields: {}, sections: [], artifact_kinds: [], staged: 'st_' + '1'.repeat(32) }, settings: { channel: 'team channel' } }
+  const expires = new Date(Date.now() + 6e5).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'settings.set', confirm: 'click' })
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: {
+    risk: CLICK_RISK, op: 'settings.set', headline: 'Install and turn on add-on', risk_lines: ['Connects to the internet'],
+    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines: ['package: ' + action.grant.package_sha256], checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
+    content: { headline: 'Install and turn on add-on', fields_inline: true, fields_changed: [{ field: 'calendar: channel', before: null, after: '"team channel"' }] },
+  } })
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({} as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Install and turn on add-on" action={action} inline onClose={() => {}} /></QueryClientProvider>)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.click(await screen.findByRole('button', { name: 'Install and turn on' }, T))
   await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
-  expect(clickPrepare).not.toHaveBeenCalled()
-  expect(await screen.findByTestId('terminal-why')).toHaveTextContent('One click can\u2019t approve this one. Approve it in a terminal on this computer.')
-  expect(screen.getByTestId('handoff-command')).toHaveTextContent(`orch sign ${request.code}`)
-  expect(screen.getByRole('button', { name: 'Copy command' })).toBeVisible()
-  expect(screen.getByText('Waiting for approval in a terminal…')).toBeVisible()
-  expect(document.body).not.toHaveTextContent(/convenience off|turn One click off/i)
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(within(panel).getByText('"team channel"')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toHaveTextContent('Connects to the internet')
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  expect(sign).not.toHaveBeenCalled()
+})
+
+it('D3: enabled update shows signer risk and never signs on the opening press', async () => {
+  const { CLICK_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  const action = { action: 'market_update' as const, name: 'calendar', staged: 'st_' + '1'.repeat(32), digest: 'sha256:' + 'a'.repeat(64), caps: ['network'] }
+  const expires = new Date(Date.now() + 6e5).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'addon.grant', confirm: 'click' })
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: {
+    risk: CLICK_RISK, op: 'addon.grant', headline: 'Approve add-on update', risk_lines: ['Connects to the internet'],
+    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines: ['package: ' + action.digest], checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
+    content: { headline: 'Approve add-on update', fields_inline: true, fields_changed: [{ field: 'calendar: channel', before: null, after: '"team channel"' }] },
+  } })
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({} as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Approve add-on update" action={action} inline onClose={() => {}} /></QueryClientProvider>)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.click(await screen.findByRole('button', { name: 'Approve and install' }, T))
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(within(panel).getByText('"team channel"')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toHaveTextContent('Connects to the internet')
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  expect(sign).not.toHaveBeenCalled()
+})
+
+it('D2 prepares the exact ticket and launch intent, and leaves risk waiting for a second press', async () => {
+  const { CLICK_RISK, DEPOSIT_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  const action = { action: 'new_sequence' as const, title: 'Export CSV', type: 'feature' as const,
+    sections: { requirements: 'Preserve every row' }, agent: { hours: 8 }, launch: { harness: 'codex' as const, mode: 'refine' } }
+  const expires = new Date(Date.now() + 600_000).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'new', confirm: 'click' })
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: {
+    risk: CLICK_RISK, headline: 'Create ticket and start agent', risk_lines: [DEPOSIT_RISK], op: 'new',
+    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab',
+    lines: ['Export CSV', 'Preserve every row', 'Agent: codex; mode: refine', 'Grant: 8 hours, workable'],
+    checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
+  } })
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Create" action={action} inline onClose={() => {}} unsigned={<p>Then: start an agent on the new ticket.</p>} /></QueryClientProvider>)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Sign and start agent' }, T))
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(panel).toHaveTextContent('Preserve every row')
+  expect(panel).toHaveTextContent('Agent: codex; mode: refine')
+  expect(panel).toHaveTextContent('Grant: 8 hours, workable')
+  expect(panel).toHaveTextContent(DEPOSIT_RISK)
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  expect(sign).not.toHaveBeenCalled()
+})
+
+it('new-ticket schedule signing preserves its target and literal title', async () => {
+  const { CLICK_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({} as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const action = { action: 'schedule_add' as const, target: 'new' as const, title: 'Check the shared mailbox', brief: 'Check mail.', at: '09:00', every: 'day' as const, tz: 'UTC' }
+  const expires = new Date(Date.now() + 6e5).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'schedule.add', confirm: 'click' })
+  const lines = ['A new ticket each run', action.title, action.brief, 'Every day at 09:00 UTC']
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: { risk: CLICK_RISK, op: 'schedule.add', workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines, checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null } })
+  vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="A new ticket each run" action={action} inline onClose={() => {}} /></QueryClientProvider>)
+  const outcome = await screen.findByRole('button', { name: /A new ticket each run/i }, T)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.setup().click(outcome)
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  for (const line of lines) expect(within(panel).getByText(line, { exact: false })).toBeVisible()
+  expect(sign).not.toHaveBeenCalled()
+})
+
+it('hub Send now uses the shown plan only after the person confirms Sign', async () => {
+  const { SendSharesReview } = await import('@/app/pages/settings/hub/SendShares')
+  const gesture = await import('@/components/sign/trustedPress')
+  const preview = {
+    count: 1, new: 1, revoked: 0, more: 0, items: [], rules: [], plan: 'P'.repeat(43),
+    review: { hub_id: 'demo', readers: { people: ['Ben'], teams: [], note: null, info: null }, widened: [], new_count: 1, new_more: 0, new_items: ['ticket DEMO-0001: A ticket'], leaves: ['the title, status, labels and deadline'], later_edits: 'Later edits are shared too.' },
+  }
+  vi.spyOn(api, 'getHubPreview').mockResolvedValue(preview)
+  const sync = vi.spyOn(api, 'syncHubShare').mockResolvedValue({ synced: true, pending: null, put: 1 })
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  const user = userEvent.setup()
+  render(<QueryClientProvider client={new QueryClient()}><SendSharesReview workspace={{ id: 'demo', name: 'My workspace', prefix: 'DEMO' }} onClose={() => {}} /></QueryClientProvider>)
+  const sign = await screen.findByRole('button', { name: 'Sign' })
+  expect(screen.getByTestId('hub-add-readers')).toHaveTextContent('Ben')
+  expect(sync).not.toHaveBeenCalled()
+  await user.click(sign)
+  expect(sync).toHaveBeenCalledExactlyOnceWith('demo', preview.plan)
 })

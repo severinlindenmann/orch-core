@@ -59,7 +59,15 @@ def test_a_removed_addon_cannot_come_back_older_and_keeps_its_publisher(served, 
     net.version = 2
     ok(person(served, "market.refresh"))
     st2 = ok(stage(served, update=True))["data"]
-    p = human.prepare("addon.grant", {"name": "standup", "staged": st2["stage"]})
+    p = human.prepare(
+        "addon.grant",
+        {
+            "name": "standup",
+            "staged": st2["stage"],
+            "digest": st2["package_sha256"],
+            "caps": st2["grant"]["capabilities"],
+        },
+    )
     ok(human.submit_res(p["request"]["id"], human.sign(p).events))
     disable(human)
     ok(person(served, "market.uninstall", {"name": "standup"}))
@@ -82,7 +90,10 @@ def test_not_installed_and_builtin_are_not_removable(served, human, net, v1):
 # ------------------------------------------------------------------------------------------------ C4: the signer
 def prepared_for(served, human):
     st = ok(stage(served))["data"]
-    return human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    return human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
 
 
 def refused(prepared, human):

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "migrate.backup_refused",
+    "message": "the backup cannot be made here",
+    "hint": "keep backups on this machine, outside synced folders",
+    "fix": {
+      "argv": [
+        "orch",
+        "migrate",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

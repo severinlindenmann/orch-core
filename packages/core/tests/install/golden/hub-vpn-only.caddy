@@ -1,0 +1,14 @@
+# Managed by orch (orch install server): rerun that command instead of editing this file.
+# One site for one part; removing this file removes the part from Caddy.
+hub.example.com {
+	@notvpn not remote_ip 100.64.0.0/10
+	respond @notvpn "This address is only open from the private network (VPN)." 403
+
+	encode zstd gzip
+
+	request_body {
+		max_size 8MB
+	}
+
+	reverse_proxy 127.0.0.1:8100
+}

@@ -11,8 +11,11 @@ import pytest
 from orch.layout import (
     Layout,
     LayoutError,
+    WorkdirTooBig,
     delete_workdir,
     ensure_workdir,
+    workdir_files,
+    workdir_read,
     workdir_stat,
     workdir_summary,
 )
@@ -223,3 +226,65 @@ def test_a_directory_swapped_after_the_scan_refuses(lay, monkeypatch, tmp_path):
     with pytest.raises(LayoutError):
         delete_workdir(lay, KEY)
     assert (root / "sub" / "g").exists()
+
+
+def test_files_and_read_see_only_plain_files_directly_in_the_folder(lay, tmp_path):
+    assert workdir_files(lay, KEY) == ([], False)
+    ensure_workdir(lay, KEY)
+    root = lay.workdir(KEY)
+    (root / "b.txt").write_text("bb")
+    (root / "a.txt").write_text("a")
+    (root / "sub").mkdir()
+    (root / "sub" / "c.txt").write_text("c")
+    outside = tmp_path / "o.txt"
+    outside.write_text("secret")  # ONE link: only O_NOFOLLOW refuses the symlink to it
+    (root / "link.txt").symlink_to(outside)
+    (root / "dangling.txt").symlink_to(tmp_path / "nothing")
+    (root / "dirlink").symlink_to(tmp_path)
+    twin = tmp_path / "twin.txt"
+    twin.write_text("t")
+    os.link(twin, root / "hard.txt")
+    os.mkfifo(root / "pipe.txt")
+    assert workdir_files(lay, KEY) == ([("a.txt", 1), ("b.txt", 2)], False)
+    assert workdir_files(lay, KEY, limit=1) == ([("a.txt", 1)], True)
+    assert workdir_files(lay, KEY, accept=lambda n: n != "a.txt")[0] == [("b.txt", 2)]
+    assert workdir_files(lay, KEY, scan=2)[1] is True  # a bounded look
+    assert workdir_read(lay, KEY, "b.txt", 10) == b"bb"
+    bad_names = ("../o.txt", "sub/c.txt", "sub", "link.txt", "dangling.txt", "dirlink", "hard.txt", "pipe.txt")
+    for bad in (*bad_names, "..", ".", "", "x\0y", "gone.txt"):
+        with pytest.raises(LayoutError):
+            workdir_read(lay, KEY, bad, 10)
+    with pytest.raises(WorkdirTooBig) as big:
+        workdir_read(lay, KEY, "b.txt", 1)  # over the cap
+    assert big.value.size == 2
+
+
+def test_a_fifo_never_blocks_the_read(lay):
+    import threading
+
+    ensure_workdir(lay, KEY)
+    os.mkfifo(lay.workdir(KEY) / "p")
+    out: list[object] = []
+
+    def run() -> None:
+        try:
+            workdir_read(lay, KEY, "p", 10)
+        except LayoutError as exc:
+            out.append(exc)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(10)
+    assert len(out) == 1
+
+
+def test_a_file_of_another_owner_is_not_listed_or_read(lay, monkeypatch):
+    ensure_workdir(lay, KEY)
+    (lay.workdir(KEY) / "f.txt").write_text("x")
+    assert workdir_files(lay, KEY)[0] == [("f.txt", 1)]
+    import orch.layout as layout_mod
+
+    monkeypatch.setattr(layout_mod, "_file_owner", lambda: os.getuid() + 1)  # not root-only: the expected owner changes
+    assert workdir_files(lay, KEY)[0] == []
+    with pytest.raises(LayoutError):
+        workdir_read(lay, KEY, "f.txt", 10)

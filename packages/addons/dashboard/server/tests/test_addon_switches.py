@@ -3,10 +3,10 @@
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from orch_dashboard import handoff
+from orch_dashboard import signing as handoff
 from orch_dashboard.addon_switches import busy, needs, runner_fix
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import AddonDisable, AddonGrant, PrepareBody, expected, host_call
+from orch_dashboard.signing import AddonDisable, AddonGrant, PrepareBody, expected, host_call
 
 
 def parse(body):
@@ -15,7 +15,19 @@ def parse(body):
 
 @pytest.mark.parametrize(
     "name",
-    ["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki", "quick", "focus"],
+    [
+        "start-agent",
+        "terminals",
+        "worktrees",
+        "publish",
+        "usage",
+        "estimate",
+        "explorer",
+        "wiki",
+        "quick",
+        "focus",
+        "schedules",
+    ],
 )
 def test_every_switchable_addon_has_typed_actions(name):
     from orch_dashboard.addon_switches import SWITCHABLE
@@ -71,7 +83,7 @@ def test_an_addon_that_needs_dashboard_execution_says_what_to_run():
     assert needs("worktrees", off) is None and not runner_fix("worktrees", off)
     assert not runner_fix("start-agent", None)  # the host says nothing: no switch to offer
     assert needs("start-agent", {**off, "enabled": True}) is None
-    assert "Terminals are not turned on" in needs("terminals", {**off, "enabled": True})
+    assert "Command window is not turned on" in needs("terminals", {**off, "enabled": True})
     assert needs("terminals", {**off, "enabled": True, "terminals": True}) is None
     assert needs("start-agent", None)  # the host says nothing: not offered
 
@@ -152,11 +164,11 @@ def test_asking_for_what_already_is_is_said_in_words_and_never_prepared(gateway,
     link = _SwitchLink()
     with pytest.raises(HostError) as err:
         _plan(gateway, stub, link, monkeypatch, "addon_disable")
-    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Terminals is already off."
+    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Command window is already off."
     link.switch(True)
     with pytest.raises(HostError) as err:
         _plan(gateway, stub, link, monkeypatch, "addon_grant")
-    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Terminals is already on."
+    assert err.value.error["code"] == "addon.already" and err.value.error["message"] == "Command window is already on."
     assert "{" not in err.value.error["message"]
     link.state = "changed"  # updated since the grant: granting again is a real change, not "already"
     assert _plan(gateway, stub, link, monkeypatch, "addon_grant").op == "addon.grant"
@@ -276,3 +288,12 @@ def test_focus_feature_follows_its_grant(gateway, stub, monkeypatch, on):
     original = gateway.addon_on
     monkeypatch.setattr(gateway, "addon_on", lambda link, name: on if name == "focus" else original(link, name))
     assert ("focus" in gateway.workspaces()[0].features) is on
+
+
+def test_every_built_in_add_on_but_the_dashboard_is_switchable():
+    """Run 12: Schedules had no switch, so in Full hub mode it could not be turned on at all (no hub path either)."""
+    from orch.addons import builtin
+
+    from orch_dashboard.addon_switches import LOCKED, SWITCHABLE
+
+    assert set(builtin.NAMES) == set(SWITCHABLE) | set(LOCKED)

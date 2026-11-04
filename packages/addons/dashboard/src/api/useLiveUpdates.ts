@@ -141,10 +141,22 @@ export function useLiveUpdates(ws: string | undefined, close?: CloseView) {
     if (!ws || !token) return
     setReadyWorkspace(undefined)
     setRevokedWorkspace(undefined)
-    return startLiveUpdates(ws, token, (event, items) => {
-      if (event === 'revoked') { setReadyWorkspace(undefined); setRevokedWorkspace(ws) }
+    let timer: ReturnType<typeof setTimeout> | undefined, revoked = false
+    const stop = startLiveUpdates(ws, token, (event, items) => {
+      if (event === 'revoked') { revoked = true; clearTimeout(timer); setReadyWorkspace(undefined); setRevokedWorkspace(ws) }
       invalidateLive(client, ws, event, items, close)
     }, () => setReadyWorkspace(ws))
+    // B7: a hidden tab or a sleeping laptop can miss pushes (timers and sockets are throttled). The moment the page is
+    // visible or the network is back, read what is on screen again, so nothing shows a state older than the push.
+    // Debounced (~1 s: focus and online often fire together) and never after the workspace was revoked.
+    const catchUp = () => {
+      if (revoked || document.visibilityState === 'hidden') return
+      clearTimeout(timer)
+      timer = setTimeout(() => { if (!revoked) invalidateLive(client, ws, 'resync', [], close) }, 1000)
+    }
+    document.addEventListener('visibilitychange', catchUp)
+    window.addEventListener('online', catchUp)
+    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', catchUp); window.removeEventListener('online', catchUp); stop() }
   }, [client, ws, close])
   return { ready: !!ws && ws === readyWorkspace, revoked: !!ws && ws === revokedWorkspace }
 }

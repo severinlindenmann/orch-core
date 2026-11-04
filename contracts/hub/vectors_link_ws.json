@@ -1,0 +1,3904 @@
+{
+ "contract": "orch.hub-link-ws/0",
+ "note": "R6 V0 (#1594): link address grammar, the WebSocket profile of the link and its upgrade. No keys. The hub replays every case; orch-core every case except check_request, build_response and build_refusal.",
+ "constants": {
+  "path": "/orch/link/1",
+  "subprotocol": "orch-link.1",
+  "ws_version": 13,
+  "ws_guid": "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
+  "max_address": 300,
+  "default_ports": {
+   "ws": 80,
+   "wss": 443
+  },
+  "max_frame_payload": 262144,
+  "max_send_chunk": 65536,
+  "max_control_payload": 125,
+  "max_head": 8192,
+  "ping_after_s": 25,
+  "idle_close_s": 75,
+  "close_wait_s": 1
+ },
+ "cases": [
+  {
+   "name": "addr_direct_ipv4",
+   "check": "address",
+   "args": {
+    "text": "100.64.1.2:8105"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "tcp",
+     "host": "100.64.1.2",
+     "port": 8105,
+     "sni": null,
+     "host_header": null
+    }
+   }
+  },
+  {
+   "name": "addr_direct_name",
+   "check": "address",
+   "args": {
+    "text": "hub.example.com:443"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "tcp",
+     "host": "hub.example.com",
+     "port": 443,
+     "sni": "hub.example.com",
+     "host_header": null
+    }
+   }
+  },
+  {
+   "name": "addr_direct_name_case_kept",
+   "check": "address",
+   "args": {
+    "text": "Hub.Example.COM:8105"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "tcp",
+     "host": "Hub.Example.COM",
+     "port": 8105,
+     "sni": "hub.example.com",
+     "host_header": null
+    }
+   },
+   "note": "host as written; SNI in lower case"
+  },
+  {
+   "name": "addr_direct_ipv6",
+   "check": "address",
+   "args": {
+    "text": "[::1]:8105"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "tcp",
+     "host": "::1",
+     "port": 8105,
+     "sni": null,
+     "host_header": null
+    }
+   }
+  },
+  {
+   "name": "addr_direct_single_label",
+   "check": "address",
+   "args": {
+    "text": "localhost:8105"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "tcp",
+     "host": "localhost",
+     "port": 8105,
+     "sni": "localhost",
+     "host_header": null
+    }
+   }
+  },
+  {
+   "name": "addr_direct_port_max",
+   "check": "address",
+   "args": {
+    "text": "h:65535"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "tcp",
+     "host": "h",
+     "port": 65535,
+     "sni": "h",
+     "host_header": null
+    }
+   }
+  },
+  {
+   "name": "addr_wss_default_port",
+   "check": "address",
+   "args": {
+    "text": "wss://hub-link.example.com"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "hub-link.example.com",
+     "port": 443,
+     "sni": "hub-link.example.com",
+     "host_header": "hub-link.example.com"
+    }
+   }
+  },
+  {
+   "name": "addr_wss_explicit_default_port",
+   "check": "address",
+   "args": {
+    "text": "wss://hub-link.example.com:443"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "hub-link.example.com",
+     "port": 443,
+     "sni": "hub-link.example.com",
+     "host_header": "hub-link.example.com"
+    }
+   },
+   "note": "the Host header leaves out the default port"
+  },
+  {
+   "name": "addr_wss_other_port",
+   "check": "address",
+   "args": {
+    "text": "wss://hub-link.example.com:8443"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "hub-link.example.com",
+     "port": 8443,
+     "sni": "hub-link.example.com",
+     "host_header": "hub-link.example.com:8443"
+    }
+   }
+  },
+  {
+   "name": "addr_ws_ipv4_port",
+   "check": "address",
+   "args": {
+    "text": "ws://10.0.0.5:8106"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "ws",
+     "host": "10.0.0.5",
+     "port": 8106,
+     "sni": null,
+     "host_header": "10.0.0.5:8106"
+    }
+   },
+   "note": "an IP literal gets no SNI"
+  },
+  {
+   "name": "addr_ws_default_port",
+   "check": "address",
+   "args": {
+    "text": "ws://10.0.0.5"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "ws",
+     "host": "10.0.0.5",
+     "port": 80,
+     "sni": null,
+     "host_header": "10.0.0.5"
+    }
+   }
+  },
+  {
+   "name": "addr_ws_name_port_80",
+   "check": "address",
+   "args": {
+    "text": "ws://hub.lan:80"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "ws",
+     "host": "hub.lan",
+     "port": 80,
+     "sni": "hub.lan",
+     "host_header": "hub.lan"
+    }
+   }
+  },
+  {
+   "name": "addr_wss_ipv6_port",
+   "check": "address",
+   "args": {
+    "text": "wss://[2001:db8::1]:8443"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "2001:db8::1",
+     "port": 8443,
+     "sni": null,
+     "host_header": "[2001:db8::1]:8443"
+    }
+   }
+  },
+  {
+   "name": "addr_wss_ipv4_mapped_v6",
+   "check": "address",
+   "args": {
+    "text": "wss://[::ffff:192.0.2.1]"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "::ffff:192.0.2.1",
+     "port": 443,
+     "sni": null,
+     "host_header": "[::ffff:192.0.2.1]"
+    }
+   }
+  },
+  {
+   "name": "addr_wss_punycode",
+   "check": "address",
+   "args": {
+    "text": "wss://xn--bcher-kva.example"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "xn--bcher-kva.example",
+     "port": 443,
+     "sni": "xn--bcher-kva.example",
+     "host_header": "xn--bcher-kva.example"
+    }
+   },
+   "note": "an internationalised name only in its xn-- form"
+  },
+  {
+   "name": "addr_wss_host_253",
+   "check": "address",
+   "args": {
+    "text": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+     "port": 443,
+     "sni": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+     "host_header": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+   }
+  },
+  {
+   "name": "addr_wss_label_63",
+   "check": "address",
+   "args": {
+    "text": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+   },
+   "expect": {
+    "ok": {
+     "scheme": "wss",
+     "host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+     "port": 443,
+     "sni": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+     "host_header": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    }
+   }
+  },
+  {
+   "name": "addr_not_a_string",
+   "check": "address",
+   "args": {
+    "text": 8105
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_null",
+   "check": "address",
+   "args": {
+    "text": null
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_empty",
+   "check": "address",
+   "args": {
+    "text": ""
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_no_port",
+   "check": "address",
+   "args": {
+    "text": "10.0.0.1"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "direct needs a port"
+  },
+  {
+   "name": "addr_direct_empty_port",
+   "check": "address",
+   "args": {
+    "text": "10.0.0.1:"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_empty_host",
+   "check": "address",
+   "args": {
+    "text": ":8105"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_port_zero",
+   "check": "address",
+   "args": {
+    "text": "10.0.0.1:0"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_port_too_big",
+   "check": "address",
+   "args": {
+    "text": "10.0.0.1:65536"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_port_leading_zero",
+   "check": "address",
+   "args": {
+    "text": "10.0.0.1:08105"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_two_ports",
+   "check": "address",
+   "args": {
+    "text": "h:1:2"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_path",
+   "check": "address",
+   "args": {
+    "text": "h:1/x"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_direct_userinfo",
+   "check": "address",
+   "args": {
+    "text": "u@h:1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_wss_port_zero",
+   "check": "address",
+   "args": {
+    "text": "wss://h:0"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_wss_port_too_big",
+   "check": "address",
+   "args": {
+    "text": "wss://h:65536"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_wss_port_leading_zero",
+   "check": "address",
+   "args": {
+    "text": "wss://h:0443"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_wss_empty_port",
+   "check": "address",
+   "args": {
+    "text": "wss://h:"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ws_two_ports",
+   "check": "address",
+   "args": {
+    "text": "ws://h:80:80"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_http",
+   "check": "address",
+   "args": {
+    "text": "http://h:80"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "only ws and wss"
+  },
+  {
+   "name": "addr_scheme_https",
+   "check": "address",
+   "args": {
+    "text": "https://h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_tcp",
+   "check": "address",
+   "args": {
+    "text": "tcp://h:1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_tls",
+   "check": "address",
+   "args": {
+    "text": "tls://h:1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_wss_unix",
+   "check": "address",
+   "args": {
+    "text": "wss+unix://x"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_upper",
+   "check": "address",
+   "args": {
+    "text": "WSS://h"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "the scheme is lower case"
+  },
+  {
+   "name": "addr_scheme_mixed_case",
+   "check": "address",
+   "args": {
+    "text": "Wss://h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_one_slash",
+   "check": "address",
+   "args": {
+    "text": "ws:/h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_no_slash",
+   "check": "address",
+   "args": {
+    "text": "ws:h:80"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_three_slashes",
+   "check": "address",
+   "args": {
+    "text": "wss:///h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_only",
+   "check": "address",
+   "args": {
+    "text": "wss://"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_scheme_empty_host_port",
+   "check": "address",
+   "args": {
+    "text": "wss://:443"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_path_slash",
+   "check": "address",
+   "args": {
+    "text": "wss://h/"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "the path is fixed (/orch/link/1); none in the address"
+  },
+  {
+   "name": "addr_path_link",
+   "check": "address",
+   "args": {
+    "text": "wss://h/orch/link/1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_path_after_port",
+   "check": "address",
+   "args": {
+    "text": "wss://h:443/x"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_query",
+   "check": "address",
+   "args": {
+    "text": "wss://h?x=1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_query_empty",
+   "check": "address",
+   "args": {
+    "text": "wss://h:443?"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_fragment",
+   "check": "address",
+   "args": {
+    "text": "wss://h#f"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_fragment_empty",
+   "check": "address",
+   "args": {
+    "text": "wss://h#"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_userinfo_user",
+   "check": "address",
+   "args": {
+    "text": "wss://user@h"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "user info is refused, never stripped"
+  },
+  {
+   "name": "addr_userinfo_user_password",
+   "check": "address",
+   "args": {
+    "text": "wss://user:pw@h:443"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_userinfo_empty",
+   "check": "address",
+   "args": {
+    "text": "wss://@h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_percent_escape",
+   "check": "address",
+   "args": {
+    "text": "wss://h%2Eexample.com"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_percent_only",
+   "check": "address",
+   "args": {
+    "text": "wss://%68"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_leading_space",
+   "check": "address",
+   "args": {
+    "text": " wss://h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_trailing_space",
+   "check": "address",
+   "args": {
+    "text": "wss://h "
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_tab",
+   "check": "address",
+   "args": {
+    "text": "wss://h\t"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_newline",
+   "check": "address",
+   "args": {
+    "text": "wss://h\n"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_space_in_host",
+   "check": "address",
+   "args": {
+    "text": "wss:// h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_backslash",
+   "check": "address",
+   "args": {
+    "text": "wss://h\\x"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_comma",
+   "check": "address",
+   "args": {
+    "text": "wss://h,i"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_semicolon",
+   "check": "address",
+   "args": {
+    "text": "wss://h;x"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_idn_unicode",
+   "check": "address",
+   "args": {
+    "text": "wss://b\u00fccher.example"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "IDN only as xn--"
+  },
+  {
+   "name": "addr_idn_unicode_direct",
+   "check": "address",
+   "args": {
+    "text": "b\u00fccher.example:443"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_fullwidth_letter",
+   "check": "address",
+   "args": {
+    "text": "wss://\uff48ub.example"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ideographic_full_stop",
+   "check": "address",
+   "args": {
+    "text": "wss://hub.example\u3002com"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_label_leading_dash",
+   "check": "address",
+   "args": {
+    "text": "wss://-h.example"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_label_trailing_dash",
+   "check": "address",
+   "args": {
+    "text": "wss://h-.example"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_empty_label",
+   "check": "address",
+   "args": {
+    "text": "wss://h..example"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_leading_dot",
+   "check": "address",
+   "args": {
+    "text": "wss://.h"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_trailing_dot",
+   "check": "address",
+   "args": {
+    "text": "wss://h."
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_underscore",
+   "check": "address",
+   "args": {
+    "text": "wss://h_x.example"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_label_64",
+   "check": "address",
+   "args": {
+    "text": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_host_254",
+   "check": "address",
+   "args": {
+    "text": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_octet_too_big",
+   "check": "address",
+   "args": {
+    "text": "wss://999.1.1.1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_three_parts",
+   "check": "address",
+   "args": {
+    "text": "wss://1.2.3"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "a numeric last label must be a whole dotted-quad address"
+  },
+  {
+   "name": "addr_ipv4_two_parts",
+   "check": "address",
+   "args": {
+    "text": "wss://127.1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_leading_zero",
+   "check": "address",
+   "args": {
+    "text": "wss://010.0.0.1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_part",
+   "check": "address",
+   "args": {
+    "text": "wss://0x7f.0.0.1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_integer",
+   "check": "address",
+   "args": {
+    "text": "wss://2130706433"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_five_parts",
+   "check": "address",
+   "args": {
+    "text": "1.2.3.4.5:1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_last_label",
+   "check": "address",
+   "args": {
+    "text": "wss://169.254.169.0xfe"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "a last label that starts with a digit is a whole IPv4 address"
+  },
+  {
+   "name": "addr_ipv4_hex_last_label_ws",
+   "check": "address",
+   "args": {
+    "text": "ws://127.0.0.0x1:8080"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_direct",
+   "check": "address",
+   "args": {
+    "text": "0x7f.0.0.0x1:7443"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_integer",
+   "check": "address",
+   "args": {
+    "text": "ws://0x7f000001"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv4_hex_zero",
+   "check": "address",
+   "args": {
+    "text": "ws://0.0.0.0x0"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_unbracketed",
+   "check": "address",
+   "args": {
+    "text": "wss://::1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_unclosed",
+   "check": "address",
+   "args": {
+    "text": "wss://[::1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_unopened",
+   "check": "address",
+   "args": {
+    "text": "wss://::1]"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_zone",
+   "check": "address",
+   "args": {
+    "text": "wss://[fe80::1%25en0]"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_two_gaps",
+   "check": "address",
+   "args": {
+    "text": "wss://[1::2::3]"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_bad_digit",
+   "check": "address",
+   "args": {
+    "text": "wss://[g::1]"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_empty",
+   "check": "address",
+   "args": {
+    "text": "wss://[]"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_ipv6_trailing_junk",
+   "check": "address",
+   "args": {
+    "text": "wss://[::1]x"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "addr_too_long",
+   "check": "address",
+   "args": {
+    "text": "wss://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "over 300 characters"
+  },
+  {
+   "name": "connect_local",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "local"
+   },
+   "expect": {
+    "ok": "local"
+   }
+  },
+  {
+   "name": "connect_direct",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "100.64.1.2:8105"
+   },
+   "expect": {
+    "ok": "100.64.1.2:8105"
+   }
+  },
+  {
+   "name": "connect_wss",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "wss://hub-link.example.com"
+   },
+   "expect": {
+    "ok": "wss://hub-link.example.com"
+   }
+  },
+  {
+   "name": "connect_ws_port",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "ws://10.0.0.5:8106"
+   },
+   "expect": {
+    "ok": "ws://10.0.0.5:8106"
+   }
+  },
+  {
+   "name": "connect_local_upper",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "LOCAL"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "connect_proxy_url",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "http://proxy.example:3128"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "a connect link never carries a proxy"
+  },
+  {
+   "name": "connect_wss_path",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "wss://hub-link.example.com/orch/link/1"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "connect_wss_tilde",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": "wss://h~x"
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "connect_empty",
+   "check": "connect_endpoint",
+   "args": {
+    "endpoint": ""
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "where_ws_mixed_ok",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "public",
+       "link": "wss://hub-link.example.com"
+      }
+     ],
+     "name": "Demo hub"
+    }
+   },
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      },
+      {
+       "kind": "public",
+       "link": "wss://hub-link.example.com"
+      }
+     ],
+     "name": "Demo hub"
+    }
+   }
+  },
+  {
+   "name": "where_ws_plain_ok",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "office",
+       "link": "ws://192.168.1.20:8106"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "office",
+       "link": "ws://192.168.1.20:8106"
+      }
+     ],
+     "name": "H"
+    }
+   }
+  },
+  {
+   "name": "where_direct_and_wss_same_host_port_ok",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "hub.example.com:443"
+      },
+      {
+       "kind": "public",
+       "link": "wss://hub.example.com"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "hub.example.com:443"
+      },
+      {
+       "kind": "public",
+       "link": "wss://hub.example.com"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "note": "different transports are different addresses"
+  },
+  {
+   "name": "where_ws_dup_default_port",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "wss://h.example"
+      },
+      {
+       "kind": "public",
+       "link": "wss://h.example:443"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "same scheme, host and port"
+  },
+  {
+   "name": "where_ws_dup_host_case",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "wss://H.example"
+      },
+      {
+       "kind": "office",
+       "link": "wss://h.example"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "where_direct_dup_host_case",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "H.example:1"
+      },
+      {
+       "kind": "office",
+       "link": "h.example:1"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "where_ws_path",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "wss://h.example/orch/link/1"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "where_ws_userinfo",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "wss://u@h.example"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "where_proxy_as_link",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "http://proxy.example:3128"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "note": "the hub never sends proxy settings"
+  },
+  {
+   "name": "where_proxy_key_in_entry",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "wss://h.example",
+       "proxy": "http://p:3128"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "where_proxy_key_in_answer",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "wss://h.example"
+      }
+     ],
+     "name": "H",
+     "proxy": "http://p:3128"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "where_transport_key_in_entry",
+   "check": "hub_where",
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "public",
+       "link": "h.example:1",
+       "transport": "ws"
+      }
+     ],
+     "name": "H"
+    }
+   },
+   "expect": {
+    "error": "malformed"
+   }
+  },
+  {
+   "name": "enc_binary_empty",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "8200"
+    }
+   }
+  },
+  {
+   "name": "enc_binary_small",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "0102030405",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "82050102030405"
+    }
+   }
+  },
+  {
+   "name": "enc_binary_masked_rfc",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "48656c6c6f",
+    "mask_hex": "37fa213d",
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "828537fa213d7f9f4d5158"
+    }
+   },
+   "note": "RFC 6455 \u00a75.7 masked 'Hello' with the binary opcode"
+  },
+  {
+   "name": "enc_binary_125",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "827d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    }
+   },
+   "note": "largest 7-bit length"
+  },
+  {
+   "name": "enc_binary_126",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "827e007e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    }
+   },
+   "note": "smallest 16-bit length"
+  },
+  {
+   "name": "enc_binary_65535",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "",
+    "mask_hex": null,
+    "fin": true,
+    "fill": {
+     "byte": "00",
+     "n": 65535
+    }
+   },
+   "expect": {
+    "ok": {
+     "head_hex": "827effff",
+     "sha256": "c86ff498befa0193555074101304d5965184fad8c6635076632378c4f64fc394"
+    }
+   },
+   "note": "largest 16-bit length"
+  },
+  {
+   "name": "enc_binary_65536",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "",
+    "mask_hex": null,
+    "fin": true,
+    "fill": {
+     "byte": "00",
+     "n": 65536
+    }
+   },
+   "expect": {
+    "ok": {
+     "head_hex": "827f0000000000010000",
+     "sha256": "ff94223f751a176bc301f5131c28de1540392791343d071698990f8caddeb4f2"
+    }
+   },
+   "note": "smallest 64-bit length"
+  },
+  {
+   "name": "enc_binary_256_masked",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+    "mask_hex": "01020304",
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "82fe0100010203040103010705070503090b090f0d0f0d0b1113111715171513191b191f1d1f1d1b2123212725272523292b292f2d2f2d2b3133313735373533393b393f3d3f3d3b4143414745474543494b494f4d4f4d4b5153515755575553595b595f5d5f5d5b6163616765676563696b696f6d6f6d6b7173717775777573797b797f7d7f7d7b8183818785878583898b898f8d8f8d8b9193919795979593999b999f9d9f9d9ba1a3a1a7a5a7a5a3a9aba9afadafadabb1b3b1b7b5b7b5b3b9bbb9bfbdbfbdbbc1c3c1c7c5c7c5c3c9cbc9cfcdcfcdcbd1d3d1d7d5d7d5d3d9dbd9dfdddfdddbe1e3e1e7e5e7e5e3e9ebe9efedefedebf1f3f1f7f5f7f5f3f9fbf9fffdfffdfb"
+    }
+   }
+  },
+  {
+   "name": "enc_ping_rfc",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 9,
+    "payload_hex": "48656c6c6f",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "890548656c6c6f"
+    }
+   },
+   "note": "RFC 6455 \u00a75.7 unmasked ping"
+  },
+  {
+   "name": "enc_pong_masked_rfc",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 10,
+    "payload_hex": "48656c6c6f",
+    "mask_hex": "37fa213d",
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "8a8537fa213d7f9f4d5158"
+    }
+   },
+   "note": "RFC 6455 \u00a75.7 masked pong"
+  },
+  {
+   "name": "enc_close_1000",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 8,
+    "payload_hex": "03e8",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "880203e8"
+    }
+   }
+  },
+  {
+   "name": "enc_close_1000_masked",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 8,
+    "payload_hex": "03e8",
+    "mask_hex": "00000000",
+    "fin": true
+   },
+   "expect": {
+    "ok": {
+     "hex": "88820000000003e8"
+    }
+   }
+  },
+  {
+   "name": "enc_text_refused",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 1,
+    "payload_hex": "48656c6c6f",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "error": "refused"
+   },
+   "note": "a sender never sends text"
+  },
+  {
+   "name": "enc_ping_126_refused",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 9,
+    "payload_hex": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "mask_hex": null,
+    "fin": true
+   },
+   "expect": {
+    "error": "refused"
+   }
+  },
+  {
+   "name": "enc_ping_unfinished_refused",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 9,
+    "payload_hex": "",
+    "mask_hex": null,
+    "fin": false
+   },
+   "expect": {
+    "error": "refused"
+   }
+  },
+  {
+   "name": "enc_mask_3_bytes_refused",
+   "check": "frame_encode",
+   "args": {
+    "opcode": 2,
+    "payload_hex": "00",
+    "mask_hex": "010203",
+    "fin": true
+   },
+   "expect": {
+    "error": "refused"
+   }
+  },
+  {
+   "name": "dec_server_binary",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "82050102030405"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 2,
+     "payload_hex": "0102030405",
+     "used": 7
+    }
+   }
+  },
+  {
+   "name": "dec_client_binary_masked_rfc",
+   "check": "frame_decode",
+   "args": {
+    "sender": "client",
+    "hex": "828537fa213d7f9f4d5158"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 2,
+     "payload_hex": "48656c6c6f",
+     "used": 11
+    }
+   }
+  },
+  {
+   "name": "dec_server_masked_refused",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "828537fa213d7f9f4d5158"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "mask"
+   },
+   "note": "a server frame is never masked"
+  },
+  {
+   "name": "dec_client_unmasked_refused",
+   "check": "frame_decode",
+   "args": {
+    "sender": "client",
+    "hex": "82050102030405"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "mask"
+   },
+   "note": "a client frame is always masked"
+  },
+  {
+   "name": "dec_text_rfc_unmasked",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "810548656c6c6f"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1003,
+    "reason": "text"
+   },
+   "note": "RFC 6455 \u00a75.7 text 'Hello'"
+  },
+  {
+   "name": "dec_text_rfc_masked",
+   "check": "frame_decode",
+   "args": {
+    "sender": "client",
+    "hex": "818537fa213d7f9f4d5158"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1003,
+    "reason": "text"
+   }
+  },
+  {
+   "name": "dec_compressed_rfc7692",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "c107f248cdc9c90700"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "rsv"
+   },
+   "note": "RFC 7692 \u00a77.2.3.1 compressed 'Hello': RSV1 (no extension is ever negotiated)"
+  },
+  {
+   "name": "dec_rsv1_binary",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "c2050102030405"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "rsv"
+   }
+  },
+  {
+   "name": "dec_rsv2",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "a20100"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "rsv"
+   }
+  },
+  {
+   "name": "dec_rsv3",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "920100"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "rsv"
+   }
+  },
+  {
+   "name": "dec_opcode_3",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "8300"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "opcode"
+   }
+  },
+  {
+   "name": "dec_opcode_b",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "8b00"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "opcode"
+   }
+  },
+  {
+   "name": "dec_ping_rfc",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "890548656c6c6f"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 9,
+     "payload_hex": "48656c6c6f",
+     "used": 7
+    }
+   }
+  },
+  {
+   "name": "dec_pong_masked_rfc",
+   "check": "frame_decode",
+   "args": {
+    "sender": "client",
+    "hex": "8a8537fa213d7f9f4d5158"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 10,
+     "payload_hex": "48656c6c6f",
+     "used": 11
+    }
+   }
+  },
+  {
+   "name": "dec_ping_fragmented",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "0900"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "control"
+   }
+  },
+  {
+   "name": "dec_ping_126_from_header",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "897e"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "control"
+   },
+   "note": "decided from the first two bytes"
+  },
+  {
+   "name": "dec_close_127_from_header",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "887f"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "control"
+   }
+  },
+  {
+   "name": "dec_close_empty",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "8800"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "",
+     "used": 2
+    }
+   }
+  },
+  {
+   "name": "dec_close_1000",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203e8"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "03e8",
+     "used": 4
+    }
+   }
+  },
+  {
+   "name": "dec_close_1000_reason",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880503e8627965"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "03e8627965",
+     "used": 7
+    }
+   }
+  },
+  {
+   "name": "dec_close_1000_masked",
+   "check": "frame_decode",
+   "args": {
+    "sender": "client",
+    "hex": "88820a0b0c0d09e3"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "03e8",
+     "used": 8
+    }
+   }
+  },
+  {
+   "name": "dec_close_one_byte",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880103"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_1001",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203e9"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "03e9",
+     "used": 4
+    }
+   }
+  },
+  {
+   "name": "dec_close_code_1014",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203f6"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "03f6",
+     "used": 4
+    }
+   }
+  },
+  {
+   "name": "dec_close_code_3000",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "88020bb8"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "0bb8",
+     "used": 4
+    }
+   }
+  },
+  {
+   "name": "dec_close_code_4999",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "88021387"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 8,
+     "payload_hex": "1387",
+     "used": 4
+    }
+   }
+  },
+  {
+   "name": "dec_close_code_999",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203e7"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_1004",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203ec"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_1005",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203ed"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_1006",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203ee"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_1015",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203f7"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_1016",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880203f8"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_2999",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "88020bb7"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_code_5000",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "88021388"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "close_code"
+   }
+  },
+  {
+   "name": "dec_close_reason_not_utf8",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "880403e8c328"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1007,
+    "reason": "close_reason"
+   }
+  },
+  {
+   "name": "dec_len16_short_form",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827e00050000000000"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "length"
+   },
+   "note": "a length that fits 7 bits in the 16-bit form"
+  },
+  {
+   "name": "dec_len64_short_form",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827f000000000000ffff"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "length"
+   },
+   "note": "a length that fits 16 bits in the 64-bit form; decided before any payload"
+  },
+  {
+   "name": "dec_len64_top_bit",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827f8000000000000000"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "length"
+   }
+  },
+  {
+   "name": "dec_oversize_from_header",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827f0000000000040001"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1009,
+    "reason": "too_big"
+   },
+   "note": "256 KiB + 1: refused from the header alone, no payload sent"
+  },
+  {
+   "name": "dec_oversize_from_header_masked",
+   "check": "frame_decode",
+   "args": {
+    "sender": "client",
+    "hex": "82ff0000000000040001"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1009,
+    "reason": "too_big"
+   }
+  },
+  {
+   "name": "dec_oversize_huge",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827f7fffffffffffffff"
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1009,
+    "reason": "too_big"
+   }
+  },
+  {
+   "name": "dec_max_frame_ok",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827f0000000000040000",
+    "fill": {
+     "byte": "00",
+     "n": 262144
+    }
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 2,
+     "payload_len": 262144,
+     "payload_sha256": "8a39d2abd3999ab73c34db2476849cddf303ce389b35826850f9a700589b4a90",
+     "used": 262154
+    }
+   },
+   "note": "exactly 256 KiB"
+  },
+  {
+   "name": "dec_len16_256",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827e0100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 2,
+     "payload_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+     "used": 260
+    }
+   }
+  },
+  {
+   "name": "dec_incomplete_one_byte",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "82"
+   },
+   "expect": {
+    "ok": "incomplete"
+   }
+  },
+  {
+   "name": "dec_incomplete_len16",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827e01"
+   },
+   "expect": {
+    "ok": "incomplete"
+   }
+  },
+  {
+   "name": "dec_incomplete_len64",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "827f00000000"
+   },
+   "expect": {
+    "ok": "incomplete"
+   }
+  },
+  {
+   "name": "dec_incomplete_payload",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "820501"
+   },
+   "expect": {
+    "ok": "incomplete"
+   }
+  },
+  {
+   "name": "dec_incomplete_mask",
+   "check": "frame_decode",
+   "args": {
+    "sender": "client",
+    "hex": "828537fa"
+   },
+   "expect": {
+    "ok": "incomplete"
+   }
+  },
+  {
+   "name": "dec_incomplete_empty",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": ""
+   },
+   "expect": {
+    "ok": "incomplete"
+   }
+  },
+  {
+   "name": "dec_only_first_frame",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "8201aa8200"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 2,
+     "payload_hex": "aa",
+     "used": 3
+    }
+   },
+   "note": "the rest stays in the buffer"
+  },
+  {
+   "name": "dec_binary_unfinished",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "0202aabb"
+   },
+   "expect": {
+    "ok": {
+     "fin": false,
+     "opcode": 2,
+     "payload_hex": "aabb",
+     "used": 4
+    }
+   }
+  },
+  {
+   "name": "dec_continuation_final",
+   "check": "frame_decode",
+   "args": {
+    "sender": "server",
+    "hex": "8001cc"
+   },
+   "expect": {
+    "ok": {
+     "fin": true,
+     "opcode": 0,
+     "payload_hex": "cc",
+     "used": 3
+    }
+   }
+  },
+  {
+   "name": "stream_two_frames",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "8202aabb",
+     "8201cc"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "aabbcc",
+     "answers": [],
+     "ended": false,
+     "closed": null
+    }
+   },
+   "note": "frame boundaries carry no meaning"
+  },
+  {
+   "name": "stream_split_reads",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "82",
+     "02aa",
+     "bb"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "aabb",
+     "answers": [],
+     "ended": false,
+     "closed": null
+    }
+   }
+  },
+  {
+   "name": "stream_fragmented",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "0202aabb",
+     "8001cc"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "aabbcc",
+     "answers": [],
+     "ended": false,
+     "closed": null
+    }
+   },
+   "note": "intermediaries may re-fragment"
+  },
+  {
+   "name": "stream_fragmented_three",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "0201aa",
+     "0001bb",
+     "8001cc"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "aabbcc",
+     "answers": [],
+     "ended": false,
+     "closed": null
+    }
+   }
+  },
+  {
+   "name": "stream_ping_inside_fragmented",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "0201aa",
+     "890101",
+     "8001bb"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "aabb",
+     "answers": [
+      [
+       10,
+       "01"
+      ]
+     ],
+     "ended": false,
+     "closed": null
+    }
+   }
+  },
+  {
+   "name": "stream_continuation_without_start",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "8001aa"
+    ]
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "continuation"
+   }
+  },
+  {
+   "name": "stream_binary_inside_fragmented",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "0201aa",
+     "8201bb"
+    ]
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "interleaved"
+   }
+  },
+  {
+   "name": "stream_pong_ignored",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "8a00",
+     "8201aa"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "aa",
+     "answers": [],
+     "ended": false,
+     "closed": null
+    }
+   },
+   "note": "a pong is liveness only"
+  },
+  {
+   "name": "stream_ping_answered",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "890548656c6c6f"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "",
+     "answers": [
+      [
+       10,
+       "48656c6c6f"
+      ]
+     ],
+     "ended": false,
+     "closed": null
+    }
+   },
+   "note": "a ping alone yields no link bytes (wait_readable stays False)"
+  },
+  {
+   "name": "stream_ping_empty_answered",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "8900"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "",
+     "answers": [
+      [
+       10,
+       ""
+      ]
+     ],
+     "ended": false,
+     "closed": null
+    }
+   }
+  },
+  {
+   "name": "stream_close_ends",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "8201aa",
+     "880203e8",
+     "8201bb"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "aa",
+     "answers": [
+      [
+       8,
+       "03e8"
+      ]
+     ],
+     "ended": true,
+     "closed": 1000
+    }
+   },
+   "note": "bytes after the close are ignored; the answer is a close 1000"
+  },
+  {
+   "name": "stream_close_empty",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "8800"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "",
+     "answers": [
+      [
+       8,
+       "03e8"
+      ]
+     ],
+     "ended": true,
+     "closed": null
+    }
+   }
+  },
+  {
+   "name": "stream_close_1001_answered_1000",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "880203e9"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "",
+     "answers": [
+      [
+       8,
+       "03e8"
+      ]
+     ],
+     "ended": true,
+     "closed": 1001
+    }
+   }
+  },
+  {
+   "name": "stream_text_after_data",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "8201aa",
+     "8100"
+    ]
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1003,
+    "reason": "text"
+   }
+  },
+  {
+   "name": "stream_compressed",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "c107f248cdc9c90700"
+    ]
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "rsv"
+   }
+  },
+  {
+   "name": "stream_oversize",
+   "check": "frame_stream",
+   "args": {
+    "sender": "server",
+    "chunks_hex": [
+     "827f0000000000040001"
+    ]
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1009,
+    "reason": "too_big"
+   }
+  },
+  {
+   "name": "stream_client_masked",
+   "check": "frame_stream",
+   "args": {
+    "sender": "client",
+    "chunks_hex": [
+     "828537fa213d7f9f4d5158",
+     "8a8001020304"
+    ]
+   },
+   "expect": {
+    "ok": {
+     "data_hex": "48656c6c6f",
+     "answers": [],
+     "ended": false,
+     "closed": null
+    }
+   }
+  },
+  {
+   "name": "stream_client_unmasked_in_stream",
+   "check": "frame_stream",
+   "args": {
+    "sender": "client",
+    "chunks_hex": [
+     "828537fa213d7f9f4d5158",
+     "8200"
+    ]
+   },
+   "expect": {
+    "error": "ws",
+    "close": 1002,
+    "reason": "mask"
+   }
+  },
+  {
+   "name": "accept_rfc",
+   "check": "accept_key",
+   "args": {
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+   },
+   "note": "RFC 6455 \u00a71.3"
+  },
+  {
+   "name": "accept_zero_key",
+   "check": "accept_key",
+   "args": {
+    "key": "AAAAAAAAAAAAAAAAAAAAAA=="
+   },
+   "expect": {
+    "ok": "ICX+Yqv66kxgM0FcWaLWlFLwTAI="
+   }
+  },
+  {
+   "name": "build_request_wss_default",
+   "check": "build_request",
+   "args": {
+    "address": "wss://hub-link.example.com",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_request_wss_explicit_443",
+   "check": "build_request",
+   "args": {
+    "address": "wss://hub-link.example.com:443",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_request_ws_ip_port",
+   "check": "build_request",
+   "args": {
+    "address": "ws://10.0.0.5:8106",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": "GET /orch/link/1 HTTP/1.1\r\nHost: 10.0.0.5:8106\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_request_wss_v6_port",
+   "check": "build_request",
+   "args": {
+    "address": "wss://[2001:db8::1]:8443",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": "GET /orch/link/1 HTTP/1.1\r\nHost: [2001:db8::1]:8443\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_response_rfc",
+   "check": "build_response",
+   "args": {
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_refusal_400",
+   "check": "build_refusal",
+   "args": {
+    "status": 400
+   },
+   "expect": {
+    "ok": "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_refusal_403",
+   "check": "build_refusal",
+   "args": {
+    "status": 403
+   },
+   "expect": {
+    "ok": "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_refusal_404",
+   "check": "build_refusal",
+   "args": {
+    "status": 404
+   },
+   "expect": {
+    "ok": "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+   }
+  },
+  {
+   "name": "build_refusal_426",
+   "check": "build_refusal",
+   "args": {
+    "status": 426
+   },
+   "expect": {
+    "ok": "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: 13\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+   }
+  },
+  {
+   "name": "req_ok",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "ok": "dGhlIHNhbXBsZSBub25jZQ=="
+   }
+  },
+  {
+   "name": "req_ok_front_headers",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nX-Forwarded-For: 203.0.113.9\r\nX-Forwarded-Proto: https\r\nX-Real-IP: 203.0.113.9\r\n\r\n"
+   },
+   "expect": {
+    "ok": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "note": "forwarding headers are ignored and never used as the peer address"
+  },
+  {
+   "name": "req_ok_upgrade_case",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "ok": "dGhlIHNhbXBsZSBub25jZQ=="
+   }
+  },
+  {
+   "name": "req_ok_header_name_case",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "ok": "dGhlIHNhbXBsZSBub25jZQ=="
+   }
+  },
+  {
+   "name": "req_ok_content_length_zero",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nContent-Length: 0\r\n\r\n"
+   },
+   "expect": {
+    "ok": "dGhlIHNhbXBsZSBub25jZQ=="
+   }
+  },
+  {
+   "name": "req_ok_cookie_ignored",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nCookie: a=b\r\n\r\n"
+   },
+   "expect": {
+    "ok": "dGhlIHNhbXBsZSBub25jZQ=="
+   }
+  },
+  {
+   "name": "req_ok_exactly_8192",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n"
+   },
+   "expect": {
+    "ok": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "note": "the head limit counts CRLF CRLF"
+  },
+  {
+   "name": "req_too_large",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "too_large"
+   }
+  },
+  {
+   "name": "req_path_other_version",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/2 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_path_root",
+   "check": "check_request",
+   "args": {
+    "head": "GET / HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_path_trailing_slash",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1/ HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_path_query",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1?x=1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_path_card",
+   "check": "check_request",
+   "args": {
+    "head": "GET /api/v1/hub/card HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_path_absolute_form",
+   "check": "check_request",
+   "args": {
+    "head": "GET http://hub-link.example.com/orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_method_post",
+   "check": "check_request",
+   "args": {
+    "head": "POST /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_method_head",
+   "check": "check_request",
+   "args": {
+    "head": "HEAD /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_method_lower",
+   "check": "check_request",
+   "args": {
+    "head": "get /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_double_space",
+   "check": "check_request",
+   "args": {
+    "head": "GET  /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 404,
+    "reason": "not_found"
+   }
+  },
+  {
+   "name": "req_http10",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.0\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "version"
+   }
+  },
+  {
+   "name": "req_origin",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nOrigin: https://evil.example\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 403,
+    "reason": "origin"
+   },
+   "note": "a browser never reaches the link"
+  },
+  {
+   "name": "req_origin_null",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nOrigin: null\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 403,
+    "reason": "origin"
+   }
+  },
+  {
+   "name": "req_origin_empty",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nOrigin:\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 403,
+    "reason": "origin"
+   }
+  },
+  {
+   "name": "req_origin_lower",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\norigin: https://evil.example\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 403,
+    "reason": "origin"
+   }
+  },
+  {
+   "name": "req_origin_old_draft",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nSec-WebSocket-Origin: https://evil.example\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 403,
+    "reason": "origin"
+   }
+  },
+  {
+   "name": "req_no_host",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "host"
+   }
+  },
+  {
+   "name": "req_dup_host",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nHost: other.example\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "req_no_upgrade",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "upgrade"
+   }
+  },
+  {
+   "name": "req_upgrade_h2c",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: h2c\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "upgrade"
+   }
+  },
+  {
+   "name": "req_connection_keep_alive",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: keep-alive\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "upgrade"
+   }
+  },
+  {
+   "name": "req_version_8",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 8\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 426,
+    "reason": "version"
+   }
+  },
+  {
+   "name": "req_version_missing",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 426,
+    "reason": "version"
+   }
+  },
+  {
+   "name": "req_key_missing",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "key"
+   }
+  },
+  {
+   "name": "req_key_15_bytes",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: eHh4eHh4eHh4eHh4eHh4\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "key"
+   }
+  },
+  {
+   "name": "req_key_non_canonical",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZR==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "key"
+   },
+   "note": "padding bits set: not the canonical form"
+  },
+  {
+   "name": "req_key_not_base64",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: !GhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "key"
+   }
+  },
+  {
+   "name": "req_extensions",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nSec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "extensions"
+   },
+   "note": "no extension is ever negotiated"
+  },
+  {
+   "name": "req_extensions_empty",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nSec-WebSocket-Extensions:\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "extensions"
+   }
+  },
+  {
+   "name": "req_subprotocol_missing",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "subprotocol"
+   }
+  },
+  {
+   "name": "req_subprotocol_other",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.2\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "subprotocol"
+   }
+  },
+  {
+   "name": "req_subprotocol_list",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1, chat\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "subprotocol"
+   }
+  },
+  {
+   "name": "req_subprotocol_dup",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "req_body_chunked",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nTransfer-Encoding: chunked\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "body"
+   }
+  },
+  {
+   "name": "req_body_length",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\nContent-Length: 5\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "body"
+   }
+  },
+  {
+   "name": "req_bare_lf",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "req_folded_line",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade:\r\n websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "req_space_before_colon",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade : websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "req_non_ascii",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: h\u00fcb.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "req_no_final_crlf",
+   "check": "check_request",
+   "args": {
+    "head": "GET /orch/link/1 HTTP/1.1\r\nHost: hub-link.example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: orch-link.1\r\n"
+   },
+   "expect": {
+    "error": "refused",
+    "status": 400,
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "resp_ok",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": null
+   }
+  },
+  {
+   "name": "resp_ok_extra_headers",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\nDate: Fri, 30 Oct 2026 10:00:00 GMT\r\nServer: front\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": null
+   }
+  },
+  {
+   "name": "resp_ok_no_reason_phrase",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": null
+   }
+  },
+  {
+   "name": "resp_ok_connection_list",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: keep-alive, upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "ok": null
+   }
+  },
+  {
+   "name": "resp_redirect_301",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 301 Moved\r\nLocation: wss://elsewhere.example/orch/link/1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "redirect"
+   },
+   "note": "never followed"
+  },
+  {
+   "name": "resp_redirect_302",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 302 Moved\r\nLocation: wss://elsewhere.example/orch/link/1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "redirect"
+   },
+   "note": "never followed"
+  },
+  {
+   "name": "resp_redirect_307",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 307 Moved\r\nLocation: wss://elsewhere.example/orch/link/1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "redirect"
+   },
+   "note": "never followed"
+  },
+  {
+   "name": "resp_redirect_308",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 308 Moved\r\nLocation: wss://elsewhere.example/orch/link/1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "redirect"
+   },
+   "note": "never followed"
+  },
+  {
+   "name": "resp_status_200",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 200 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_status_400",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 400 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_status_401",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 401 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_status_403",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 403 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_status_404",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 404 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_status_407",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 407 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_status_426",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 426 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_status_502",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 502 No\r\nContent-Length: 0\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "status"
+   }
+  },
+  {
+   "name": "resp_http10",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.0 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "resp_status_two_digits",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 10 x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "resp_upgrade_missing",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "upgrade"
+   }
+  },
+  {
+   "name": "resp_connection_missing",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "upgrade"
+   }
+  },
+  {
+   "name": "resp_accept_wrong",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ICX+Yqv66kxgM0FcWaLWlFLwTAI=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "accept"
+   },
+   "note": "the accept of another key"
+  },
+  {
+   "name": "resp_accept_missing",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "accept"
+   }
+  },
+  {
+   "name": "resp_accept_dup",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "malformed"
+   }
+  },
+  {
+   "name": "resp_extensions",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "extensions"
+   }
+  },
+  {
+   "name": "resp_subprotocol_missing",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "subprotocol"
+   }
+  },
+  {
+   "name": "resp_subprotocol_other",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: chat\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "subprotocol"
+   }
+  },
+  {
+   "name": "resp_too_large",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\nX-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "too_large"
+   }
+  },
+  {
+   "name": "resp_bare_lf",
+   "check": "check_response",
+   "args": {
+    "head": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\nSec-WebSocket-Protocol: orch-link.1\r\n\r\n",
+    "key": "dGhlIHNhbXBsZSBub25jZQ=="
+   },
+   "expect": {
+    "error": "failed",
+    "reason": "malformed"
+   }
+  }
+ ],
+ "required": [
+  "addr_wss_default_port",
+  "addr_ws_ipv4_port",
+  "addr_direct_ipv4",
+  "addr_userinfo_user",
+  "addr_fragment",
+  "addr_path_link",
+  "addr_scheme_http",
+  "addr_scheme_upper",
+  "addr_idn_unicode",
+  "addr_ipv4_integer",
+  "addr_ipv6_zone",
+  "addr_percent_escape",
+  "addr_too_long",
+  "connect_wss",
+  "connect_proxy_url",
+  "where_ws_mixed_ok",
+  "where_proxy_key_in_entry",
+  "where_proxy_key_in_answer",
+  "where_proxy_as_link",
+  "where_ws_dup_default_port",
+  "enc_binary_masked_rfc",
+  "enc_binary_65536",
+  "enc_text_refused",
+  "dec_server_masked_refused",
+  "dec_client_unmasked_refused",
+  "dec_text_rfc_unmasked",
+  "dec_compressed_rfc7692",
+  "dec_oversize_from_header",
+  "dec_max_frame_ok",
+  "dec_len64_short_form",
+  "dec_ping_fragmented",
+  "dec_close_code_1005",
+  "dec_close_reason_not_utf8",
+  "stream_fragmented",
+  "stream_ping_answered",
+  "stream_continuation_without_start",
+  "stream_close_ends",
+  "accept_rfc",
+  "build_request_wss_default",
+  "build_response_rfc",
+  "req_ok",
+  "req_origin",
+  "req_origin_null",
+  "req_extensions",
+  "req_subprotocol_missing",
+  "req_path_query",
+  "req_ok_front_headers",
+  "req_too_large",
+  "resp_ok",
+  "resp_redirect_302",
+  "resp_extensions",
+  "resp_subprotocol_missing",
+  "resp_accept_wrong"
+ ]
+}

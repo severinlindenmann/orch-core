@@ -323,6 +323,9 @@
     },
     "channel_proof": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "handoff": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
     }
   },
   "required": [
@@ -338,7 +341,8 @@
     "host_sig",
     "scope",
     "verbs",
-    "hours"
+    "hours",
+    "handoff"
   ],
   "additionalProperties": false,
   "allOf": [

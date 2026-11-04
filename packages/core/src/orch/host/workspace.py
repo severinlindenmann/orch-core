@@ -107,6 +107,7 @@ def ok_result(data: Any, *, seq: int = 0, duplicate: bool = False) -> dict[str, 
 class WorkspaceService:
     def __init__(self, entry: Entry, state_dir: Path, host_uid: int, *, clock: Callable[[], float] = time.time):
         self.entry = entry
+        self.hook_base: str | None = None  # #717: the public base URL of the host's webhook receiver, if any
         self.state_dir = Path(state_dir)
         self.host_uid = host_uid
         self.clock = clock
@@ -295,14 +296,16 @@ class WorkspaceService:
     def _committed_hook(self, journal: Any) -> Callable[[str, dict[str, Any]], None]:
         """``Store.on_commit``: the journal's, then the share pass and the hub log sync wake (they only set flags and
         never raise). Called inside the store's critical section."""
-        from . import logsyncops
+        from . import logsyncops, remote
 
         committed = journal.committed
+        remote.attach(self)  # R2 #1590: the signed device list from the model, the expiry sweeper
 
         def hook(log: str, event: dict[str, Any]) -> None:
             try:
                 committed(log, event)
             finally:
+                remote.on_commit(self, log, event)  # R2 #1590: close streams, export devices (under the store lock)
                 shareauto.touch(self)  # V3 C6: a debounced share pass (selective mode only; flag + wake, never raises)
                 logsyncops.wake(
                     self
@@ -354,6 +357,18 @@ class WorkspaceService:
         self._snapshot()  # delivery revalidates against this: a revoke or removal it carries counts at once
         if self.publish is not None:
             self.publish(batch)
+        runner = getattr(self, "followups", None)
+        if runner and any(e.type == "followup.set" for e in batch.entries):
+            try:
+                runner.learn_hooks()  # N4: a webhook follow-up's hook is known before its first ring
+            except Exception:  # noqa: BLE001 - the tick still learns it
+                LOG.warning("learning follow-up hooks failed", exc_info=True)
+
+    def _register_hub_hook(self, **kw: Any) -> str:
+        """The handlers' only way to a hub hook (``Capabilities.hub_hooks``): registers it at the bound hub (#1285)."""
+        from . import hubhooks
+
+        return hubhooks.register(self, **kw)
 
     def _prepared(self, record: dict[str, Any]) -> dict[str, Any] | str:
         from .human import outcome_prepared
@@ -451,7 +466,13 @@ class WorkspaceService:
                     )
                 except (OSError, ValueError, Unavailable):
                     git = None  # an unreadable pin file is never replaced by fresh pins: git is denied (fail closed)
-            self.caps = Capabilities.host((os.fspath(self.entry.store_dir),), env={}, clock=self.clock, git=git)
+            self.caps = Capabilities.host(
+                (os.fspath(self.entry.store_dir),),
+                env={"ORCH_HOOK_BASE": self.hook_base} if self.hook_base else {},
+                clock=self.clock,
+                git=git,
+                hub_hooks=self._register_hub_hook,
+            )
         return self.caps
 
     def sync_git(self) -> None:
@@ -494,6 +515,9 @@ class WorkspaceService:
         from . import peerops
 
         peerops.stop(self)  # V3 C12: the ws->ws receive thread, before the store goes
+        from .remote import linkrun
+
+        linkrun.stop(self)  # R4: the remote access stream link and its runner, before the store goes
         shareauto.stop(self)  # V3 C6: the share pass thread, before the store goes
         from . import logsyncops
 
@@ -709,7 +733,7 @@ class WorkspaceGate:
         verified = auth.verify((frame.get("auth") or {}).get("grant"), now)
         mapped = self.host.registry.mapped_person(peer.uid, self.workspace_id) if peer.kind == "person" else None
         valid = mapped is not None and not self.host.pins.pinned(peer.uid) and auth.person_ok(mapped, now)
-        return refusal(resolve(peer.kind, verified.state, valid), kind)
+        return refusal(resolve(peer.kind, verified.state, valid), kind, frame.get("op"))
 
     def _column(self, service: WorkspaceService, peer: Peer, frame: dict[str, Any]) -> tuple[Column, str | None, Any]:
         """The authoritative column, viewer and grant, from the freshly refreshed store (worker thread, F8)."""
@@ -738,7 +762,7 @@ class WorkspaceGate:
                 column, viewer, verified = Column("N", "no-person"), None, Verified("absent")
             else:
                 column, viewer, verified = await service.call(self._column, service, session.peer, frame)
-                code = refusal(column, kind)
+                code = refusal(column, kind, frame.get("op"))
                 if code is not None:
                     raise HostError(code, f"{frame['op']} is not allowed here")
                 if service.state == "unavailable":  # an H2a backend: step 10 here

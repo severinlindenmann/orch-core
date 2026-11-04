@@ -127,13 +127,6 @@ def test_person_references_accept_a_hub_user() -> None:
     ok(e, "ticket")
 
 
-def test_sign_methods_accepts_hub() -> None:
-    ws = {"sign_methods": ["terminal", "hub"]}
-    schema.validate_settings(ws)
-    with pytest.raises(SchemaError):
-        schema.validate_settings({"sign_methods": ["terminal", "click", "phone", "hub", "x"]})
-
-
 def test_the_common_definitions() -> None:
     schema.validate_def("hubUserId", USER)
     for bad in ("p_" + "1" * 32, "u_" + "1" * 31, "u_" + "G" * 32):

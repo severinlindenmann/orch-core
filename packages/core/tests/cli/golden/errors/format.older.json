@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "format.older",
+    "message": "this data was made by an older orch: run `orch update`",
+    "hint": "orch update",
+    "fix": {
+      "argv": [
+        "orch",
+        "migrate",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

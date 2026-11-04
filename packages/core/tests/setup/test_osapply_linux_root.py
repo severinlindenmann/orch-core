@@ -18,7 +18,9 @@ import pytest
 
 pytestmark = [
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only"),
-    pytest.mark.xdist_group("linux_root"),  # with `--dist loadgroup` one worker; the lock below holds without it
+    # CI runs these serially after the parallel run (`-m linux_root -p no:xdist`) and in orch-core-root.yml on develop
+    # pushes. The lock below keeps two of them off /etc/passwd under xdist.
+    pytest.mark.linux_root,
 ]
 
 #: Every test here creates and removes the SAME system users, pins and directories (the person's name, orch-agent-<p>,

@@ -28,7 +28,12 @@ export const diffstat = (b: Pick<TicketBranch, 'additions' | 'deletions'>) => `+
  * The commit line a verdict or code review signs, in core's words, with the full head sha:
  * "Commit 5be3d10 on feat/DEMO-0041-reconciliation: +40 −12 in 3 files against develop".
  */
-export const commitCover = (b: TicketBranch) => `Commit ${b.head} on ${b.name}: ${diffstat(b)} in ${b.files} file${b.files === 1 ? '' : 's'} against ${b.base}`
+export const commitCover = (b: TicketBranch) =>
+  b.base ? `Commit ${b.head} on ${b.name}: ${diffstat(b)} in ${b.files} file${b.files === 1 ? '' : 's'} against ${b.base}` : `Commit ${b.head}${b.name ? ` on ${b.name}` : ''}`
+
+/** W23 (#1117): "+40 −12 against develop", or '' when the host did not say what the commit is compared with (never an
+ *  empty "against", never counts that were not measured). */
+export const changesNote = (b: Pick<TicketBranch, 'additions' | 'deletions' | 'base'>) => (b.base ? `${diffstat(b)} against ${b.base}` : '')
 
 /** The approver groups a gate policy may name, in words. */
 export const APPROVER_GROUPS = [
@@ -138,17 +143,17 @@ export const codeReviewWaits = (t: Pick<TicketDocument, 'status' | 'verdict' | '
 
 // B11 (#14): what an approval of requirements or plan still lacks (core's `missing` / a gate.incomplete refusal), in words.
 const MISSING_WORDS: Record<string, string> = {
-  summary: 'Summary',
-  context: 'Context',
-  requirements: 'Requirements',
-  out_of_scope: 'Out of scope',
-  acceptance: 'one acceptance check',
-  plan: 'Plan',
-  decisions: 'Decisions',
-  tasks: 'one task',
+  summary: 'a summary',
+  context: 'a short background',
+  requirements: 'the requirements',
+  out_of_scope: 'what is not included',
+  acceptance: 'one check that proves it works',
+  plan: 'the plan',
+  decisions: 'why the plan is built this way',
+  tasks: 'one step',
 }
 
-/** "Context, Out of scope and one acceptance check"; an artifact is "the artifact NAME"; an unknown id is said as it is. */
+/** "a short background, what is not included and one check that proves it works"; an artifact is "the artifact NAME"; an unknown id is said as it is. */
 export function missingWords(missing: readonly string[]): string {
   const w = missing.map((m) => MISSING_WORDS[m] ?? (m.startsWith('artifact:') ? `the artifact ${m.slice('artifact:'.length)}` : m.replace(/_/g, ' ')))
   return w.length <= 1 ? (w[0] ?? '') : `${w.slice(0, -1).join(', ')} and ${w[w.length - 1]}`
@@ -160,5 +165,5 @@ export function missingOf(message: string | null | undefined): string[] | null {
   return m ? m[1].split(',').map((x) => x.trim()).filter(Boolean) : null
 }
 
-/** "Add Context, Out of scope and one acceptance check first." */
+/** "Add a short background, what is not included and one check that proves it works first." */
 export const addFirst = (missing: readonly string[]) => `Add ${missingWords(missing)} first.`

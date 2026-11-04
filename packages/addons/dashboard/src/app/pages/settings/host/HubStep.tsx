@@ -3,8 +3,12 @@
 // the input element only: they are read once at the click, the field is emptied at once, and nothing else holds them
 // (no state, no storage). Core refuses the step unless the key is the person's own.
 import { KeyRound, Loader2 } from 'lucide-react'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { useEffect, useRef, useState } from 'react'
-import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction } from '@/api/click'
+import { useQuery } from '@tanstack/react-query'
+import { queries } from '@/api/queries'
+import { useWorkspace } from '@/app/workspace'
+import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction, type RemoteDeviceConfirmAction, type RemoteSetAction } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { seal } from '@/api/sealed'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
@@ -15,7 +19,7 @@ import { Button } from '@/components/ui/button'
 
 export interface HubStepProps {
   ws: string
-  action: HubJoinAction | HubModeFullAction | HubLeaveAction
+  action: HubJoinAction | HubModeFullAction | HubLeaveAction | RemoteSetAction | RemoteDeviceConfirmAction
   onClose: () => void
   /** The hub state changed (the step was signed). */
   onChanged?: () => void
@@ -36,7 +40,13 @@ function clearOfSignBar(block: HTMLElement | null) {
 }
 
 export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneText }: HubStepProps) {
-  const click = useClickSign(ws)
+  // A join is only the first half: the host keeps the workspace's add-ons paused until the hub confirms, and reading the
+  // pages behind the dialog before that is refused (409). JoinFlow reads them once, after "Connected".
+  // The review names the workspace for a person with several (same count as SignPopover): union of the context and the list.
+  const { workspaces } = useWorkspace()
+  const known = useQuery(queries.workspaces())
+  const many = new Set([...workspaces, ...(known.data ?? [])].map(w => w.id)).size > 1
+  const click = useClickSign(ws, undefined, undefined, { refetchOnDone: action.action !== 'hub_join' })
   const field = useRef<HTMLInputElement>(null)
   const box = useRef<HTMLDivElement>(null)
   const started = useRef(false)
@@ -103,10 +113,14 @@ export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneTe
     /agent access (?:on this computer )?(?:ends|is revoked|will end|will be revoked)/i.test(line),
   )
   const failureText = action.action === 'hub_leave' ? "Couldn't leave the hub. Nothing changed. Try again."
-    : action.action === 'hub_mode_full' ? "Couldn't switch. Try again." : "Couldn't connect. Try again."
+    : action.action === 'hub_mode_full' ? "Couldn't switch. Try again."
+      : action.action === 'remote_set' ? "Couldn't turn on remote access. Nothing changed. Try again."
+        : action.action === 'remote_device_confirm' ? "Couldn't add the device. Nothing changed. Try again." : "Couldn't connect. Try again."
+  const label = action.action === 'hub_leave' ? 'Leave the hub' : action.action === 'hub_mode_full' ? 'Let the hub read everything'
+    : action.action === 'remote_set' ? 'Turn on remote access' : action.action === 'remote_device_confirm' ? 'Add a device' : 'Join the hub'
 
   return (
-    <section aria-label={action.action === 'hub_leave' ? 'Leave the hub' : action.action === 'hub_mode_full' ? 'Let the hub read everything' : 'Join the hub'} data-testid="hub-step" className="space-y-3">
+    <section aria-label={label} data-testid="hub-step" className="space-y-3">
       {(click.phase === 'idle' || click.phase === 'preparing' || click.phase === 'viewing') && (
         <p className="flex items-center gap-2 text-[13px] text-text-muted"><Loader2 className="size-4 animate-spin" aria-hidden />Preparing the review…</p>
       )}
@@ -115,6 +129,7 @@ export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneTe
         {agentsEnd && <p>Agent access on this computer ends.</p>}
         <ClickSignPanel
           ws={ws}
+          manyWorkspaces={many}
           story={{ ...storyOf(action)!, steps: [] }}
           answer={presented!}
           problem={click.problem}
@@ -159,11 +174,11 @@ export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneTe
       {failed && (
         <div className="space-y-3">
           <p role="alert" className="text-[13px] text-danger">{failureText}</p>
-          <details><summary className="cursor-pointer">Technical details</summary>
+          <InfoDrawer>
             {click.problem && <p><Raw>{click.problem.title}</Raw>: <Raw>{click.problem.body}</Raw></p>}
             {click.problem?.details && <p><Raw>{click.problem.details}</Raw></p>}
             {click.error instanceof ApiError && <p><Raw>{click.error.code}</Raw>: <Raw>{click.error.message}</Raw></p>}
-          </details>
+          </InfoDrawer>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={cancel}>Cancel</Button>
             <Button onClick={() => { setFilled(false); setRefused(null); void click.again(action) }}>Try again</Button>

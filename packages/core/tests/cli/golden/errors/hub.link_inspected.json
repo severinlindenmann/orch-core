@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.link_inspected",
+    "message": "something on this network opens encrypted connections, so the hub cannot be trusted from here",
+    "hint": "ask your IT team to let the hub's name through without inspection",
+    "fix": {
+      "argv": [
+        "orch",
+        "hub",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -111,17 +111,13 @@ Anything that changes a ticket or gives an agent power needs your approval, call
 
 Before you approve, the dashboard shows exactly what you are approving, in plain words. Read it. If it does not look like what you meant, cancel. Nothing changes until you approve.
 
-## Ways to approve
+## One click
 
-- **In the terminal**: always works. The dashboard prepares the request and shows a short code and a command, such as \`orch sign CODE\`. Copy it, paste it into your terminal, check the code matches, and type your secret words. The dashboard follows along and shows when it is signed. Only sign a code you created yourself.
-- **One click on this computer**: if you switched it on, you approve with a button in the dashboard. It is convenient and a little less safe, because this computer holds your key. A notice explains the risk once.
-- **Phone**: coming later, with the relay add-on.
-
-An owner picks which ways are allowed under **Settings, Gates**. You pick your own default there too, from the allowed ones.
+You approve in the dashboard with one click. Read the review, press Approve, then press the button again after a second (it waits that long on purpose). If One click is off, turn it on in Settings.
 
 ## If it will not sign
 
-A code belongs to one request. If it no longer works, start the action again and use the new code.
+The dashboard explains what needs attention. Cancelling ends that attempt; pressing the action again creates a fresh request.
 `,
   },
   {
@@ -145,7 +141,7 @@ Access ends by itself at the time shown. A reminder appears shortly before. Choo
 
 On a ticket, choose **Start agent** in the Actions menu. You see what will run before it starts. If agents have no access yet, you approve that first, then the agent starts in a terminal at the bottom of the page.
 
-## Terminals
+## Command window
 
 The terminal area shows each running agent. Pick one to watch its work, and write to it if it needs help. **Stop** ends that one agent.
 
@@ -156,12 +152,12 @@ The **Agents** page lists agent sessions and the access you have given. A person
   },
   {
     slug: 'more-tools',
-    title: 'Worktrees, Activity and add-ons',
-    markdown: `# Worktrees, Activity and add-ons
+    title: 'Work copies, Activity and add-ons',
+    markdown: `# Work copies, Activity and add-ons
 
 Some pages are added by add-ons, small extras that an owner can switch on. You see a page only if it is on in your workspace and your host has it.
 
-- **Worktrees**: each agent works in its own copy of your project, so agents do not get in each other's way. This page lists those copies and says which ticket each belongs to.
+- **Work copies**: each agent works in its own copy of your project, so agents do not get in each other's way. This page lists those copies and says which ticket each belongs to.
 - **Activity**: a time line of what happened across the workspace: who did what, and when. Times are in your local time.
 - **Repos**: the project folders this workspace works on (see Repositories).
 - **Shares**: links to ticket files, from the Publish add-on (see Shares and Publish).
@@ -184,7 +180,7 @@ Open **Settings** at the bottom of the sidebar.
 - **Gates**: which steps need a person, and the allowed ways to approve (see Approving things).
 - **Grants**: the access that agents currently have, and when it ends.
 - **Records**: where the history of your tickets is kept, when your host offers it.
-- **Devices**: pairing a phone. Phones come later, with the relay.
+- **Devices**: phones connect through your company hub. With a hub, **Add a phone** opens the hub's Phones page; without one, there is nothing to set up here.
 
 Changing a setting is a change like any other: you review it and approve it.
 `,
@@ -202,7 +198,7 @@ Open **Settings, General**, find **Repositories** and press **Add repository**. 
 
 ## Use it on a ticket
 
-On a ticket, change the ticket and link the repository. A linked ticket can get its own worktree (see Worktrees).
+On a ticket, change the ticket and link the repository. A linked ticket can get its own worktree (see Work copies).
 
 ## Remove one
 
@@ -213,24 +209,24 @@ orch does not download repositories yet: clone the project yourself first, then 
   },
   {
     slug: 'worktrees',
-    title: 'Worktrees',
-    markdown: `# Worktrees
+    title: 'Work copies',
+    markdown: `# Work copies
 
 A worktree is a separate copy of a repository for one ticket. An agent works in it, so the agent never touches your own copy and agents on other tickets do not get in its way.
 
 ## Make one
 
-The ticket must link a repository first. Open the ticket and press **Add worktree**. It appears under **Worktrees** in the sidebar with the ticket it belongs to. When you start an agent on the ticket, it works there.
+The ticket must link a repository first. Open the ticket and press **Add worktree**. It appears under **Work copies** in the sidebar with the ticket it belongs to. When you start an agent on the ticket, it works there.
 
 ## What you see
 
-The **Worktrees** page lists every copy, the ticket, and whether there are changes that are not saved yet. The ticket page shows the same state.
+The **Work copies** page lists every copy, the ticket, and whether there are changes that are not saved yet. The ticket page shows the same state.
 
 ## Remove one
 
 Press **Remove worktree** on the page or the ticket and confirm. You do not need to sign for this. The folder is deleted, but the branch and everything saved on it stay. A folder with changes that are not saved in git is not removed.
 
-Worktrees come from an add-on: you see them only when it is switched on in **Settings, Add-ons**.
+Work copies come from an add-on: you see them only when it is switched on in **Settings, Add-ons**.
 `,
   },
   {
@@ -252,7 +248,7 @@ On a ticket, in the **Shares** box, press **Share files**. Tick the files, choos
 
 **Shares** lists every link you made: its kind, when it ends, how often it was opened and its state (Live, Used up, Expired or Revoked). **Revoke** stops a link at once.
 
-An agent can only prepare a share. A person always signs it in the terminal.
+An agent can only prepare a share. A person always approves it in the dashboard.
 `,
   },
   {

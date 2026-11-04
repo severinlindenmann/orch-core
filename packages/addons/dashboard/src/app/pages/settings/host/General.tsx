@@ -1,7 +1,7 @@
 import { versionQueries, vLabel } from '@/api/versions'
+import { ThemeSection } from '../ThemeSection'
 import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { AccessLength } from '../AccessLength'
-import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
@@ -23,9 +23,12 @@ import { useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { ReposSection } from './Repos'
 import { RecordsBlock } from './Records'
+import { WorkspaceNote } from './WorkspaceNote'
+import { TrustedBrowsers } from './TrustedBrowsers'
 import { WorkspaceIconFor } from '@/app/workspaceIcon'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { WorkspaceIconPicker } from '../WorkspaceIconPicker'
+import { useCosmetic } from '../useCosmetic'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -45,6 +48,8 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const versions = useQuery(versionQueries.get(workspace.id))
   const { ask, dialog } = useSettingsHandoff(workspace.id)
   const [iconOpen, setIconOpen] = useState(false)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const cosmetic = useCosmetic(workspace)
   const [draft, setDraft] = useState<Partial<Record<DurationKey, string>>>({})
   if (settings.isError) return <LoadFailed what="settings" onRetry={() => void settings.refetch()} />
   const id = identity.data
@@ -64,8 +69,12 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
     ask({
       title: 'Change the workspace settings',
       action: { action: 'settings_set', ...set },
-      autoStart: true,
+
     })
+  }
+  // D6: the name is one unsigned PUT (owners only); the editor closes once it is saved.
+  const rename = async () => {
+    if (renaming !== null && (await cosmetic.save({ name: renaming.trim() }))) setRenaming(null)
   }
 
   return (
@@ -76,17 +85,30 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           {workspace.icon_known && <Popover open={iconOpen} onOpenChange={setIconOpen}>
             <PopoverTrigger asChild><button type="button" className="rounded px-1 text-[12px] text-text-muted underline-offset-2 hover:text-text hover:underline">Change</button></PopoverTrigger>
             <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)]">
-              <WorkspaceIconPicker workspace={workspace} canEdit={canChangeSettings(role) && served}
-                onSave={(choice) => { setIconOpen(false); ask({ title: 'Change the workspace icon', action: { action: 'icon_set', icon: choice }, autoStart: true }) }} />
+              <WorkspaceIconPicker workspace={workspace} canEdit={role === 'owner'}
+                onSave={(choice) => { setIconOpen(false); void cosmetic.save({ icon: choice }) }} />
             </PopoverContent>
           </Popover>}
         </div>
         <div className="min-w-0 space-y-1 break-words">
-          <h2 className="text-[22px] font-semibold leading-tight"><bdi>{visible(workspace.name)}</bdi></h2>
+          {renaming === null ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="min-w-0 text-[22px] font-semibold leading-tight [overflow-wrap:anywhere]"><bdi>{visible(workspace.name)}</bdi></h2>
+              {role === 'owner' && <Button variant="ghost" size="sm" onClick={() => setRenaming(workspace.name)}>Rename</Button>}
+            </div>
+          ) : (
+            <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void rename() }}>
+              <Input aria-label="Workspace name" className="max-w-sm" maxLength={80} autoFocus value={renaming} onChange={(e) => setRenaming(e.target.value)} />
+              <Button type="submit" size="sm" disabled={!renaming.trim() || renaming.trim() === workspace.name}>Save</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setRenaming(null)}>Cancel</Button>
+            </form>
+          )}
           <p className="text-[13px] text-text-muted">Tickets are numbered {workspace.prefix}-0001, {workspace.prefix}-0002 ...</p>
         </div>
       </header>
       {workspace.click !== undefined && <SigningCard workspace={workspace} owner={role === 'owner'} />}
+      <ThemeSection />
+
       <Section title="Agents">
         {!data ? <p className="text-[13px] text-text-muted">Reading the settings…</p> : !data.available ?
           <p data-testid="settings-unavailable" className="text-[13px] text-text-muted">This host does not say what the settings are, so none is shown.</p> : <>
@@ -95,7 +117,9 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           {why && <OwnerNote id="agents-why">{why}</OwnerNote>}
         </>}
       </Section>
+      <WorkspaceNote workspace={workspace} />
       <ReposSection workspace={workspace} data={data} onSettled={() => void settings.refetch()} />
+      <TrustedBrowsers />
       <details className="rounded-lg border border-border bg-surface text-[13px]">
         <summary className="cursor-pointer px-4 py-3 font-medium">Advanced</summary>
         <div className="space-y-5 p-4 pt-0">
@@ -133,7 +157,6 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           )}
 
           <div><h4 className="mb-2 font-semibold">Signing methods</h4>
-            <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
           </div>
 
           <div><h4 className="mb-2 font-semibold">How long things are held</h4>
@@ -204,7 +227,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
                 {role === 'owner' && (
                   <div className="flex flex-wrap items-start gap-2">
                     <RunnerSwitch ws={workspace.id} on={!runner.enabled} testId="card-runner" variant="secondary" />
-                    {runner.enabled && !runner.terminals && <RunnerSwitch ws={workspace.id} on initialTerminals label="Turn on terminals" testId="card-runner-terminals" variant="secondary" />}
+                    {runner.enabled && !runner.terminals && <RunnerSwitch ws={workspace.id} on initialTerminals label="Turn on Command window" testId="card-runner-terminals" variant="secondary" />}
                   </div>
                 )}
               </div>

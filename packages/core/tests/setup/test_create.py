@@ -4,22 +4,27 @@ conversion last, R9 clean restart, no secret in any output."""
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
 from orch.host import signer as host_signer
 from orch.setup.flow import SetupFlow
+from orch.setup.osapply import RunResult
 from orch.setup.protocol import SetupError
 
 from .conftest import PROFILE, make_env
 from .fakes import FakePorts, FakeTerminal, names
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 GRANT_SECRET = "gr_01ARZ3NDEKTSV4RRFFQ69G5FAV.SECRETSECRETSECRETSECRETSECRETSECRETSEC"
 
 
 @pytest.fixture(autouse=True)
 def fake_signer(monkeypatch):
+    from orch.ops import human
+
+    monkeypatch.setattr(human, "review_prompt", lambda text: True)
     monkeypatch.setattr(host_signer, "check", lambda *a, **k: None)
 
     def sign(prepared, *, backend, key_id, workspace_id):
@@ -61,8 +66,8 @@ def run_ok(tmp, profile, ports=None, **envkw):
     f = setup_flow(tmp, ports, **envkw)
     # first pass only to learn the fingerprint
     f.dispatch("POST", "profile", {}, profile)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     if rv["fingerprint"]:
         ports.terminal.answers[:] = ["yes"]
@@ -83,7 +88,7 @@ def test_terminal_path_signs_in_order_with_one_unlock_and_the_grant_last(tmp):
     assert n.index("runner_hello") < n.index("human.prepare") < n.index("unlock") < n.index("human.submit")
     assert "stage" not in n and "convenience_on" not in n  # terminal path: no conversion
     ids = [s["id"] for s in p["steps"]]
-    assert ids[:4] == ["keys", "genesis", "register", "runner"] and ids[-1] == "runner_grant"
+    assert ids[:5] == ["perms", "keys", "genesis", "register", "runner"] and ids[-1] == "runner_grant"
     assert all(s["status"] == "done" for s in p["steps"])
     assert p["workspace"] == {"id": "0123456789abcdef0123456789abcdef", "prefix": "ANN"}
 
@@ -127,28 +132,32 @@ def test_r1_an_extra_event_in_a_prepared_request_aborts(tmp):
     assert p["error"]["code"] == "review.mismatch" and ports.unlocks == 0
 
 
-def test_r3_the_tty_fingerprint_must_match(tmp):
+def test_r3_the_tty_fingerprint_must_match(tmp, monkeypatch):
+    from orch.ops import human
+
+    shown = []
+    monkeypatch.setattr(human, "review_prompt", lambda text: shown.append(text) or False)
     ports = FakePorts(FakeTerminal(["not the words"]))
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, AGENT)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     ports.expect(f.review.plan)
     out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
     f.thread.join(10)
     p = progress(f, out["run_id"])
-    assert p["error"]["code"] == "tty.declined" and p["error"]["finishable"] is False
+    assert p["error"]["code"] == "sign.cancelled" and p["error"]["finishable"] is False
     assert names(ports) == []  # nothing happened on the machine
-    assert " ".join(rv["fingerprint"]) in ports.terminal.shown[0]
+    assert " ".join(rv["fingerprint"]) in shown[0]
 
 
 def test_r2_create_needs_the_bound_digest_and_no_typed_word(tmp):
     ports = FakePorts()
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, AGENT)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     base = {"review_id": rv["review_id"], "digest": rv["digest"]}
     with pytest.raises(SetupError) as e:
@@ -164,8 +173,8 @@ def test_create_after_a_profile_change_needs_a_new_review(tmp):
     ports = FakePorts()
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, PROFILE)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     f.dispatch("POST", "profile", {}, {**PROFILE, "agent_hours": 24})
     with pytest.raises(SetupError) as e:
@@ -220,7 +229,7 @@ CLICK = {**PROFILE, "method": "click", "addons": ["dashboard", "worktrees"]}
 def test_click_path_settings_then_conversion_then_flag_last(tmp):
     f, ports, p, rv = run_ok(tmp, CLICK)
     n = names(ports)
-    assert p["done"] is True and ports.submits == ["settings.changed", "addon.granted", "addon.granted"]
+    assert p["done"] is True and ports.submits == ["addon.granted", "addon.granted"]
     assert n.index("human.submit") < n.index("stage") < n.index("finish_conversion") < n.index("convenience_on")
     assert n[-1] == "convenience_on" and "lock" in n and n.index("lock") < n.index("stage")
     assert [s["id"] for s in p["steps"]][-2:] == ["custody", "flags"]
@@ -327,7 +336,7 @@ def test_r9_a_genesis_failure_leaves_nothing_and_a_second_setup_starts_clean(tmp
     f, ports, p, _ = run_ok(tmp, PROFILE, ports=ports)
     assert p["error"]["code"] == "host.unavailable" and p["error"]["finishable"] is False
     assert f.phase == "failed" and p["done"] is False
-    assert [s["status"] for s in p["steps"]][:3] == ["failed", "failed", "failed"]
+    assert [s["status"] for s in p["steps"]][1:4] == ["failed", "failed", "failed"]
     first_code = ports.code_seen
     # a second `orch setup`: a new flow, new secrets, and it works
     ports2 = FakePorts()
@@ -386,3 +395,168 @@ def test_unlock_labels_cover_every_event_the_batch_signs(monkeypatch):
     monkeypatch.setattr(hashing, "signed_context", lambda key, *a, **k: seen.append(key) or b"")
     hashing.person_signing_bytes("w" * 32, "workspace", {"hash_v": 1, "type": "settings.changed"})
     assert [canon.LABELS[k].encode("ascii") for k in seen] == list(steps.batch_labels())
+
+
+def test_b3_setup_refreshes_a_stale_runner_before_enabling_it(tmp):
+    f, ports, p, rv = run_ok(tmp, AGENT)
+    n = names(ports)
+    assert "runner_refresh" in n and n.index("runner_refresh") < n.index("runner_enable")
+
+
+def test_b3_refresh_restarts_a_runner_of_another_release(tmp_path, monkeypatch):
+    from orch.host import cli as hostcli
+
+    seen = {}
+
+    def fake(state, env, run_dir, mine, data, force=False):
+        seen["mine"] = mine
+        data["runner_restarted"] = True
+
+    monkeypatch.setattr(hostcli, "_restart_stale_runner", fake)
+    out = hostcli.refresh_stale_runner(tmp_path, {"HOME": str(tmp_path)})
+    assert out == {"runner_restarted": True} and seen["mine"]
+
+
+def test_item5_a_custody_refusal_shows_the_reason_and_the_fix(tmp, monkeypatch):
+    # deterministic: the secrets are random words, and one of them ("person") also names a directory in the message
+    import orch.custody.strength as strength
+    import orch.identity as identity
+    from orch.custody.base import CustodyError
+
+    monkeypatch.setattr(identity, "generate_recovery_code", lambda: " ".join(["person"] * 24))
+    monkeypatch.setattr(strength, "generate_passphrase", lambda: "quiet-meadow-lantern")
+
+    ports = FakePorts()
+
+    def refuse(wid):
+        raise CustodyError(
+            "/h/.config/orch/person is writable by others (mode 770); run: chmod 700 /h/.config/orch/person"
+        )
+
+    ports.convenience_on = refuse
+    f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
+    msg = p["error"]["message"]
+    assert p["error"]["code"] == "custody.error" and "chmod 700" in msg and "CustodyError" not in msg
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError(),
+        OSError("systemctl --user: no session bus"),
+        subprocess.TimeoutExpired(["launchctl", "bootstrap"], 120),
+        SetupError(
+            "runner.unavailable", RunResult(127, "TimeoutExpired after 120 s: systemctl --user start orch").out, 500
+        ),
+    ],
+)
+def test_w01_service_failure_then_finish_later(tmp, failure):
+    ports = FakePorts()
+
+    def fail(*args):
+        raise failure
+
+    ports.runner_enable = fail
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
+    notes = []
+    f.on_note = notes.append
+    assert p["workspace"] is not None
+    f.dispatch("POST", "cancel", {}, {})
+    assert f.phase == "cancelled"
+    # The dashboard launcher cannot replace a missing host. Do not promise access.
+    assert "orch dashboard open" not in "\n".join(notes)
+    assert "service manager" in p["error"]["message"]
+    assert "Login Items" not in p["error"]["message"]
+    shown = "".join(ports.terminal.shown)
+    assert "OSError" not in shown and "TimeoutExpired" not in shown
+    assert "service manager" in shown
+    assert p["error"]["details"]
+
+
+def test_w01_timeout_does_not_blame_an_unrelated_disabled_macos_item(tmp):
+    ports = FakePorts()
+    ports.blocked = ["io.orch.host"]
+
+    def fail(*args):
+        raise subprocess.TimeoutExpired(["launchctl", "bootstrap"], 120)
+
+    ports.runner_enable = fail
+    _, _, p, _ = run_ok(tmp, AGENT, ports=ports)
+    assert "did not answer" in p["error"]["message"]
+    assert "Login Items" not in p["error"]["message"]
+
+
+def test_w01_confirmed_macos_background_item_keeps_plain_terminal_advice(tmp, monkeypatch):
+    import orch.identity as identity
+    from orch.custody import strength
+    from orch.host.enable import background_off_message
+
+    monkeypatch.setattr(identity, "generate_recovery_code", lambda: " ".join(["zebra", "yonder"] * 12))
+    monkeypatch.setattr(strength, "generate_passphrase", lambda: "quiet-meadow-lantern")
+    ports = FakePorts()
+    ports.blocked = ["io.orch.runner"]
+
+    def fail(*args):
+        raise OSError(background_off_message("orch-runner"))
+
+    ports.runner_enable = fail
+    _, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
+    assert "Login Items" in p["error"]["message"]
+    assert "Login Items" in "".join(ports.terminal.shown)
+    assert "OSError" not in "".join(ports.terminal.shown)
+
+
+def test_w01_fixed_service_wording_does_not_hide_but_appended_secrets_do():
+    from orch.setup.steps import HIDDEN_REASON, SERVICE_TEXT, TIMEOUT_TEXT, redact_reason
+
+    for text in (SERVICE_TEXT, TIMEOUT_TEXT):
+        assert redact_reason(text, ["background computer service"]) == text
+        assert redact_reason(text + " privatepassword", ["privatepassword"]) == HIDDEN_REASON
+
+
+@pytest.mark.parametrize("failure", [OSError("no service manager"), subprocess.TimeoutExpired("systemctl", 120)])
+def test_w01_finish_after_runner_service_failure(tmp, failure):
+    ports = FakePorts()
+
+    def fail(*args):
+        raise failure
+
+    ports.runner_enable = fail
+    f, _, p, _ = run_ok(tmp, AGENT, ports=ports, workspace_url=lambda wid: f"/w/{wid}")
+    assert p["error"]["finishable"] is True
+    wid = p["workspace"]["id"]
+    status, result = f.dispatch("POST", "finish", {}, {})
+    assert status == 200
+    assert result == {"url": f"/w/{wid}", "workspace_id": wid}
+
+
+@pytest.mark.parametrize("reason", ["service.unavailable", "service.timeout", "background.blocked"])
+def test_w01_unavailable_dashboard_after_runner_failure(tmp, reason):
+    ports = FakePorts()
+
+    def fail(*args):
+        raise OSError("no service manager")
+
+    def unavailable(wid):
+        raise SetupError("host.unavailable", "no orch host answers", 503)
+
+    ports.runner_enable = fail
+    f, _, _, _ = run_ok(tmp, AGENT, ports=ports, workspace_url=unavailable)
+    f.run.reason_codes["runner"] = reason
+    notes = []
+    f.on_note = notes.append
+    with pytest.raises(SetupError) as exc:
+        f.dispatch("POST", "finish", {}, {})
+    assert exc.value.code == "setup.dashboard_unavailable"
+    assert not f._closed
+    assert ("start orch in the background later with: orch setup" in notes) == reason.startswith("service.")
+
+
+def test_w01_pre_genesis_failure_refuses_finish(tmp):
+    ports = FakePorts()
+    ports.fail_genesis = SetupError("host.unavailable", "no orch host answers", 500)
+    f, _, p, _ = run_ok(tmp, PROFILE, ports=ports)
+    assert p["error"]["finishable"] is False
+    with pytest.raises(SetupError) as exc:
+        f.dispatch("POST", "finish", {}, {})
+    assert exc.value.code == "setup.phase"

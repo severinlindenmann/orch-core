@@ -11,10 +11,11 @@ import copy
 from collections.abc import Callable
 from typing import Any
 
+from orch.addons.manifest import EVENTS_KEY, events_problem
 from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
-from . import addon_rules, authz, generations, hubledger, identity, policies
+from . import addon_rules, authz, generations, hubledger, identity, policies, remote
 from .codes import Code, Refusal
 from .types import GATES, WORKSPACE, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
@@ -321,10 +322,6 @@ def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
-#: the ways to sign, in the canonical order a stored ``sign_methods`` has (B6); ``touchid`` is reserved
-SIGN_METHODS = ("terminal", "click", "phone", "hub")
-
-
 #: the only settings a hub-signed ``settings.changed`` may set (hub protocol 8.8)
 CHANNEL_SETTINGS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min"})
 
@@ -334,8 +331,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return r
     s = e["set"]
     if "via" in e["actor"] and (bad := sorted(set(s) - CHANNEL_SETTINGS)):
-        # hub protocol 8.8 (V3-D29): sign_methods, repos, publish, icon ... stay off the channel, whatever the
-        # hub signed; one place for append and replay
+        # hub protocol 8.8 (V3-D29): repos, publish, addons, the ignored sign_methods ... stay off the channel, whatever
+        # the hub signed; one place for append and replay
         return Refusal(Code.SETTINGS_INVALID, f"a hub may not set {', '.join(bad)}")
     if ADDONS_KEY in s and len(s) != 1:  # G6: one add-on per event, nothing else beside it (one review, one word)
         return Refusal(Code.SETTINGS_INVALID, "addons: add-on settings are changed on their own")
@@ -359,11 +356,6 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     for k in ("grant_hours", "claim_ttl_min", "lease_ttl_min"):
         if k in s:
             ws.settings[k] = s[k]
-    if "sign_methods" in s:  # B6: terminal always; touchid is reserved (the schema refuses it); canonical order
-        methods = set(s["sign_methods"])
-        if "terminal" not in methods:
-            return Refusal(Code.SETTINGS_INVALID, "sign_methods always contains terminal")
-        ws.settings["sign_methods"] = [m for m in SIGN_METHODS if m in methods]
     if "publish" in s:  # the Publish add-on's server: one signed place for shared files to go; null removes it
         server = s["publish"]
         if server is None:
@@ -385,23 +377,10 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
             ws.settings[ADDONS_KEY] = dict(sorted(held.items()))
         else:
             ws.settings.pop(ADDONS_KEY, None)
-    if (
-        "icon" in s
-    ):  # the workspace icon: a pair of ids of the closed lists; null clears it (the default comes from the id)
-        choice = s["icon"]
-        if choice is None:
-            ws.settings.pop("icon", None)
-        else:
-            from orch.wsicons import COLOUR_LABELS, ICON_LABELS
-
-            if (
-                not isinstance(choice, dict)
-                or set(choice) != {"icon", "colour"}
-                or choice["icon"] not in ICON_LABELS
-                or choice["colour"] not in COLOUR_LABELS
-            ):
-                return Refusal(Code.SETTINGS_INVALID, "icon: an icon and a colour that orch offers")
-            ws.settings["icon"] = {"colour": choice["colour"], "icon": choice["icon"]}
+    # `set.icon` (before D6 the icon was signed): the schema still accepts it so older logs replay; it is ignored here
+    # (no state, nothing rendered), the icon is the unsigned `workspace.icon` of config.json now
+    # `set.sign_methods` (B6 retired): every One click genesis since #1442 carries it; the schema accepts any list of
+    # strings so those logs replay, and it is ignored here (no state, no enforcement, nothing rendered)
     return None
 
 
@@ -428,10 +407,13 @@ def grant_requested(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return r
     if sg.person not in ws.members:
         return Refusal(Code.MEMBER_UNKNOWN, "a grant is for a member: alias this hub user to a person first")
+    if e["hours"] > ws.settings["grant_hours"]:
+        return Refusal(Code.GRANT_TERMS, "the request exceeds the workspace grant duration")
     if e["id"] in ws.requests:
         return Refusal(Code.GRANT_EXISTS, e["id"])
     ws.requests[e["id"]] = {
         "person": sg.person,
+        "handoff": e["handoff"],
         "role": sg.role,
         "scope": e["scope"],
         "verbs": copy.deepcopy(e["verbs"]),
@@ -560,9 +542,70 @@ def device_excluded(core: Core, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
+def addon_requested(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``addon.requested`` (hub protocol 8.8b, FB15): a hub-signed ask to turn an add-on on. It changes no add-on by
+    itself; it records the exact terms (the package digest, version, capabilities, runtime) and the canonical signer the
+    host will use for the host-actor ``addon.granted`` that answers it. Owner only, like the grant it asks for."""
+    sg = identity.signer(ws, e)
+    if isinstance(sg, Refusal):
+        return sg
+    # `sg.role` is the effective role: the aliased member's (lower of member and hub role) or, for a hub user the owner
+    # never aliased (a console-link join), the hub role mapped by D70 (admin = owner). Either way an owner.
+    if sg.role != "owner":
+        return Refusal(Code.ROLE_DENIED, "addon.requested is for a workspace owner")
+    if e["id"] in ws.addon_requests:
+        return Refusal(Code.GRANT_EXISTS, e["id"])
+    ws.addon_requests[e["id"]] = {
+        "person": sg.person,
+        "role": sg.role,
+        **_addon_terms(e),
+        "handoff": e["handoff"],
+        "at": e["at"],
+        "hub_id": e["hub_id"],
+        "used": False,
+    }
+    return None
+
+
+def _addon_terms(e: dict[str, Any]) -> dict[str, Any]:
+    """What a request and the grant that answers it must agree on, byte for byte."""
+    return {
+        "name": e["name"],
+        "version": e["version"],
+        "package_sha256": e["package_sha256"],
+        "capabilities": copy.deepcopy(e["capabilities"]),
+        "runtime": copy.deepcopy(e.get("runtime")),
+    }
+
+
+def _host_addon_grant(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """The host-actor ``addon.granted`` (FB15): valid only when it names an admitted ``addon.requested`` of the same
+    terms, not answered yet, ``0 <= at - request.at <= 300 s``. The declarations (fields, sections, artifact kinds)
+    are the host's, read from the package whose digest the request names; replay checks them as for any grant."""
+    req = ws.addon_requests.get(e.get("request"))
+    if req is None:
+        return Refusal(Code.GRANT_TERMS, "a host-made add-on grant names an admitted addon.requested")
+    if req["used"]:
+        return Refusal(Code.GRANT_TERMS, "this request was answered already")
+    if any(o is not req and o["handoff"] == req["handoff"] and o["used"] for o in ws.addon_requests.values()):
+        return Refusal(Code.GRANT_TERMS, "this hand-off was answered already")  # one hand-off, one grant
+    if identity.role_of(ws, req["person"]) != "owner":  # a member's role, or a hub user's mapped hub role
+        return Refusal(Code.ROLE_DENIED, "the person who asked is not an owner now")
+    if _addon_terms(e) != {k: req[k] for k in ("name", "version", "package_sha256", "capabilities", "runtime")}:
+        return Refusal(Code.GRANT_TERMS, "the grant is not what was requested")
+    if not 0 <= ts(e["at"]) - ts(req["at"]) <= 300:
+        return Refusal(Code.GRANT_TERMS, "the request is too old (300 s)")
+    return None
+
+
 def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     ws, typ, name = core.ws, e["type"], e["name"]
-    if (r := _owner_only(ws, e)) is not None:
+    if typ == "addon.granted" and e["actor"]["kind"] == "host":
+        if (r := _host_addon_grant(ws, e)) is not None:
+            return r
+    elif typ == "addon.granted" and "request" in e:
+        return Refusal(Code.GRANT_TERMS, "only the host answers a request")
+    elif (r := _owner_only(ws, e)) is not None:
         return r
     old = ws.addons.get(name)
     if typ != "addon.granted" and old is None:
@@ -571,6 +614,10 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     if typ == "addon.granted":
         if (r := addon_rules.check_headings(name, e["sections"], ws.addons)) is not None:
             return r
+        if (bad := events_problem(e.get(EVENTS_KEY))) is not None:  # the same rule as the manifest check
+            return Refusal(Code.ADDON_VALUE_INVALID, f"{name}: events[{bad[0]}].{bad[1]}: {bad[2]}")
+        if e["actor"]["kind"] == "host":
+            ws.addon_requests[e["request"]]["used"] = True  # checked above; consumed once the grant is admitted
         new = Addon(
             name,
             e["version"],
@@ -580,6 +627,7 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
             copy.deepcopy(e["sections"]),
             list(e["artifact_kinds"]),
             runtime=copy.deepcopy(e.get("runtime")),
+            events=copy.deepcopy(e.get(EVENTS_KEY, [])),
         )
         named |= generations.addon_binds_gates(new.binds)
 
@@ -619,6 +667,10 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
         generations.mark(t, *named)
 
     cross(core, change, per_ticket)
+    if name == "schedules" and typ != "addon.granted":
+        from .schedules_wire import addon_off
+
+        addon_off(core)
     return None
 
 
@@ -733,6 +785,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     # aliases belong to their hub (L2P4-C1): a rejoin restores this hub's own, another hub starts empty
     book = {k: dict(v) for k, v in h.get("alias_book", {}).items()}
     aliases = dict(book.get(e["hub_id"], {}))
+    fresh = not (h and h.get("status") == "joined")  # a new membership, not the selective-to-full switch of one
     users = {u: p for p, u in aliases.items()}
     for a in e["aliases"]:
         pid, uid = a["person_id"], a["user_id"]
@@ -743,6 +796,8 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     if e["hub_id"] in ledger and ledger[e["hub_id"]]["root"] != e["hk_root_pub"]:
         return Refusal(Code.HUB_INVALID, "root_mismatch")  # the hub id is derived from the root: it never changes
     ledger.setdefault(e["hub_id"], hubledger.new_ledger(e["hk_root_pub"]))
+    if fresh:  # a fresh membership never inherits an earlier one's pinned snapshot
+        ledger[e["hub_id"]] = {**ledger[e["hub_id"]], "snapshot": None}
     # the union over all hubs must stay a function: a user id another hub aliased to someone else is refused (L2P4-C1b)
     other = {u: p for hid, al in book.items() if hid != e["hub_id"] for p, u in al.items()}
     for a in e["aliases"]:
@@ -773,6 +828,8 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
+    if e["mode"] == "full":
+        remote.hub_full(ws)  # D93: a full hub ends remote access, whatever the premises answer (R2)
     return None
 
 
@@ -794,11 +851,15 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
     hub_id = e["hub_id"]
 
     def change() -> None:
+        led = {k: dict(v) for k, v in h.get("ledger", {}).items()}
+        if hub_id in led:
+            led[hub_id]["snapshot"] = None  # the hub's role projection ends with the membership
         ws.hub = {
             **{k: v for k, v in h.items() if k != "member"},
             "status": "left",
             "owner_proof": None,
             "invalid": False,
+            "ledger": led,
         }  # the hub member goes with the leave
         for grant in ws.grants.values():
             if grant.hub_id == hub_id:

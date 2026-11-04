@@ -16,7 +16,7 @@ jobs:
     name: relay changes
     uses: ./.github/workflows/_changes.yml
     with:
-      pattern: '^(packages/relay/|contracts/|\.github/workflows/(relay|_changes)\.yml$)'
+      pattern: '^(packages/relay/|contracts/|scripts/formats\.py$|packages/core/src/orch/migrate/|\.github/workflows/(relay|_changes)\.yml$)'
   tests:
     name: relay tests
     needs: changes

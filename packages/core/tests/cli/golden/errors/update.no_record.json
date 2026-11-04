@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.no_record",
+    "message": "orch was not installed with the installer",
+    "hint": "install with the one-line installer",
+    "fix": {
+      "argv": [
+        "orch",
+        "update",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

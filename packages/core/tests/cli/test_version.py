@@ -150,3 +150,62 @@ def test_wheel_contains_build_json(tmp_path):
     assert r.returncode == 0, r.stderr
     with zipfile.ZipFile(next(out.glob("*.whl"))) as z:
         assert "orch/_build.json" in z.namelist()
+
+
+def test_stamp_sets_every_part_to_the_one_version(tmp_path):
+    core, dash = _tree(tmp_path)
+    hub, relay = tmp_path / "hub", tmp_path / "relay"
+    hub.mkdir()
+    relay.mkdir()
+    (hub / "pyproject.toml").write_text('[project]\nversion = "2.0.0.dev0"\n')
+    (hub / "__init__.py").write_text('__version__ = "2.0.0.dev0"\n')
+    (relay / "pyproject.toml").write_text('[project]\nversion = "2.0.0.dev0"\n')
+    parts = ((hub / "pyproject.toml", hub / "__init__.py"), (relay / "pyproject.toml", None))
+    _stamp_module().stamp("2.0.0", "main", "abcdef1234", core=core, dashboard=dash, parts=parts)
+    assert 'version = "2.0.0"' in (hub / "pyproject.toml").read_text()
+    assert '__version__ = "2.0.0"' in (hub / "__init__.py").read_text()
+    assert 'version = "2.0.0"' in (relay / "pyproject.toml").read_text()
+
+
+def test_every_part_of_the_tree_carries_the_one_dev_version():
+    """One version for all parts: a part left at its own number trips the hub and updater version checks."""
+    import tomllib
+
+    mod = _stamp_module()
+    for pyproject in (mod.CORE / "pyproject.toml", mod.DASHBOARD / "pyproject.toml", *(p for p, _ in mod.PARTS)):
+        assert tomllib.loads(pyproject.read_text())["project"]["version"] == "2.0.0.dev0", pyproject
+    for init in (mod.CORE / "src" / "orch" / "__init__.py", *(i for _, i in mod.PARTS if i is not None)):
+        assert '__version__ = "2.0.0.dev0"' in init.read_text(), init
+
+
+class _Dist:
+    def __init__(self, text):
+        self.text = text
+
+    def read_text(self, name):
+        assert name == "direct_url.json"
+        return self.text
+
+
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        (
+            '{"url": "https://github.com/x/orch-core.git", "vcs_info": {"vcs": "git", "commit_id": "'
+            + "21a5d05c0123456789abcdef0123456789abcdef"
+            + '"}}',
+            "orch 2.0.0.dev0 (development build, git 21a5d05)",
+        ),
+        ('{"url": "file:///src", "dir_info": {"editable": true}}', "orch 2.0.0.dev0 (development build)"),
+        (None, "orch 2.0.0.dev0 (development build)"),
+        ("not json", "orch 2.0.0.dev0 (development build)"),
+        ('{"vcs_info": {"commit_id": "<script>"}}', "orch 2.0.0.dev0 (development build)"),
+    ],
+)
+def test_w29_a_git_install_shows_its_commit(tmp_path, monkeypatch, text, line):
+    from importlib import metadata
+
+    monkeypatch.setattr(_build, "_STAMP", tmp_path / "missing.json")
+    monkeypatch.setattr(metadata, "distribution", lambda name: _Dist(text))
+    assert _build.version_line() == line
+    assert _build.build_info()["development"] is True

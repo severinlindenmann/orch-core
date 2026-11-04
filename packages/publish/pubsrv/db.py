@@ -3,13 +3,22 @@
 import os
 import sqlite3
 
-SCHEMA_VERSION = 3  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
+from .dataformat import open_data
+
+DATA_KIND = "publish"
+DATA_FORMAT = 1  # the format of the data dir this code reads and writes (format.json "format")
+SCHEMA_VERSION = 7  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
 # 3: hub path (orch-core #898): hub_bindings, hub_cards, hub_op_revoked, hub_revoked_devices (additive only)
-MIGRATABLE_FROM = 2
+# 4: apps (M4 #1357 S3): apps, app_versions, app_files, app_views, app_visits (additive only)
+# 5: shares.label / by_kind / by_name, the display columns of the company list
+# 6: hub_narrowings, shares.pw (M4 S2 #1453: hub revoke/stop, link password)
+# 7: trusted_hubs (operator pin) and hub_allows (hub.allow, P02: a trusted hub admits its own workspaces)
+# Only the current schema exists: any other user_version is refused. format.json decides what may
+# open the data dir (dataformat.py) and `orch update` migrates it, so this is an internal check.
 
 
 class SchemaError(Exception):
-    """The data dir was made by an older version of orch-publish."""
+    """The database does not match this version of orch-publish (internal consistency check)."""
 
 
 SCHEMA = """
@@ -66,6 +75,24 @@ CREATE TABLE IF NOT EXISTS hub_revoked_devices(
   device_id TEXT PRIMARY KEY,
   revoked_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS trusted_hubs(
+  hub_id TEXT PRIMARY KEY,  -- the operator's pin: only these hubs may send hub.allow (admin hub trust / --trust-hub)
+  added_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hub_allows(
+  workspace_id TEXT NOT NULL,  -- no FK: it may arrive before the workspace registers
+  hub_id TEXT NOT NULL,  -- one row per (workspace, hub): a hub's pending allowance is its own, nobody blocks or overwrites it
+  person_id TEXT NOT NULL,
+  binding_seq INTEGER NOT NULL,  -- the epoch: counts only while the live binding is THIS hub's at exactly this seq
+  cert_id TEXT NOT NULL,  -- the op cert that signed it: a revoked cert's allowances are dead
+  updated_ms INTEGER NOT NULL,  -- a row the workspace never bound to expires 24 h after this (cleanup.ALLOW_TTL_MS)
+  PRIMARY KEY(workspace_id, hub_id)
+);
+CREATE INDEX IF NOT EXISTS hub_allows_hub ON hub_allows(hub_id);
+CREATE TABLE IF NOT EXISTS hub_denied(
+  workspace_id TEXT PRIMARY KEY,  -- the operator unbound it: no hub may allow it again until the operator clears this
+  added_ms INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS shares(
   id TEXT PRIMARY KEY,
   owner_ws TEXT NOT NULL,  -- no FK: tombstones outlive an unbind
@@ -79,7 +106,11 @@ CREATE TABLE IF NOT EXISTS shares(
   manifest_hash TEXT,
   bytes INTEGER NOT NULL DEFAULT 0,
   created_ms INTEGER NOT NULL,
-  ended_ms INTEGER
+  ended_ms INTEGER,
+  label TEXT NOT NULL DEFAULT '',
+  by_kind TEXT NOT NULL DEFAULT 'person' CHECK(by_kind IN ('person','agent')),
+  by_name TEXT,
+  pw TEXT  -- the password record (JSON, C5) of a link that has one; never a plain password
 );
 CREATE INDEX IF NOT EXISTS shares_owner ON shares(owner_ws);
 CREATE TABLE IF NOT EXISTS share_files(
@@ -95,7 +126,81 @@ CREATE TABLE IF NOT EXISTS views(
   share_id TEXT NOT NULL REFERENCES shares(id),
   until_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS hub_narrowings(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target TEXT NOT NULL CHECK(target IN ('share','app')),
+  target_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  hub_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('revoke','stop')),
+  at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS hub_narrowings_ws ON hub_narrowings(workspace_id, target, target_id);
+CREATE TABLE IF NOT EXISTS apps(
+  id TEXT PRIMARY KEY,
+  owner_ws TEXT NOT NULL,  -- no FK: tombstones outlive an unbind
+  slug TEXT NOT NULL UNIQUE,  -- a slug is never freed, a removed app keeps its row
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('page','app','form')),
+  access TEXT NOT NULL CHECK(access IN ('public','password','company','group')),
+  audience TEXT,
+  pw TEXT,  -- the password record (JSON) of the live version, never a plain password
+  state TEXT NOT NULL CHECK(state IN ('staged','running','stopped','removed')),
+  live_version INTEGER,
+  created_ms INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS apps_owner ON apps(owner_ws);
+CREATE TABLE IF NOT EXISTS app_versions(
+  app_id TEXT NOT NULL REFERENCES apps(id),
+  version INTEGER NOT NULL,
+  meta_json TEXT NOT NULL,
+  meta_hash TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'staged' CHECK(state IN ('staged','committed')),
+  approved_by_person TEXT,
+  approved_ms INTEGER,
+  created_ms INTEGER NOT NULL,
+  committed_ms INTEGER,
+  PRIMARY KEY(app_id, version)
+);
+CREATE TABLE IF NOT EXISTS app_files(
+  app_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  present INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(app_id, version, path),
+  FOREIGN KEY(app_id, version) REFERENCES app_versions(app_id, version)
+);
+CREATE TABLE IF NOT EXISTS app_views(
+  view_id TEXT PRIMARY KEY,
+  app_id TEXT NOT NULL REFERENCES apps(id),
+  until_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS app_views_app ON app_views(app_id);
+CREATE TABLE IF NOT EXISTS app_visits(
+  app_id TEXT NOT NULL REFERENCES apps(id),
+  day INTEGER NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(app_id, day)
+);
 """
+
+
+def open_dir(data_dir):
+    """The one way a publish process opens its data dir: the format rule first (dataformat.py: an
+    interrupted update, a missing or other-format format.json and a running update refuse, before
+    any database), then ``prepare_dir``. Returns ``(db_path, handle)``; the handle holds the shared
+    format lock: keep it for as long as the data is in use (``handle.close()`` releases it).
+    Raises ``DataFormatError``."""
+    handle = open_data(data_dir, DATA_KIND, DATA_FORMAT)
+    try:
+        return prepare_dir(data_dir), handle
+    except BaseException:
+        handle.close()
+        raise
 
 
 def prepare_dir(data_dir):
@@ -134,11 +239,9 @@ def init(path):
     try:
         have = conn.execute("PRAGMA user_version").fetchone()[0]
         has_tables = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone()
-        # version 2 -> 3 only adds tables (CREATE IF NOT EXISTS below), so it migrates in place
-        if (has_tables and have not in (SCHEMA_VERSION, MIGRATABLE_FROM)) or have > SCHEMA_VERSION:
+        if (has_tables or have) and have != SCHEMA_VERSION:
             raise SchemaError(
-                "this data dir was made by an older orch-publish (dev only, no upgrade path): "
-                "stop the server and delete the data dir, then start again"
+                "this data does not match this orch-publish version: run `orch update`"
             )
         conn.executescript(SCHEMA)
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")

@@ -24,11 +24,30 @@ def _docstrings(tree: ast.AST) -> set[int]:
     return out
 
 
+def _keys(tree: ast.AST) -> set[int]:
+    """Constants used as a mapping key, not a path: ``x["k"]``, ``{"k": v}``, ``m.get/pop/setdefault("k")``."""
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript):
+            out.add(id(node.slice))
+        elif isinstance(node, ast.Dict):
+            out.update(id(k) for k in node.keys if k is not None)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("get", "pop", "setdefault")
+            and node.args
+        ):
+            out.add(id(node.args[0]))
+    return out
+
+
 def count(path: Path) -> int:
     """String constants that name a store entry as a path component anywhere inside (``"tickets/x"``, ``"/events"``,
-    ``"x/events"``, the literal parts of an f-string; ``ast.walk`` reaches each part once). Docstrings are not code."""
+    ``"x/events"``, the literal parts of an f-string; ``ast.walk`` reaches each part once).
+    Docstrings and mapping keys are not paths."""
     tree = ast.parse(path.read_text())
-    skip = _docstrings(tree)
+    skip = _docstrings(tree) | _keys(tree)
     return sum(
         1
         for node in ast.walk(tree)

@@ -1,6 +1,10 @@
+import { personReachView } from "./admin_reach.js";
+import { skeleton, replaceContent, toast } from "./feel.js";
 import { renderText } from "./render.js";
+import { sentence } from "./changes.js";
 
 let showLeft = false;
+let accessBy = "workspace"; // the Access tab's second view: by workspace (who can open it) or by group (what it can open)
 
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
@@ -19,6 +23,18 @@ const p = (text) => h("p", { class: "small muted", text });
 const chip = (text, kind = "") => h("span", { class: "chip " + kind, text });
 const field = (name, input) => h("label", {}, name, input);
 const roleName = (role) => ({ read: "Read", edit: "Edit", admin: "Admin" }[role] ?? txt(role));
+/** An end date picked as a day: access lasts through that whole day (the admin's own time) and ends at the start of the next. */
+export const endOfDayMs = (value) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? "");
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1).getTime() : null;
+};
+const lastDay = (ends) => new Date(ends - 1).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+/** "ends in 3 days", "ends today", "ended 2 days ago": plain words for the review list. */
+export function endsWords(ends, now = Date.now()) {
+  const days = Math.ceil((ends - now) / 86_400_000);
+  if (ends <= now) { const ago = Math.floor((now - ends) / 86_400_000); return ago < 1 ? "ended today" : "ended " + ago + (ago === 1 ? " day" : " days") + " ago"; }
+  return days <= 1 ? "ends today or tomorrow" : "ends in " + days + " days";
+}
 const select = (rows) => h("select", { required: true }, rows.map(([value, name]) => h("option", { value, text: txt(name) })));
 function table(headers, rows, label) {
   return h("div", { class: "scroll", tabindex: "0", role: "region", "aria-label": label },
@@ -31,9 +47,10 @@ function table(headers, rows, label) {
 export function adminView(d) {
   const message = h("div", { "aria-live": "polite" });
   if (d.notice) message.append(d.notice.nodeType ? d.notice : p(txt(d.notice)));
-  const panels = h("div", {}, p("Loading admin data…"));
+  const panels = h("div", {}, skeleton("admin"));
   const tabs = h("div", { class: "section-tabs", role: "tablist", "aria-label": "Admin sections" });
   let data, selected = 0, generation = 0;
+  const overriding = new Set(), reasons = {}; // changes whose override box is open, and the reason typed so far
   const names = ["People & groups", "Access", "Workspaces", "Marketplaces", "Audit"];
   const buttons = names.map((name, i) => h("button", {
     id: "admin-tab-" + i, role: "tab", text: name, "aria-controls": "admin-panel-" + i,
@@ -54,14 +71,18 @@ export function adminView(d) {
   }
   async function load() {
     const current = ++generation;
+    if (!data) panels.replaceChildren(skeleton("admin"));
     try {
       const keys = ["users", "groups", "grants", "workspaces", "channels", "market-policy", "audit"];
-      const responses = await Promise.all(keys.map((key) => d.api("GET", "/admin/" + key)));
+      const [responses, waiting, review] = await Promise.all([Promise.all(keys.map((key) => d.api("GET", "/admin/" + key))), d.api("GET", "/admin/changes"), d.api("GET", "/admin/review")]);
       if (current !== generation) return;
       const failed = responses.find((r) => r.status !== 200);
       if (failed) { error(failed.body?.error ?? "unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); return; }
       data = Object.fromEntries(keys.map((key, i) => [key, key === "audit" || key === "market-policy" ? responses[i].body : responses[i].body[key]]));
       data.policy = data["market-policy"];
+      data.changes = waiting?.status === 200 ? waiting.body?.changes ?? [] : []; // a failed list only hides the waiting changes
+      data.review = review?.status === 200 ? review.body?.items ?? [] : []; // so does a failed review list
+      data.defaultGroup = responses[keys.indexOf("groups")].body.default_group ?? null;
       syncMp();
       if (data.audit.head?.seq > Math.max(0, ...(data.audit.records ?? []).map((r) => r.seq))) {
         const recent = await d.api("GET", "/admin/audit?since=" + Math.max(0, data.audit.head.seq - 100));
@@ -72,16 +93,41 @@ export function adminView(d) {
       draw();
     } catch { if (current === generation) { error("unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); } }
   }
-  async function change(button, method, path, body) {
+  async function change(button, method, path, body, undoable = true, done = "Saved") {
+    const membership = /^\/admin\/groups\/([^/]+)\/members\/([^/]+)$/.exec(path);
+    const wasMember = membership && data.groups.find((g) => g.name === decodeURIComponent(membership[1]))?.members.includes(decodeURIComponent(membership[2]));
+    const grantChange = path === "/admin/grants" || path === "/admin/grants/revoke";
+    const oldGrant = grantChange && data.grants.find((g) => g.workspace_id === body.workspace_id && g.group === body.group);
     button.disabled = true;
     try {
       const r = await d.api(method, path, body);
+      if (r.status === 409 && r.body?.error === "last_admin" && !body?.confirm) { lastAdmin(button, method, path, body); return; }
       if (r.status < 200 || r.status >= 300) { error(r.body?.error ?? "unavailable"); return; }
-      message.replaceChildren(h("div", { class: "banner ok", role: "status", text: "Saved" }));
+      if (r.status === 202) { // an increase on a workspace someone else owns: nothing changed yet, the owner is asked
+        const owners = [...new Set((r.body?.waiting_for ?? []).map((x) => txt(x.owner_name ?? "the workspace owner")))].join(", ") || "the workspace owner";
+        message.replaceChildren(h("div", { class: "banner ok", role: "status", text: "Sent to " + owners + " for approval" }));
+        await load();
+        return;
+      }
+      message.replaceChildren(h("div", { class: "banner ok", role: "status", text: done }));
       await load();
       await d.refresh();
+      if (undoable && membership && ((method === "PUT" && !wasMember) || (method === "DELETE" && wasMember))) {
+        toast("Group membership updated", { undo: () => void change(button, method === "PUT" ? "DELETE" : "PUT", path, undefined, false) });
+      } else if (undoable && grantChange) {
+        const previous = { workspace_id: body.workspace_id, group: body.group, ...(oldGrant ? { role: oldGrant.role } : {}) };
+        toast("Workspace access updated", { undo: () => void change(button, oldGrant ? "PUT" : "POST", oldGrant ? "/admin/grants" : "/admin/grants/revoke", previous, false) });
+      }
     } catch { error("unavailable"); }
     finally { button.disabled = false; }
+  }
+  // The hub refused because a workspace would be left with nobody who can administer it: say so and let the admin confirm.
+  function lastAdmin(button, method, path, body) {
+    const again = h("button", { type: "button", class: "danger", text: "Do it anyway", onclick: () => { message.replaceChildren(); void change(button, method, path, { ...(body ?? {}), confirm: true }, false); } });
+    message.replaceChildren(h("div", { class: "banner warn", role: "alert" },
+      h("div", { text: "This would leave a workspace with nobody who can administer it." }),
+      h("div", { class: "row" }, again, h("button", { type: "button", text: "Cancel", onclick: () => message.replaceChildren() }))));
+    again.focus();
   }
   function remove(label, method, path, body) {
     let armed = false;
@@ -101,8 +147,82 @@ export function adminView(d) {
   const workspaceName = (id) => txt(data.workspaces.find((w) => w.workspace_id === id)?.name ?? "Workspace");
   const personName = (id) => txt(data.users.find((u) => u.user_id === id)?.name ?? id);
   const groupMembers = (group) => (data.groups.find((g) => g.name === group)?.members ?? []).map(personName).join(", ") || "No members";
+  // Links for people: an invitation, a password-and-code reset, a recovery. The admin only hands the link over; the person
+  // chooses their own password and scans their own code, so nothing secret ever shows here.
+  const linkBox = h("div", { "aria-live": "polite" });
+  const RECOVERY_WARNING = "A recovery link gives whoever opens it this person's account. Hand it over only to them.";
+  async function postLink(button, path, body) {
+    button.disabled = true;
+    try {
+      const r = await d.api("POST", path, body);
+      if (r.status === 200) return r.body;
+      linkBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say(r.body?.error ?? "unavailable") }));
+    } catch { linkBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say("unavailable") })); }
+    finally { button.disabled = false; }
+    return null;
+  }
+  function showLink(title, intro, made, extra = []) {
+    const input = h("input", { readonly: true, value: made.link, id: "person-link", "aria-label": "Link for the person", onfocus: (ev) => ev.target.select() });
+    const hint = h("span", { class: "small muted", "aria-live": "polite" });
+    let timer;
+    const copy = h("button", { type: "button", class: "pri", text: "Copy link", onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(made.link);
+        clearTimeout(timer);
+        hint.textContent = "";
+        copy.textContent = "Copied ✓";
+        timer = setTimeout(() => { copy.textContent = "Copy link"; }, 2000);
+      } catch { input.focus(); input.select(); hint.textContent = "Press Ctrl+C / Cmd+C to copy"; }
+    } });
+    linkBox.replaceChildren(h("section", { class: "card", id: "person-link-panel" }, h("h3", { text: title }), p(intro), field("Link", input),
+      h("div", { class: "row" }, copy, hint),
+      p("Valid until " + new Date(made.expires_ms).toLocaleString() + " (7 days). It works once."),
+      ...extra, h("div", { class: "row" }, h("button", { type: "button", text: "Done", onclick: () => linkBox.replaceChildren() }))));
+    input.focus(); input.select();
+  }
+  const deviceCount = (u) => {
+    const n = data.channels.filter((c) => c.user_id === u.user_id && c.status === "active").length;
+    return n === 1 ? "1 device" : n + " devices";
+  };
+  /** A person who joined with the company account: which account it was (display text), a hint when its name differs from the
+   * invited one, and a plain Remove. The invitation works for anyone who has the link, so the admin must be able to see who used it. */
+  function companyLine(u) {
+    const c = u.company;
+    if (!c) return null;
+    const email = String(c.email ?? "").replace(/[^\P{C}]/gu, "").slice(0, 200);
+    const idp = String(c.name ?? "").replace(/[^\P{C}]/gu, "").slice(0, 200);
+    return h("div", { class: "company-line small", "data-company": u.user_id },
+      h("span", { text: "Signed in as " + txt(email || "a company account") }),
+      idp && idp !== u.name ? h("div", { class: "muted", text: "Their company account is named " + txt(idp) }) : null,
+      remove("Remove", "DELETE", "/admin/users/" + enc(u.user_id)));
+  }
+  function personControls(u) {
+    const recovery = h("input", { type: "checkbox", id: "recovery-" + u.user_id });
+    const reset = h("button", { type: "button", text: "Reset password and code", onclick: async (ev) => {
+      const made = await postLink(ev.target, "/admin/users/" + enc(u.user_id) + "/reset", { recovery: !!recovery.checked });
+      if (!made) return;
+      showLink((recovery.checked ? "Recovery link for " : "Reset link for ") + txt(u.name),
+        recovery.checked ? "Send this link to " + txt(u.name) + ". They choose a new password and get a new code. All their approving devices are removed."
+          : "Send this link to " + txt(u.name) + ". They open it in a browser where they already approve, choose a new password and get a new code.",
+        made, recovery.checked ? [h("div", { class: "banner warn", role: "alert", text: RECOVERY_WARNING })] : []);
+    } });
+    const enable = h("button", { type: "button", text: "Enable", onclick: async (ev) => {
+      const made = await postLink(ev.target, "/admin/users/" + enc(u.user_id) + "/enable", {});
+      if (!made) return;
+      await load();
+      showLink("Recovery link for " + txt(u.name), txt(u.name) + " can sign in again only after using this link to choose a new password and code.", made,
+        [h("div", { class: "banner warn", role: "alert", text: RECOVERY_WARNING })]);
+    } });
+    return h("div", { class: "person-controls" },
+      u.disabled ? null : h("div", { class: "row" }, reset, h("label", { class: "check" }, recovery, "They lost their devices (recovery)")),
+      u.disabled ? null : p(RECOVERY_WARNING),
+      h("div", { class: "row" }, u.disabled ? enable : u.user_id === d.self ? chip("You") : remove("Disable", "POST", "/admin/users/" + enc(u.user_id) + "/disable"),
+        remove("Remove person", "DELETE", "/admin/users/" + enc(u.user_id))));
+  }
   function people() {
-    const name = h("input", { required: true, maxlength: 120, autocomplete: "off" });
+    const inviteName = h("input", { id: "invite-name", required: true, maxlength: 80, autocomplete: "off" });
+    const inviteBtn = h("button", { class: "pri", type: "submit", id: "invite-person", text: "Invite a person" });
+    const inviteCompany = h("input", { id: "invite-company-login", type: "checkbox" });
     const groupName = h("input", { required: true, maxlength: 120 });
     const person = select(data.users.map((u) => [u.user_id, u.name]));
     const group = select(data.groups.map((g) => [g.name, g.name]));
@@ -116,40 +236,128 @@ export function adminView(d) {
       if (g.name === "hub-admin") effects.push("hub administration");
       preview.textContent = "Adding " + personName(person.value) + " to " + txt(g.name) + " gives " + (effects.join("; ") || "no workspace access yet") + ".";
     };
+    const until = h("input", { type: "date", id: "member-ends", "aria-describedby": "member-ends-hint" });
+    const untilField = h("label", {}, "Access ends (optional)", until);
+    const untilHint = h("span", { class: "small muted", id: "member-ends-hint", text: "Access lasts through that day, then stops by itself." });
+    const showUntil = () => { untilField.hidden = untilHint.hidden = group.value === "hub-admin"; if (untilField.hidden) until.value = ""; };
+    group.addEventListener("change", showUntil); showUntil();
     person.addEventListener("change", updatePreview); group.addEventListener("change", updatePreview); updatePreview();
     return [h("h2", { text: "People & groups" }),
       h("div", { class: "admin-grid" },
-        h("section", { class: "card" }, h("h3", { text: "Add person" }), form("Add person", [field("Name", name)], "POST", "/admin/users", () => ({ name: name.value.trim() }))),
+        h("section", { class: "card" }, h("h3", { text: "Invite a person" }),
+          h("p", { class: "small muted", id: "invite-pointer", text: "With a workspace? Use Workspaces › Connect a workspace." }),
+          h("form", { onsubmit: async (ev) => {
+            ev.preventDefault();
+            const company = inviteCompany.checked;
+            const made = await postLink(ev.submitter ?? inviteBtn, "/admin/invites", { name: inviteName.value.trim(), ...(company ? { company: true } : {}) });
+            if (!made) return;
+            inviteName.value = "";
+            inviteCompany.checked = false;
+            showLink("Invitation link", company ? "Send this link to the person. They sign in with their company account; they get no hub password. To approve things later they ask you for a set-up link."
+              : "Send this link to the person. They choose their own password and scan their own code; you will not see them.", made,
+              [p("Add them to groups afterwards. A new person has no access to any workspace until you do.")]);
+          } }, h("div", { class: "form-grid" }, field("Their name", inviteName), inviteBtn),
+            h("label", { class: "small" }, inviteCompany, " They sign in with the company account (Microsoft / Google), no hub password")), linkBox),
         h("section", { class: "card" }, h("h3", { text: "Add to group" }),
-          form("Add to group", [field("Person", person), field("Group", group)], "PUT", () => "/admin/groups/" + enc(group.value) + "/members/" + enc(person.value), () => undefined), preview)),
+          form("Add to group", [field("Person", person), field("Group", group), untilField, untilHint], "PUT", () => "/admin/groups/" + enc(group.value) + "/members/" + enc(person.value), () => (until.value ? { ends_ms: endOfDayMs(until.value) } : undefined)), preview)),
       h("section", { class: "card" }, h("h3", { text: "People" }), data.users.length ? data.users.map((u) => h("article", { class: "list-row row" },
-        h("div", { class: "grow" }, h("b", { text: txt(u.name) }), p(txt(u.user_id)),
-          h("div", { class: "row" }, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
-          p(data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No approval device set up")),
-        remove("Remove person", "DELETE", "/admin/users/" + enc(u.user_id)))) : p("No people yet.")),
+        h("div", { class: "grow" }, h("b", { text: txt(u.name) }), data.users.filter((o) => o.name === u.name).length > 1 ? h("details", { class: "info" }, h("summary", { "aria-label": "More about " + txt(u.name), text: "i" }), p(txt(u.user_id))) : null,
+          h("div", { class: "row" }, u.disabled ? chip("Disabled", "warn") : null, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
+          companyLine(u),
+          p(deviceCount(u) + " · " + (data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No approval device set up"))),
+        personControls(u))) : p("No people yet.")),
       h("section", { class: "card" }, h("h3", { text: "Groups" }),
         form("Create group", [field("Group name", groupName)], "POST", "/admin/groups", () => ({ name: groupName.value.trim() })),
+        defaultGroupBox(),
         data.groups.map((g) => h("article", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: txt(g.name) }),
           g.name !== "hub-admin" ? remove("Remove group", "DELETE", "/admin/groups/" + enc(g.name)) : chip("Hub administrators")),
-          g.members.length ? g.members.map((id) => h("div", { class: "row top" }, h("span", { class: "grow", text: personName(id) }),
+          g.members.length ? g.members.map((id) => h("div", { class: "row top" }, h("span", { class: "grow", text: personName(id) + (g.ends?.[id] ? " · until " + lastDay(g.ends[id]) : "") }),
             remove("Remove from group", "DELETE", "/admin/groups/" + enc(g.name) + "/members/" + enc(id)))) : p("No members"))))];
+  }
+  // New people join this group when they accept an invitation. Never the administrators' group.
+  function defaultGroupBox() {
+    const pick = h("select", { id: "default-group", "aria-describedby": "default-group-hint" },
+      h("option", { value: "", text: "Nobody (they have no access until you add them)" }),
+      data.groups.filter((g) => g.name !== "hub-admin").map((g) => h("option", { value: g.name, text: txt(g.name) })));
+    pick.value = data.defaultGroup ?? "";
+    const save = h("button", { type: "button", text: "Save", onclick: () => void change(save, "PUT", "/admin/default-group", { group: pick.value || null }, false) });
+    return h("div", { class: "form-grid" }, field("New people join", pick), save,
+      h("span", { class: "small muted", id: "default-group-hint", text: "New people never become administrators this way." }));
+  }
+  // "Review access": people whose access ends soon (or ended) and people nobody has looked at for a while.
+  function reviewAccess() {
+    const items = data.review ?? [];
+    return h("section", { class: "card", id: "review-access" }, h("h3", { text: "Review access" }),
+      items.length ? items.map((r) => {
+        const keep = h("button", { type: "button", class: "pri", text: "Still needed", onclick: () => void change(keep, "POST", "/admin/review/keep", { group: r.group, user_id: r.user_id }, false, "Kept") });
+        return h("article", { class: "list-row row" },
+          h("div", { class: "grow" }, h("b", { text: txt(r.name || personName(r.user_id)) }),
+            p(txt(r.group) + " · " + (r.ends_ms ? endsWords(r.ends_ms) : "no end date, not checked for a while"))),
+          keep, remove("Remove", "DELETE", "/admin/groups/" + enc(r.group) + "/members/" + enc(r.user_id)));
+      }) : p("Nothing to review."));
+  }
+  // Increases the owner has not answered yet: the admin can withdraw one, or (with a written reason) apply it anyway.
+  function waitingChanges() {
+    const list = (data.changes ?? []).filter((c) => c.state === "pending");
+    if (!list.length) return null;
+    return h("section", { class: "card", id: "waiting-changes" }, h("h3", { text: "Waiting for approval" }),
+      p("These are not in effect yet. The owner of the workspace has to approve them."),
+      list.map((c) => {
+        const owners = [...new Set(c.approvals.map((a) => txt(a.owner_name ?? "the workspace owner")))].join(", ");
+        const names = c.approvals.map((a) => a.workspace_name ?? "a workspace").join(" and ");
+        const open = overriding.has(c.id);
+        const reason = h("input", { id: "override-reason", maxlength: 200, autocomplete: "off", "aria-label": "Reason", value: reasons[c.id] ?? "",
+          oninput: (ev) => { reasons[c.id] = ev.target.value; apply.disabled = reasons[c.id].trim().length < 3; } });
+        const apply = h("button", { type: "button", class: "danger", text: "Apply without approval", disabled: (reasons[c.id] ?? "").trim().length < 3,
+          onclick: () => void change(apply, "POST", "/admin/changes/" + enc(c.id) + "/override", { reason: reasons[c.id].trim() }, false, "Applied without approval") });
+        const cancel = h("button", { type: "button", text: "Cancel", onclick: () => void change(cancel, "POST", "/admin/changes/" + enc(c.id) + "/cancel", {}, false, "Cancelled") });
+        return h("article", { class: "list-row change" },
+          h("b", { text: sentence(c, names) }),
+          p("Waiting for " + owners + (c.approvals.some((a) => a.stale) ? ". Access changed since it was asked, so it will be closed: ask again." : ".")),
+          h("div", { class: "row" }, cancel,
+            open ? null : h("button", { type: "button", text: "Override", onclick: () => { overriding.add(c.id); draw(); } })),
+          open ? h("div", { class: "banner warn", role: "group", "aria-label": "Override" },
+            p(owners + " will see that this was applied without their approval."),
+            field("Reason (required)", reason),
+            h("div", { class: "row" }, apply, h("button", { type: "button", text: "Keep waiting", onclick: () => { overriding.delete(c.id); draw(); } }))) : null);
+      }));
   }
   function access() {
     const workspace = select(data.workspaces.filter((w) => w.mode === "full").map((w) => [w.workspace_id, w.name ?? w.workspace_id]));
     const group = select(data.groups.filter((g) => g.name !== "hub-admin").map((g) => [g.name, g.name]));
     const role = select(["read", "edit", "admin"].map((r) => [r, roleName(r)]));
-    return [h("h2", { text: "Access" }), p("Groups grant access to full workspaces. Selective workspaces accept only their owner. Hub administrators manage every full workspace."),
+    return [h("h2", { text: "Access" }), personReachView(d, data.users), p("Groups give access to workspaces that share everything. Workspaces that share only what their owner chooses stay with their owner. Hub administrators manage every workspace that shares everything."),
       table(["Group", ...data.workspaces.map((w) => workspaceName(w.workspace_id)), "Members"], data.groups.map((g) => [txt(g.name),
-        ...data.workspaces.map((w) => w.mode === "selective" ? "Personal · owner only" : g.name === "hub-admin" ? "Admin" : roleName(data.grants.find((x) => x.workspace_id === w.workspace_id && x.group === g.name)?.role ?? "No access")),
+        ...data.workspaces.map((w) => w.mode === "selective" ? (w.owner_alias === d.self ? "Personal · only you" : "Personal · only the owner") : g.name === "hub-admin" ? "Admin" : roleName(data.grants.find((x) => x.workspace_id === w.workspace_id && x.group === g.name)?.role ?? "No access")),
         String(g.members.length)]), "Grants overview"),
       h("section", { class: "card" }, h("h3", { text: "Grant access" }),
         form("Grant access", [field("Workspace", workspace), field("Group", group), field("Permission", role)], "PUT", "/admin/grants",
           () => ({ workspace_id: workspace.value, group: group.value, role: role.value }))),
-      ...data.workspaces.map((w) => h("section", { class: "workspace-detail" }, h("h3", { text: workspaceName(w.workspace_id) }),
-        w.mode === "selective" ? p("Personal · owner only") : table(["Group", "Permission", "Members", "Action"],
+      reviewAccess(),
+      waitingChanges(),
+      h("div", { class: "ws-segment", role: "group", "aria-label": "Show access" }, ["workspace", "group"].map((by) => h("button", {
+        type: "button", id: "access-by-" + by, text: by === "workspace" ? "By workspace" : "By group", "aria-pressed": String(accessBy === by),
+        onclick: () => { accessBy = by; draw(); },
+      }))),
+      ...(accessBy === "group" ? byGroup() : byWorkspace())];
+  }
+  function byWorkspace() {
+    return data.workspaces.map((w) => h("section", { class: "workspace-detail" }, h("h3", { text: workspaceName(w.workspace_id) }),
+        w.mode === "selective" ? p("Personal · only the owner") : table(["Group", "Permission", "Members", "Action"],
           [...data.groups.filter((g) => g.name === "hub-admin").map((g) => [txt(g.name), "Admin", groupMembers(g.name), "Built in"]),
             ...data.grants.filter((g) => g.workspace_id === w.workspace_id).map((g) => [txt(g.group), roleName(g.role), groupMembers(g.group),
-              remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: w.workspace_id, group: g.group })])], "Workspace permissions")))];
+              remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: w.workspace_id, group: g.group })])], "Workspace permissions")));
+  }
+  function byGroup() {
+    const full = data.workspaces.filter((w) => w.mode === "full");
+    return data.groups.map((g) => h("section", { class: "group-detail", "data-group": g.name }, h("h3", { text: txt(g.name) }),
+      p(g.members.length ? "Members: " + groupMembers(g.name) : "No members yet"),
+      g.name === "hub-admin"
+        ? table(["Workspace", "Permission", "Action"], full.map((w) => [workspaceName(w.workspace_id), "Admin", "Built in"]), "What this group can open")
+        : data.grants.some((x) => x.group === g.name)
+          ? table(["Workspace", "Permission", "Action"], data.grants.filter((x) => x.group === g.name).map((x) => [workspaceName(x.workspace_id), roleName(x.role),
+            remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: x.workspace_id, group: g.name })]), "What this group can open")
+          : p("Cannot open any workspace yet")));
   }
   // "Connect a workspace": one click mints a single-use invite and shows ONE link (docs/connect-link.md).
   const connectBox = h("div", { "aria-live": "polite" });
@@ -207,10 +415,10 @@ export function adminView(d) {
           p(w.left_ms == null ? "Left on an unknown date" : "Left on " + new Date(w.left_ms).toLocaleDateString()),
           remove("Remove", "DELETE", "/admin/workspaces/" + w.workspace_id))
         : h("article", { class: "card" },
-      h("div", { class: "row" }, h("h3", { class: "grow", text: workspaceName(w.workspace_id) }), chip(w.mode === "full" ? "Full" : "Selective", w.mode === "full" ? "full" : "sel")),
+      h("div", { class: "row" }, h("h3", { class: "grow", text: workspaceName(w.workspace_id) }), chip(w.mode === "full" ? "Shares everything" : "Shares only what you choose", w.mode === "full" ? "full" : "sel")),
       p(w.mode === "full" ? "Hub can read everything" : "Hub can read shared items and summaries"),
-      chip((w.online ?? (w.status === "bound" || w.status === "online")) ? "Connection online" : "Connection offline", (w.online ?? (w.status === "bound" || w.status === "online")) ? "ok" : "warn"),
-      p("Binding: " + txt(w.status ?? "unknown")), w.mode === "selective" ? p("Personal · owner only · " + personName(w.owner_alias)) : null)),
+      chip((w.online ?? (w.status === "bound" || w.status === "online")) ? "Connected · online" : "Connected · offline", (w.online ?? (w.status === "bound" || w.status === "online")) ? "ok" : "warn"),
+      w.mode === "selective" ? p("Personal · only " + (w.owner_alias === d.self ? "you" : "the owner") + " · " + personName(w.owner_alias)) : null)),
       !data.workspaces.length ? p("No workspaces yet.") : null];
   }
   const CAPS = [["choose_model", "Choose the AI model"], ["credential", "Use stored credentials"], ["git_push", "Push code to git"], ["network", "Use the network"], ["pty", "Run terminal sessions"], ["serve_http", "Serve web pages"], ["spawn_agent", "Start other agents"]];
@@ -413,10 +621,12 @@ export function adminView(d) {
       }), "Recent access changes"), !records.length ? p("No access changes recorded.") : null];
   }
   function draw() {
-    panels.replaceChildren(...[people, access, workspaces, marketplaces, audit].map((view, i) => h("section", {
+    replaceContent(panels, [people, access, workspaces, marketplaces, audit].map((view, i) => h("section", {
       id: "admin-panel-" + i, role: "tabpanel", "aria-labelledby": "admin-tab-" + i, hidden: i !== selected,
     }, view())));
   }
   void load();
-  return [h("h1", { text: "Admin" }), message, tabs, panels];
+  const view = [h("h1", { text: "People" }), message, tabs, panels];
+  view.reload = load;
+  return view;
 }

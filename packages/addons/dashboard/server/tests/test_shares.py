@@ -8,7 +8,8 @@ import pytest
 from conftest import ORIGIN
 from pydantic import ValidationError
 
-from orch_dashboard import handoff, hostlink
+from orch_dashboard import hostlink
+from orch_dashboard import signing as handoff
 from orch_dashboard.errors import HostError, allowed_error
 from orch_dashboard.shares import listing, sent, share_row
 
@@ -104,6 +105,8 @@ def host(gateway, monkeypatch):
     fake.answers["ticket.query"] = {"rows": [{"key": "DEMO-1", "title": "Fix billing"}], "next_page": None}
     monkeypatch.setattr(gateway, "call", lambda ws, op, args=None: fake.call(op, args))
     monkeypatch.setattr(gateway, "enabled", lambda ws: fake)
+    monkeypatch.setattr(gateway, "new_link", lambda ws: fake)  # the network ops use a link of their own
+    fake.close = lambda: None
     return fake
 
 
@@ -115,6 +118,7 @@ def test_the_publish_ops_are_ours_under_cap_publish_1():
     assert "publish/1" in hostlink.CAPS
     for op in (
         "publish.list",
+        "publish.stage_upload",
         "publish.prepare",
         "publish.send",
         "publish.revoke",
@@ -200,10 +204,76 @@ def test_prepare_is_a_write_with_the_browsers_idem_and_nothing_leaves(client, to
     assert got["server"] == "http://127.0.0.1:8103" and "words" not in res.text and "needs" not in res.text
 
 
+UPLOADED = {"upload_id": "pu_0123456789abcdef0123456789abcdef", "name": "notes.txt", "size": 5, "sha256": "cd" * 32}
+
+
+def test_upload_hands_one_file_to_the_host_and_answers_only_plain_fields(client, token, stub, host):
+    host.answers["publish.stage_upload"] = {**UPLOADED, "extra": "x", "path": "/secret"}
+    body = {"name": "notes.txt", "data": "aGVsbG8=", "idem": IDEM}
+    res = client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert host.calls[-1] == ("publish.stage_upload", {"name": "notes.txt", "b64": "aGVsbG8="}, True, IDEM)
+    assert res.json() == UPLOADED and "secret" not in res.text
+
+
+def test_an_upload_answer_without_an_id_is_an_error(client, token, stub, host):
+    host.answers["publish.stage_upload"] = {"name": "notes.txt"}
+    body = {"name": "notes.txt", "data": "aGVsbG8=", "idem": IDEM}
+    assert client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token)).status_code >= 500
+
+
+def test_prepare_names_picked_files_and_artifacts_together(client, token, stub, host):
+    host.answers["publish.prepare"] = PREPARED
+    up = UPLOADED["upload_id"]
+    body = {"ticket": "DEMO-1", "artifacts": ["report.md"], "uploads": [up], "idem": IDEM}
+    res = client.post(url(stub, "/shares/prepare"), json=body, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    args = host.calls[-1][1]
+    assert args["artifacts"] == ["report.md"] and args["uploads"] == [up]
+    only = {"ticket": "DEMO-1", "uploads": [up], "idem": IDEM}
+    assert client.post(url(stub, "/shares/prepare"), json=only, headers=hdr(token)).status_code == 200
+    assert "artifacts" not in host.calls[-1][1] and host.calls[-1][1]["uploads"] == [up]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"name": "n.txt", "data": "aGVsbG8="},  # no idem
+        {"name": "../n.txt", "data": "aGVsbG8=", "idem": IDEM},
+        {"name": ".hidden", "data": "aGVsbG8=", "idem": IDEM},
+        {"name": "n.txt", "data": "not base64 !!", "idem": IDEM},
+        {"name": "n.txt", "data": "", "idem": IDEM},
+        {"name": "n.txt", "data": "A" * (1_398_104 + 4), "idem": IDEM},  # over the cap: never reaches the host
+        {"name": "n.txt", "data": "aGVsbG8=", "idem": IDEM, "path": "/etc/passwd"},
+        {"name": "n.txt", "data": "aGVsbG8=", "idem": IDEM, "ticket": "DEMO-1"},
+        {"name": "n.txt", "data": ["aGVsbG8="], "idem": IDEM},
+        {"names": ["a.txt", "b.txt"], "data": "aGVsbG8=", "idem": IDEM},  # one file per call
+    ],
+)
+def test_upload_bodies_are_closed(client, token, stub, host, body):
+    assert client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token)).status_code == 400
+    assert host.calls == []
+
+
+def test_a_body_far_over_the_cap_is_refused_before_it_is_read(client, token, stub, host):
+    body = {"name": "n.txt", "data": "A" * 3_000_000, "idem": IDEM}
+    assert client.post(url(stub, "/shares/upload"), json=body, headers=hdr(token)).status_code == 413
+    assert host.calls == []
+
+
+def test_upload_needs_a_session_and_the_right_origin(client, stub, host):
+    body = {"name": "n.txt", "data": "aGVsbG8=", "idem": IDEM}
+    assert client.post(url(stub, "/shares/upload"), json=body).status_code in (401, 403)
+    assert host.calls == []
+
+
 @pytest.mark.parametrize(
     "path,body",
     [
         ("prepare", {"ticket": "DEMO-1", "artifacts": ["a.md"]}),
+        ("prepare", {"ticket": "DEMO-1", "uploads": ["pu_xyz"], "idem": IDEM}),
+        ("prepare", {"ticket": "DEMO-1", "uploads": ["pu_" + "0" * 32] * 2, "idem": IDEM}),
+        ("prepare", {"ticket": "DEMO-1", "uploads": ["pu_" + "0" * 32], "artifacts": ["x.md"] * 20, "idem": IDEM}),
         ("prepare", {"ticket": "DEMO-1", "artifacts": [], "idem": IDEM}),
         ("prepare", {"ticket": "DEMO-1", "artifacts": ["../x"], "idem": IDEM}),
         ("prepare", {"ticket": "DEMO-1", "artifacts": [".hidden"], "idem": IDEM}),
@@ -363,7 +433,6 @@ def test_setup_is_a_settings_change_naming_both_addresses():
         ("http://evil.example", "https://ok.example"),  # http is for this computer only
         ("https://Upper.example", "https://ok.example"),
         ("https://ok.example/path", "https://other.example"),
-        ("https://ok.example", "https://ok.example"),  # one address for both
         ("ftp://ok.example", "https://other.example"),
         ("https://ok.example", ""),
         ("https://user@ok.example", "https://other.example"),
@@ -373,6 +442,11 @@ def test_setup_is_a_settings_change_naming_both_addresses():
 def test_setup_refuses_addresses_core_would_refuse(server, share):
     with pytest.raises(ValidationError):
         handoff.PublishSetup(action="publish_setup", server=server, share=share)
+
+
+def test_setup_accepts_one_address_for_both():
+    one = handoff.PublishSetup(action="publish_setup", server="https://ok.example", share="https://ok.example")
+    assert one.server == one.share
 
 
 def test_setup_accepts_https_and_loopback():
@@ -505,3 +579,139 @@ def test_a_transient_error_keeps_the_last_known_addon_state():
     off = Known([{"name": "publish", "state": "disabled"}])
     assert Gateway.addon_on(off, "publish") is False
     assert Gateway.addon_on(down, "publish") is False
+
+
+def test_a_switch_session_cannot_register_and_the_route_takes_no_address(client, auth, stub, host):
+    from orch_dashboard.policy import LOOPBACK
+
+    switch = auth.open_switch(LOOPBACK, stub.ws)["token"]
+    res = client.post(url(stub, "/shares/register"), json={"idem": IDEM}, headers=hdr(switch))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "session.readonly"
+    assert not [c for c in host.calls if c[0] == "publish.register"]
+
+
+def test_publish_addresses_are_checked_like_the_host_does(token):
+    from pydantic import ValidationError
+
+    for server, share in (
+        ("https://a..example", "https://b.example"),
+        ("https://a.example:99999", "https://b.example"),
+    ):
+        with pytest.raises(ValidationError):
+            handoff.PublishSetup(action="publish_setup", server=server, share=share)
+
+
+# -- apps (#1457): the signature that lets an app go live -------------------------------------------------------------
+
+APP_STAGED = "pa_" + "e" * 32
+
+
+def test_app_release_signs_exactly_the_hosts_words_for_this_staged_release():
+    action = handoff.AppRelease(action="app_release", key="DEMO-1", staged_id=APP_STAGED)
+    assert handoff.host_call(action) == ("app.release", {"staged_id": APP_STAGED})
+    check = handoff.expected(action)
+    text = "\n".join(
+        [handoff.APP_MARK, "Ticket: DEMO-1", "Version: 2", f"Staged release: {APP_STAGED}", f"App id: {'ab' * 16}"]
+    )
+    assert check([{"type": "log.added", "text": text}]) is True
+    assert check([{"type": "log.added", "text": text.replace(APP_STAGED, "pa_" + "f" * 32)}]) is False
+    assert check([{"type": "log.added", "text": "hello\n" + text}]) is False  # does not start with the mark
+    assert check([{"type": "log.added", "text": text.replace(handoff.APP_MARK, handoff.PUBLISH_MARK)}]) is False
+    assert check([{"type": "ticket.updated", "text": text}]) is False
+    assert check([{"type": "log.added", "text": text}, {"type": "log.added", "text": text}]) is False
+    assert check([{"type": "log.added"}]) is False
+
+
+def test_the_app_mark_is_the_cores_and_a_share_note_is_no_app_release():
+    from orch.publishclient.approval import APP_MARK, MARK
+
+    assert handoff.APP_MARK == APP_MARK != MARK
+
+
+@pytest.mark.parametrize("staged", ["pa_xyz", "pa_" + "A" * 32, STAGED, SID, "../x"])
+def test_app_release_needs_a_real_staged_release_id(staged):
+    with pytest.raises(ValidationError):
+        handoff.AppRelease(action="app_release", key="DEMO-1", staged_id=staged)
+
+
+def test_app_release_is_a_click_op_in_core():
+    from orch.click.protocol import op_class
+
+    assert op_class("app.release") == "click"
+
+
+def test_prepare_passes_work_folder_names_and_never_a_path(client, token, stub, host):
+    host.answers["publish.prepare"] = PREPARED
+    body = {"ticket": "DEMO-1", "workfiles": ["hello.txt"], "idem": IDEM}
+    assert client.post(url(stub, "/shares/prepare"), json=body, headers=hdr(token)).status_code == 200
+    assert host.calls[-1][1] == {"ref": "DEMO-1", "workfiles": ["hello.txt"], "kind": "secret", "days": 7}
+    n = len(host.calls)
+    for bad in (["../x"], ["a/b"], [".hid"], ["a.txt", "A.TXT"], [f"f{i}.txt" for i in range(21)], []):
+        res = client.post(
+            url(stub, "/shares/prepare"), json={"ticket": "DEMO-1", "workfiles": bad, "idem": IDEM}, headers=hdr(token)
+        )
+        assert res.status_code == 400, bad
+    both = {"ticket": "DEMO-1", "artifacts": ["A.txt"], "workfiles": ["a.txt"], "idem": IDEM}
+    assert client.post(url(stub, "/shares/prepare"), json=both, headers=hdr(token)).status_code == 400
+    assert len(host.calls) == n
+
+
+class SharedLink(Host):
+    """Like the real HostLink: one request at a time, the lock held until the answer comes (hostlink.py `call`)."""
+
+    def __init__(self, started=None, release=None):
+        super().__init__()
+        import threading
+
+        self.lock = threading.Lock()
+        self.started, self.release = started, release
+
+    def call(self, op, args=None, write=False, idem=None, **kw):
+        with self.lock:
+            if op == "publish.send" and self.release:  # the slow network part, inside the link's lock
+                self.started.set()
+                assert self.release.wait(20)
+                return SENT
+            return super().call(op, args, write, idem, **kw)
+
+
+def test_a_slow_send_never_holds_the_link_the_workspace_reads_use(client, token, stub, gateway, monkeypatch):
+    """W34: while the hub is cut a send waits in its backoff for tens of seconds. It must not hold the workspace's
+    shared host link: every other read (and with the link's 30 s timeout, the closing of it) waited behind it."""
+    import threading
+    import time
+
+    started, release = threading.Event(), threading.Event()
+    shared = SharedLink(started, release)
+    shared.answers["publish.list"] = LIST
+    shared.answers["ticket.query"] = {"rows": [{"key": "DEMO-1", "title": "Fix billing"}], "next_page": None}
+    monkeypatch.setattr(gateway, "call", lambda ws, op, args=None: shared.call(op, args))
+    monkeypatch.setattr(gateway, "enabled", lambda ws: shared)
+
+    class OwnLink(Host):
+        def call(self, op, args=None, write=False, idem=None, **kw):
+            started.set()
+            assert release.wait(20)
+            return SENT
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(gateway, "new_link", lambda ws: OwnLink())
+    sending = []
+    sender = threading.Thread(
+        target=lambda: sending.append(
+            client.post(url(stub, "/shares/send"), json={"staged_id": STAGED, "idem": IDEM}, headers=hdr(token))
+        )
+    )
+    sender.start()
+    try:
+        assert started.wait(10)
+        began = time.monotonic()
+        res = client.get(url(stub, "/shares"), headers=hdr(token))
+        assert res.status_code == 200, res.text
+        assert time.monotonic() - began < 5
+    finally:
+        release.set()
+        sender.join(20)
+    assert sending[0].status_code == 200 and sending[0].json()["link"] == LINK

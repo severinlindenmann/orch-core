@@ -68,6 +68,7 @@ def test_the_signer_binds_task_edit_to_the_task_list(human, served):
 
 
 def test_a_done_tasks_command_and_criteria_cannot_be_edited_by_a_person_either(human, served):
+    served.lab.ws.plan_gate_off()  # r10-P02: no plan approval before the build in this test
     _, key = human.ticket()
     human.run("ac.add", {"ref": key, "text": "first"})
     human.run("ac.add", {"ref": key, "text": "second"})

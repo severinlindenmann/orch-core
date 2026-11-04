@@ -336,7 +336,14 @@ def build_p4(
         "applies": "all",
         "independent": True,
     }
-    gr = {"type": "grant.requested", "log": W, "scope": "workable", "verbs": "agent", "hours": 72}
+    gr = {
+        "type": "grant.requested",
+        "log": W,
+        "handoff": "01J9ZP00000000000000000001",
+        "scope": "workable",
+        "verbs": "agent",
+        "hours": 72,
+    }
     mal = {"error": "malformed"}
     act5(
         "action_grant_requested_by_edit",
@@ -349,6 +356,8 @@ def build_p4(
     act5("action_grant_requested_by_read", gr, "read", {"error": "forbidden_role"})
     act5("action_grant_requested_on_ticket_log", {**gr, "log": TICKET}, "edit", {"error": "not_custodial"})
     for nm, a, why in (
+        ("without_handoff", {k: v for k, v in gr.items() if k != "handoff"}, "required local record id"),
+        ("bad_handoff", {**gr, "handoff": "hr_01J9ZP00000000000000000001"}, "grant ids are ULIDs"),
         ("hours_over", {**gr, "hours": 169}, "1-168 h"),
         ("hours_zero", {**gr, "hours": 0}, ""),
         ("verbs_unsorted", {**gr, "verbs": ["task.done", "log"]}, "sorted unique"),
@@ -380,6 +389,42 @@ def build_p4(
     act5("action_device_excluded_by_edit", dx, "edit", {"error": "forbidden_role"})
     act5("action_device_excluded_bad_reason", {**dx, "reason": "stolen"}, "admin", mal)
     act5("action_device_excluded_person_id", {**dx, "device": "p_" + "c" * 32}, "admin", mal)
+    # FB15 (§8.8b): the owner's ask to turn an add-on on (the host answers with a host-actor addon.granted)
+    ar = {
+        "type": "addon.requested", "log": W, "name": "wiki", "version": "1.2.0", "package_sha256": HASH_A,
+        "capabilities": ["network", "serve_http"], "handoff": "hr_01J9ZP0000000000000000HND1",
+    }  # fmt: skip
+    rt = {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}
+    act5(
+        "action_addon_requested_by_admin",
+        ar,
+        "admin",
+        ok("addon.requested"),
+        "the host answers only when its own prepared hand-off request `handoff` is live and carries these exact terms; "
+        "fields, sections and artifact_kinds are the host's, derived from the package the digest names",
+    )
+    act5("action_addon_requested_with_runtime", {**ar, "runtime": rt}, "admin", ok("addon.requested"))
+    act5("action_addon_requested_empty_capabilities", {**ar, "capabilities": []}, "admin", ok("addon.requested"))
+    act5("action_addon_requested_by_edit", ar, "edit", {"error": "forbidden_role"})
+    act5("action_addon_requested_on_ticket_log", {**ar, "log": TICKET}, "admin", {"error": "not_custodial"})
+    for nm, a, why in (
+        ("no_handoff", {k: v for k, v in ar.items() if k != "handoff"}, "the prepared request it is for"),
+        ("handoff_not_an_id", {**ar, "handoff": "hr_x"}, ""),
+        ("bad_name", {**ar, "name": "Wiki"}, "core add-on name grammar"),
+        *((f"reserved_name_{n}", {**ar, "name": n}, "a name core's schema reserves") for n in _core_reserved_names()),
+        ("bad_version", {**ar, "version": "1.2"}, "strict semver"),
+        ("bad_digest", {**ar, "package_sha256": "abc"}, ""),
+        ("capabilities_unsorted", {**ar, "capabilities": ["serve_http", "network"]}, "sorted unique"),
+        ("capability_unknown", {**ar, "capabilities": ["root"]}, "the closed capability list"),
+        ("runtime_extra_key", {**ar, "runtime": {**rt, "cmd": "sh"}}, "exact runtime object"),
+        ("runtime_zero_packages", {**ar, "runtime": {**rt, "packages": 0}}, ""),
+        ("smuggles_fields", {**ar, "fields": {}}, "declarations are the host's, from the digest-bound package"),
+        ("smuggles_sections", {**ar, "sections": []}, "declarations are the host's"),
+        ("smuggles_request", {**ar, "request": "01J9ZP0000000000000000REQ1"}, "only the host writes `request`"),
+    ):
+        act5(f"action_addon_requested_{nm}", a, "admin", mal, why)
+    act5("action_addon_granted_ws_not_custodial", {"type": "addon.granted", "log": W}, "admin",
+         {"error": "not_custodial"}, "the host appends it itself, naming the addon.requested it answers")  # fmt: skip
     pc = {"type": "policy.changed", "log": W, "gates": {"code": pol}}
     act5("action_policy_changed_ws_by_admin", pc, "admin", ok("policy.changed"))
     act5("action_policy_changed_ws_by_edit", pc, "edit", {"error": "forbidden_role"})
@@ -407,7 +452,6 @@ def build_p4(
     act5("action_settings_changed_by_admin", {**st, "set": {"grant_hours": 72}}, "admin", ok("settings.changed"))
     act5("action_settings_changed_by_edit", {**st, "set": {"grant_hours": 72}}, "edit", {"error": "forbidden_role"})
     for nm, v, why in (
-        ("sign_methods", {"sign_methods": ["terminal"]}, "how signatures are made stays off the channel in V3"),
         ("repos", {"repos": {"api": {"path": "/tmp/x"}}}, "host paths are not channel-settable"),
         ("models", {"models": None}, "not channel-settable in V3"),
         ("grant_hours_over", {"grant_hours": 169}, ""),
@@ -822,10 +866,13 @@ def build_p4(
          "a ticket override through a channel")  # fmt: skip
     grp = EVENT_PAYLOADS["grant.requested"][1]
     for nm, typ, pl, why in (
+        ("grant_requested_without_handoff", "grant.requested", {k: v for k, v in grp.items() if k != "handoff"},
+         "the signed request must name the pending grant record"),
+        ("grant_requested_with_addon_handoff", "grant.requested", {**grp, "handoff": "hr_" + grp["handoff"]},
+         "an add-on hand-off id cannot name a pending grant record"),
         ("grant_requested_with_secret_hash", "grant.requested", {**grp, "secret_hash": HASH_A},
          "the grant secret is made by the host after admission, never by the hub"),
         ("grant_requested_with_grant_id", "grant.requested", {**grp, "grant": "gr_01J9ZP0000000000000000GRT1"}, ""),
-        ("settings_with_sign_methods", "settings.changed", {"set": {"sign_methods": ["hub", "terminal"]}}, ""),
         ("policy_with_factor", "policy.changed",
          {"gates": {"plan": {**pcl["gates"]["plan"], "factor": "passkey"}}}, ""),
     ):  # fmt: skip
@@ -1853,6 +1900,43 @@ def build_p4(
         {"error": "malformed"},
         "no selective workspace-log types",
     )
+    # ---- P02: the optional ticket `description` and the signed `audience` (§10.2b)
+    U1, U2 = "1" * 32, "2" * 32
+    aud = {"users": [U1, U2], "groups": ["team-a"]}
+    shr(
+        "share_item_with_audience_and_description",
+        share_body(share_item(item_kind="ticket", content={**tk, "description": "Line one\nLine two"}, audience=aud)),
+        okv(share_item(item_kind="ticket", content={**tk, "description": "Line one\nLine two"}, audience=aud)),
+        "additive: a ticket item may carry its description and the audience that may read it at the hub",
+    )
+    for nm, kw, why in (
+        ("audience_on_needs_you", {"audience": aud}, "only a ticket item has an audience"),
+        (
+            "audience_empty",
+            {"item_kind": "ticket", "content": tk, "audience": {"users": [], "groups": []}},
+            "one entry",
+        ),
+        (
+            "audience_unsorted",
+            {"item_kind": "ticket", "content": tk, "audience": {"users": [U2, U1], "groups": []}},
+            "",
+        ),
+        (
+            "audience_bad_group",
+            {"item_kind": "ticket", "content": tk, "audience": {"users": [], "groups": ["Team A"]}},
+            "",
+        ),
+        ("audience_bad_user", {"item_kind": "ticket", "content": tk, "audience": {"users": ["zz"], "groups": []}}, ""),
+        ("audience_extra_key", {"item_kind": "ticket", "content": tk, "audience": {**aud, "roles": []}}, "exact keys"),
+        ("description_on_question", {"item_kind": "question", "content": {**qn, "description": "x"}}, "ticket only"),
+        (
+            "description_control_char",
+            {"item_kind": "ticket", "content": {**tk, "description": "a\u0007b"}},
+            "text rule",
+        ),
+        ("description_empty", {"item_kind": "ticket", "content": {**tk, "description": ""}}, "1..4000 bytes"),
+    ):
+        shr(f"share_item_{nm}", share_body(share_item(**kw)), {"error": "malformed"}, why)
 
     def sel(name: str, action: dict[str, Any], expect: dict[str, Any], note: str = "", item: Any = None) -> None:
         case(name, "selective_build", {"item": item or it_f1, "action": action}, expect, 4, note)
@@ -2094,6 +2178,29 @@ def build_p4(
     sync(
         "log_sync_proj_extra_key", [ws_p, page(TICKET, TK_LINES, proj={**pj, "questions": {}})], {"error": "malformed"}
     )
+    waiting = ["plan", "verify"]
+    sync(
+        "log_sync_proj_waiting",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "waiting": waiting})],
+        {
+            "ok": {
+                "workspace": {"seq": 2, "head": hw},
+                TICKET: {"seq": 2, "head": ht},
+                "proj": {TICKET: {**pj, "waiting": waiting}},
+            }
+        },
+        "R14b: optional `waiting`: the gates the host's needs rule says wait now (sorted, distinct, known gates)",
+    )
+    for name, bad in (
+        ("unsorted", ["verify", "plan"]),
+        ("duplicate", ["plan", "plan"]),
+        ("unknown_gate", ["weird"]),
+    ):
+        sync(
+            f"log_sync_proj_waiting_{name}",
+            [ws_p, page(TICKET, TK_LINES, proj={**pj, "waiting": bad})],
+            {"error": "malformed"},
+        )
     sync(
         "log_sync_proj_bad_status",
         [ws_p, page(TICKET, TK_LINES, proj={**pj, "status": "waiting"})],
@@ -2313,3 +2420,13 @@ def build_p4(
 
 __all__ = ["build_p4"]
 _ = (resign, WS_B)
+
+
+def _core_reserved_names() -> list[str]:
+    """The add-on names core reserves, read from core's own schema file (monorepo; generation time only), so a vector
+    exists for each and a drift between the two lists fails the replay on one side."""
+    import json
+    from pathlib import Path
+
+    p = Path(__file__).resolve().parents[4] / "core/src/orch/schema/schemas/common.json"
+    return list(json.loads(p.read_text())["$defs"]["addonName"]["not"]["enum"])

@@ -17,8 +17,9 @@ import { useElementWidth } from '@/lib/useElementWidth'
 import { cn } from '@/lib/utils'
 import { CardFields, People, ProgressBar, type BoardPeople } from '../board/TicketCard'
 import { PriorityMarker, TypeIcon } from '../board/lib'
+import { useJustCreated } from '../new-ticket/justCreated'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups } from '../board/grouping'
-import { agentName, ago, statusLabel } from '../ticket/shared'
+import { Ago, agentName, statusLabel } from '../ticket/shared'
 import type { SortKey } from './search'
 
 export interface AddonColumn {
@@ -101,12 +102,16 @@ export function TicketsTable({
   const navigate = useNavigate()
   const { workspace } = useWorkspace()
   const hub = useHub(workspace?.id)
-  const hubShare = useQuery({ ...hubQueries.share(workspace?.id ?? ''), enabled: !!workspace && hubServed(workspace.id) && hub.data?.mode === 'selective' })
-  const showHub = hub.data?.mode === 'selective' && hubShare.data?.tickets_complete === true
+  const hubShare = useQuery({ ...hubQueries.share(workspace?.id ?? ''), enabled: !!workspace && hubServed(workspace.id) && (hub.data?.mode === 'selective' || hub.data?.mode === 'full') })
+  const showHub = (hub.data?.mode === 'selective' || hub.data?.mode === 'full') && hubShare.data?.tickets_complete === true
   const hubMark = (key: string) => <Badge variant="outline" data-testid={'ticket-hub-' + key} className={hubShare.data?.tickets.includes(key) ? 'border-chart-4/40 bg-chart-4/10 text-chart-4' : 'border-border bg-surface-2 text-text-muted'}>{hubShare.data?.tickets.includes(key) ? 'Shared' : 'Only here'}</Badge>
   // With Estimate on the list has its own Points column (the chip is not repeated in the add-on column).
   const hasPoints = estimateOn(workspace)
   const body = useRef<HTMLTableSectionElement>(null)
+  const fresh = useJustCreated() // the ticket just created: a short highlight and a "New" tag, scrolled into view
+  useEffect(() => {
+    if (fresh) [...(body.current?.rows ?? [])].find((r) => r.dataset.key === fresh)?.scrollIntoView?.({ block: 'nearest' })
+  }, [fresh])
   useEffect(() => {
     if (!focusKey) return
     const row = [...(body.current?.rows ?? [])].find((r) => r.dataset.key === focusKey)
@@ -137,7 +142,7 @@ export function TicketsTable({
         data-state={isSel ? 'selected' : undefined}
         onFocus={(e) => e.target === e.currentTarget && onFocus(t.key)}
         onClick={() => void navigate({ to: '/ticket/$key', params: { key: t.key } })}
-        className={cn('cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand', focusKey === t.key && 'bg-surface-2')}
+        className={cn('cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand', focusKey === t.key && 'bg-surface-2', fresh === t.key && 'bg-brand-soft transition-colors')}
       >
         {canSelect && (
           <TableCell className="px-1.5 py-1.5" onClick={(e) => e.stopPropagation()}>
@@ -153,6 +158,7 @@ export function TicketsTable({
         <TableCell className="px-1.5 py-1.5">
           <div className="truncate text-[13px] text-text" title={t.title}>
             {t.title}
+            {fresh === t.key && <span data-testid={'ticket-new-' + t.key} className="ml-2 rounded-full bg-brand-soft px-1.5 text-[10px] leading-4 font-medium text-brand-chip-text">New</span>}
           </div>
           {(t.labels.length > 0 || t.match) && (
             <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">
@@ -223,7 +229,7 @@ export function TicketsTable({
           </TableCell>
         )}
         <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
-          {ago(t.updated_at)}
+          <Ago at={t.updated_at} />
         </TableCell>
         {showHub && <TableCell className="px-1.5 py-1.5">{hubMark(t.key)}</TableCell>}
         {hasAddon && show('addon') && (
@@ -239,7 +245,6 @@ export function TicketsTable({
 
   return (
     <div ref={frame} className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-surface">
-      {hub.data?.mode === 'full' && <p data-testid="hub-all-tickets" className="border-b border-chart-4/40 bg-chart-4/10 p-3 text-sm text-chart-4">The hub can read every ticket here</p>}
       <Table aria-label="Tickets" className={cn('table-fixed', folded.size === 0 && 'min-w-[800px]')}>
         <TableHeader className="sticky top-0 z-10 bg-surface-2">
           <TableRow>

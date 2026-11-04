@@ -43,7 +43,8 @@ def offline(monkeypatch):
 
 @pytest.mark.parametrize(
     "argv",
-    [["share", "ps_" + "0" * 32], ["send", "ps_" + "0" * 32], ["revoke", "0" * 32], ["register"],
+    [["share", "ps_" + "0" * 32, "--yes"], ["send", "ps_" + "0" * 32], ["revoke", "0" * 32], ["register"],
+     ["extend", "0" * 32, "--days", "3"], ["password", "0" * 32],
      ["setup", "--server", SERVER, "--share", SHARE]],
 )  # fmt: skip
 def test_an_agent_can_not_share_send_revoke_register_or_set_up(offline, argv):
@@ -52,14 +53,16 @@ def test_an_agent_can_not_share_send_revoke_register_or_set_up(offline, argv):
 
 
 def test_an_agent_refusal_in_json(offline):
-    code, out = run(["share", "ps_" + "0" * 32], {"ORCH_GRANT": "gr_x"}, as_json=True)
+    code, out = run(["share", "ps_" + "0" * 32, "--yes"], {"ORCH_GRANT": "gr_x"}, as_json=True)
     assert code == 3 and json.loads(out)["code"] == "op.not_allowed"
 
 
 @pytest.mark.parametrize(
     "argv",
     [[], ["bogus"], ["prepare"], ["prepare", "TST-0001"], ["share"], ["share", "a", "b"], ["revoke"], ["discard"],
-     ["setup"], ["setup", "--server", SERVER], ["list", "a", "b"], ["prepare", "TST-0001", "a.md", "--days", "x"]],
+     ["setup"], ["setup", "--server", SERVER], ["list", "a", "b"], ["extend"], ["extend", "a" * 32],
+     ["extend", "a" * 32, "--days", "0"], ["extend", "a" * 32, "--days", "31"], ["password"], ["password", "a", "b"],
+     ["prepare", "TST-0001", "a.md", "--days", "x"]],
 )  # fmt: skip
 def test_a_malformed_command_prints_the_usage_and_touches_nothing(offline, argv):
     code, out = run(argv, {})
@@ -92,12 +95,12 @@ def test_setup_and_share_stop_before_anything_when_there_is_no_terminal(monkeypa
     monkeypatch.setattr(publish, "_call", never)
     for argv in (
         ["setup", "--server", SERVER, "--share", SHARE],
-        ["share", "ps_" + "0" * 32],
+        ["share", "ps_" + "0" * 32, "--yes"],
         ["send", "ps_" + "0" * 32],
     ):
         code, out = run(argv, {})
-        assert code == 5 and "no terminal" in out, argv
-    assert "nothing was signed" in run(["share", "ps_" + "0" * 32], {})[1]
+        assert code in (3, 5) and "no terminal" in out, argv
+    assert "nothing was signed" in run(["share", "ps_" + "0" * 32, "--yes"], {})[1]
 
 
 class Rec:
@@ -115,6 +118,10 @@ class Rec:
         if op == "publish.send":
             return {"share_id": "a" * 32, "ticket": "TST-0001", "kind": "secret", "expires_at": "2026-10-25T10:00:00Z",
                     "link": f"{SHARE}/s/{'a' * 32}#t={self.token}", "view_limit": 0, "shown_once": True}  # fmt: skip
+        if op == "publish.password":
+            return {"share_id": args["share_id"], "password": "bada-fobu-gele-kimo-ruzi", "shown_once": True}
+        if op == "publish.extend":
+            return {"share_id": args["share_id"], "expires_at": "2026-10-25T10:00:00Z"}
         return {}
 
     def sign(self, target, op, args):
@@ -185,6 +192,21 @@ def test_prepare_passes_the_choices_and_says_nothing_left_the_computer(rec, monk
     assert rec.calls[-1][1]["views"] == 1 and rec.calls[-1][1]["kind"] == "once"
 
 
+@pytest.mark.parametrize("days", [1, 3, 7, 30])
+def test_prepare_accepts_every_number_of_days_the_dashboard_offers(rec, monkeypatch, days):
+    monkeypatch.setattr(publish, "_call", lambda t, op, args, env: rec.calls.append((op, args)) or {
+        "staged_id": "ps_" + "2" * 32, "files": [{}], "kind": "secret", "views": 0, "days": args["days"],
+        "ticket": "TST-0001"})  # fmt: skip
+    code, _ = run(["prepare", "TST-0001", "a.md", "--days", str(days)], {})
+    assert code == 0 and rec.calls[-1][1]["days"] == days
+
+
+@pytest.mark.parametrize("days", ["2", "0", "5", "31", "-1"])
+def test_prepare_with_other_days_names_the_allowed_values_before_the_host(offline, days):
+    code, out = run(["prepare", "TST-0001", "a.md", "--days", days], {})
+    assert code == 2 and "1, 3, 7 or 30 days" in out
+
+
 # -- the real thing: this CLI against a served workspace -------------------------------------------------------------
 
 
@@ -202,14 +224,14 @@ def test_prepare_list_and_discard_through_the_real_host(served, human_fx, monkey
     assert code == 0, out
     staged = re.search(r"ps_[0-9a-f]{32}", out).group(0)
     assert f"orch publish share {staged}" in out
-    code, out = run(["list"], env)
+    code, out = run(["list", "--local"], env)  # --local: this test is about nothing leaving the computer
     assert code == 0 and f"staged {staged} {key} secret 1 file(s) by you" in out
-    code, out = run(["list", "--json"], env)
+    code, out = run(["list", "--local", "--json"], env)
     data = json.loads(out)["data"]
     assert data["configured"] and data["staged"][0]["staged_id"] == staged
     code, out = run(["discard", staged], env)
     assert code == 0 and out.strip() == f"ok publish discarded {staged}"
-    assert run(["list"], env)[1].strip() == "nothing staged or shared"
+    assert run(["list", "--local"], env)[1].strip() == "nothing staged or shared"
     code, out = run(["discard", staged], env)
     assert code == 2 and out.startswith("error not_found")
     assert w.server.requests == []
@@ -331,6 +353,131 @@ def test_list_shows_local_end_times_and_json_keeps_utc(monkeypatch):
     assert "2026-10-25T16:40:06Z" in out
 
 
+def _shared_world(served, human_fx, monkeypatch):
+    from tests.host.test_publishing import shared
+
+    w = World(served, human_fx, monkeypatch)
+    w.addon()
+    w.configure()
+    key, data = shared(w, "report.md")
+    return w, key, data["share_id"]
+
+
+def test_list_shows_what_the_server_says_a_revoked_and_opened_share_is(served, human_fx, monkeypatch):
+    """run19 J07-01: opened once, then revoked at the hub. The CLI read only the local record: `live views=0`."""
+    w, key, share_id = _shared_world(served, human_fx, monkeypatch)
+    w.server.shares[share_id]["views"] = 1
+    w.server.shares[share_id]["state"] = "revoked"  # revoked on the server side: this computer's record still says live
+    env = person_env(w)
+    code, out = run(["list"], env)
+    assert code == 0, out
+    line = next(x for x in out.splitlines() if x.startswith("share "))
+    assert f"share {share_id} {key} secret revoked until" in line and line.endswith("views=1")
+    assert "live" not in line and "views=0" not in out
+    # the same host data the dashboard's `publish.list {live}` reads, handed over as it is
+    code, out = run(["list"], env, as_json=True)
+    assert json.loads(out) == {"ok": True, "data": ok_data(w.req("publish.list", {"live": True}))}
+    assert json.loads(out)["data"]["live"] is True
+    # --live is still accepted and means the same
+    assert run(["list", "--live"], env)[1] == run(["list"], env)[1]
+
+
+def ok_data(res):
+    assert res.get("ok") is not False and "error" not in res, res
+    return res["result"]["data"]
+
+
+def test_list_local_shows_this_computers_record_and_asks_no_server(served, human_fx, monkeypatch):
+    w, key, share_id = _shared_world(served, human_fx, monkeypatch)
+    w.server.shares[share_id]["views"] = 1
+    w.server.shares[share_id]["state"] = "revoked"
+    sent = len(w.server.requests)
+    code, out = run(["list", "--local"], person_env(w))
+    assert code == 0 and f"share {share_id} {key} secret live until" in out and out.rstrip().endswith("views=0")
+    assert not out.startswith("(")
+    assert len(w.server.requests) == sent
+
+
+def test_list_says_when_the_server_could_not_be_reached_or_the_hub_refused(served, human_fx, monkeypatch):
+    w, key, share_id = _shared_world(served, human_fx, monkeypatch)
+    env = person_env(w)
+    for _ in range(3):
+        w.server.fail.append(("GET", r"/shares$", 0, ""))
+    code, out = run(["list"], env)
+    first, _, rest = out.partition("\n")
+    assert code == 0 and first == "(the server could not be reached: this is this computer's last record)"
+    assert f"share {share_id} {key} secret live until" in rest and rest.rstrip().endswith("views=0")
+    w.server.fail.clear()  # whatever the retries left unused
+    for _ in range(3):
+        w.server.fail.append(("GET", r"/shares$", 401, "unknown_workspace"))
+    code, out = run(["list"], env)
+    assert code == 0 and out.startswith(
+        "(the hub has not switched on publishing for this workspace: this is this computer's last record)\n"
+    )
+    w.server.fail.clear()
+    code, out = run(["list"], env, as_json=True)  # the answer is back to normal: no note, same shape
+    assert json.loads(out)["data"]["live"] is True and not out.startswith("(")
+
+
+@pytest.mark.parametrize(
+    "why, text",
+    [
+        ("unreachable", "(the server could not be reached: this is this computer's last record)\n"),
+        (
+            "not_allowed",
+            "(the hub has not switched on publishing for this workspace: this is this computer's last record)\n",
+        ),
+        ("local", ""),
+    ],
+)
+def test_list_prints_one_line_for_a_live_false_answer(monkeypatch, why, text):
+    data = {"configured": True, "staged": [], "shares": [], "live": False, "why": why}
+    monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
+    monkeypatch.setattr(publish, "_call", lambda *a: data)
+    code, out = run(["list"], {})
+    assert code == 0 and out == text + "nothing staged or shared\n"
+    assert json.loads(run(["list"], {}, as_json=True)[1]) == {"ok": True, "data": data}
+
+
+def test_an_agent_or_a_refused_live_read_falls_back_to_the_local_record(monkeypatch):
+    from orch.ops.errors import OrchError
+
+    calls = []
+    row = {"id": "s1", "ticket": "T-1", "kind": "secret", "state": "live", "expires_at": "2026-10-25T16:40:06Z"}
+    local = {"configured": True, "staged": [], "shares": [{**row, "views": 0}]}
+
+    def call(target, op, args, env):
+        calls.append((op, args))
+        if args.get("live"):
+            raise OrchError("op.not_allowed", "a person looks at the server's numbers")
+        return local
+
+    monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
+    monkeypatch.setattr(publish, "_call", call)
+    code, out = run(["list"], {"ORCH_GRANT": "gr_x", "ORCH_SESSION": "s.1"})
+    first, _, rest = out.partition("\n")
+    assert code == 0 and first == "(not checked with the server: showing this computer's record)"
+    assert rest.startswith("share s1 T-1 secret live until ") and rest.rstrip().endswith("views=0")
+    assert calls == [("publish.list", {"live": True}), ("publish.list", {})]
+    code, out = run(["list", "--json"], {"ORCH_GRANT": "gr_x"})
+    assert json.loads(out) == {"ok": True, "data": local}
+    del calls[:]
+    code, out = run(["list", "--local"], {})  # --local asks only for the local record
+    assert code == 0 and not out.startswith("(") and calls == [("publish.list", {})]
+
+
+def test_list_with_another_refusal_is_still_an_error(monkeypatch):
+    from orch.ops.errors import OrchError
+
+    def call(target, op, args, env):
+        raise OrchError("not_found", "no such ticket")
+
+    monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
+    monkeypatch.setattr(publish, "_call", call)
+    code, out = run(["list", "TST-9"], {})
+    assert code != 0 and out.startswith("error not_found")
+
+
 def test_setup_with_the_addon_off_saves_and_says_what_is_next(monkeypatch):
     from orch.ops.errors import OrchError
 
@@ -349,13 +496,42 @@ def test_setup_with_the_addon_off_saves_and_says_what_is_next(monkeypatch):
 
 def test_revoke_asks_first_and_yes_skips_the_question(rec, monkeypatch):
     asked = []
-    monkeypatch.setattr(publish, "_confirm", lambda prompt, word: asked.append((prompt, word)) or False)
+    monkeypatch.setattr(publish, "review_prompt", lambda prompt, verb="sign": asked.append((prompt, verb)) or False)
     code, out = run(["revoke", "a" * 32], {})
-    assert code == 5 and "not confirmed: nothing was revoked" in out and rec.calls == []
-    assert asked and asked[0][1] == "revoke" and "stops working at once" in asked[0][0]
-    monkeypatch.setattr(publish, "_confirm", lambda prompt, word: asked.append("again") or True)
+    assert code == 3 and "not confirmed: nothing was revoked" in out and rec.calls == []
+    assert asked and "stops working at once" in asked[0][0] and asked[0][1] == "continue"  # a revoke signs nothing
+    monkeypatch.setattr(publish, "review_prompt", lambda prompt, verb="sign": asked.append("again") or True)
     code, out = run(["revoke", "a" * 32], {})
     assert code == 0 and rec.calls == [("publish.revoke", {"share_id": "a" * 32})]
     asked.clear()
     code, out = run(["revoke", "b" * 32, "--yes"], {})
     assert code == 0 and asked == [] and rec.calls[-1] == ("publish.revoke", {"share_id": "b" * 32})
+
+
+def test_extend_sends_the_days_and_nothing_else(rec):
+    code, out = run(["extend", "a" * 32, "--days", "30"], {})
+    assert code == 0 and rec.calls == [("publish.extend", {"share_id": "a" * 32, "days": 30})]
+    assert "ok publish extended" in out
+
+
+def test_the_password_goes_to_the_terminal_only(rec):
+    code, out = run(["password", "a" * 32], {})
+    assert code == 0 and rec.calls == [("publish.password", {"share_id": "a" * 32})]
+    (shown,) = rec.shown
+    assert "bada-fobu-gele-kimo-ruzi" in shown and "shown once" in shown
+    assert "bada" not in out and "the password is on your terminal only" in out
+    code, out = run(["password", "a" * 32], {}, as_json=True)
+    doc = json.loads(out)
+    assert doc["data"]["password_shown"] is True and "password" not in doc["data"] and "bada" not in out
+
+
+def test_a_password_that_cannot_be_shown_is_not_printed_anywhere_else(rec, monkeypatch):
+    def broken(text):
+        raise human.NoPrompt("no terminal")
+
+    monkeypatch.setattr(human, "show_secret", broken)
+    code, out = run(["password", "a" * 32], {})
+    assert code == 1 and "bada" not in out and "orch publish password " + "a" * 32 in out
+    monkeypatch.setattr(publish, "_tty_ok", lambda: False)
+    code, out = run(["password", "a" * 32], {})
+    assert code == 5 and "nothing was set" in out

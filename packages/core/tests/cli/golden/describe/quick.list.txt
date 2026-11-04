@@ -10,4 +10,5 @@ args:
   --max-commits N  a row is over with more commits than this [default 1]
   --max-files N  a row is over with more changed files than this [default 3]
 errors:
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
 out: ok quick.list {total} / next: {next}

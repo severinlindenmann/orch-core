@@ -161,8 +161,59 @@ CASES: dict[str, tuple[str, dict]] = {
         },
     ),
     "hub.left": ("workspace", {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}),
+    "remote.changed": (
+        "workspace",
+        {
+            "on": True,
+            "level": "work",
+            "until_ms": 1_800_000_000_000,
+            "premises": "no",
+            "agents_risk": False,
+            "hub_mode": "none",
+            "remote_v": 0,
+        },
+    ),
+    "remote.device_added": (
+        "workspace",
+        {
+            "device_id": "rd_6be572e1241672d2a48515fb6eca992b",
+            "name": "Severin's MacBook",
+            "person": PERSON,
+            "presence_kind": "platform",
+            "transport_pub": "3J02PWPii0wd9JGl1e8ylfF2OQt3ZHwobpD22e-Sb2g",
+            "presence_pub": "BM_dyBP9WmXDUz13KE9_OxWamJkWSLgLBQcQLqipmcxXtMqQz7yTIYqposCv27jyI50SgrbdmxV0_M5PHktruNY",
+            "level_cap": "work",
+            "expires_ms": 1_800_000_000_000,
+            "fingerprint": "09f2da73415b22423ee0075a56f2cec02b69bf851471bf17707d6c9345368e3f",
+            "code_id": "rc_60aca6974672558190b27fcee2e050fa",
+            "remote_v": 1,
+        },
+    ),
     # A types a person signs through human.prepare (H5a: person versions of agent ops, and move)
     "ticket.moved": (TICKET, {"from": "in_progress", "to": "backlog", "reason": "parked"}),
+    "followup.cancelled": (TICKET, {"followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D", "reason": "person"}),
+    "followup.rescheduled": (
+        TICKET,
+        {
+            "followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+            "due": "2026-10-28T12:00:00Z",
+            "deadline": "2026-10-29T12:00:00Z",
+        },
+    ),
+    "followup.restored": (TICKET, {"followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D"}),
+    "schedule.set": (
+        TICKET,
+        {
+            "schedule": "sc_01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+            "brief": "Check the import.",
+            "label": "Weekly",
+            "rule": {"every": "week", "at": "09:00", "tz": "UTC", "weekdays": [0]},
+            "starts": "2026-10-28T09:00:00Z",
+            "ends": "2026-11-27T09:00:00Z",
+            "run_hours": 8,
+        },
+    ),
+    "schedule.cancelled": (TICKET, {"schedule": "sc_01J9ZK4Q7M3R8T2V6X0B5N1C9D"}),
     "ticket.created": (TICKET, {"key": "DEMO-0042", "ticket_type": "feature", "title": "Login", "owner": PERSON}),
     "ticket.updated": (
         TICKET,
@@ -458,3 +509,10 @@ def test_long_field_names_refuse_instead_of_truncating():
         rendered(p)
     ok = payload("settings.changed", "workspace", {"set": {"repos": {"demo": {"path": "/x"}}}})
     assert "set.repos.demo.path: /x" in rendered(ok)
+
+
+def test_a_followup_cancel_carrying_a_field_the_prompt_does_not_list_is_refused():
+    log, fields = CASES["followup.cancelled"]
+    assert set(fields) == {"followup", "reason"}
+    with pytest.raises(CustodyError, match="does not show"):
+        describe_payload(payload("followup.cancelled", log, {**fields, "sneaky": "fu_x"}))

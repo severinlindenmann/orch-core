@@ -6,6 +6,7 @@
     "workflows": [
       "work",
       "ask",
+      "wait",
       "refine",
       "parallel"
     ]

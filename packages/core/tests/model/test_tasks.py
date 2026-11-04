@@ -4,7 +4,7 @@
 import pytest
 
 from orch.model import Code
-from tests.model.world import SHA1, SHA2, World, refused
+from tests.model.world import SHA1, SHA2, World, pol, refused
 from tests.schema.examples import digest
 
 TASKS = [
@@ -21,6 +21,8 @@ def env():
     w.edit(uid, "sev", {"ticket.acceptance": AC})
     w.edit(uid, "sev", {"ticket.tasks": TASKS})
     w.with_repo(uid)
+    # these tests are about tasks, not the plan gate: it does not apply to features here (r10-P02 tests below)
+    w.wev("policy.changed", "sev", gates={"plan": pol(["owner"], 1, [], ["bug"])})
     a = w.claim(uid)
     return w, uid, a
 
@@ -210,3 +212,65 @@ def test_done_task_in_a_closed_ticket_and_submit_needs_branch_and_evidence(env):
     w, uid, a = env
     e = w.try_(uid, "ticket.submitted", a)[1]
     assert e.code == Code.SUBMIT_INCOMPLETE and "AC1" in e.detail and "AC2" in e.detail and "verification" in e.detail
+
+
+# --- r10-P02: an agent builds only after the plan is approved ---------------------------------------------------
+
+
+@pytest.fixture
+def gated():
+    """A feature with sections, AC1 and T1 filled, claimed by an agent; requirements approved, the plan still open."""
+    w = World().bootstrap({"mara": "maintainer"})
+    uid = w.ticket()
+    w.fill(uid)
+    a = w.claim(uid)
+    w.decide(uid, "sev", "requirements")
+    return w, uid, a
+
+
+def test_agent_task_start_and_done_refused_while_the_plan_is_open(gated):
+    w, uid, a = gated
+    assert refused(w, uid, "task.started", a, task="T1") == Code.TASK_PLAN_OPEN
+    assert refused(w, uid, "task.done", a, task="T1") == Code.TASK_PLAN_OPEN
+    receipt = {"cmd": "make test", "exit": 0, "ms": 1, "repo": None, "commit": None}
+    assert refused(w, uid, "task.done", a, task="T1", receipt=receipt) == Code.TASK_PLAN_OPEN
+    assert w.view(uid).tasks[0].state == "open"
+    w.decide(uid, "sev", "plan")
+    w.tev(uid, "task.started", a, task="T1")
+    w.tev(uid, "task.done", a, task="T1", receipt=receipt)
+    assert w.view(uid).tasks[0].state == "done"
+
+
+def test_agent_task_artifact_refused_while_the_plan_is_open(gated):
+    w, uid, a = gated
+    art = {"name": "T1-out.log", "kind": "log", "sha256": digest("x"), "bytes": 1}
+    assert refused(w, uid, "artifact.added", a, task="T1", **art) == Code.TASK_PLAN_OPEN
+    w.tev(uid, "artifact.added", a, **{**art, "name": "notes.md"})  # no task: plan notes stay allowed
+    w.decide(uid, "sev", "plan")
+    w.tev(uid, "artifact.added", a, task="T1", **art)
+
+
+def test_a_person_may_finish_a_task_while_the_plan_is_open(gated):
+    w, uid, _ = gated
+    w.tev(uid, "task.done", "sev", task="T1")
+    assert w.view(uid).tasks[0].state == "done"
+
+
+def test_plan_gate_off_for_the_type_lets_the_agent_build():
+    w = World().bootstrap({"mara": "maintainer"})
+    uid = w.ticket()
+    w.fill(uid)
+    w.wev("policy.changed", "sev", gates={"plan": pol(["owner"], 1, [], ["bug"])})
+    a = w.claim(uid)
+    w.tev(uid, "task.started", a, task="T1")
+    assert w.view(uid).tasks[0].state == "started"
+
+
+def test_a_plan_edited_after_approval_closes_the_gate_again(gated):
+    w, uid, a = gated
+    w.decide(uid, "sev", "plan")
+    w.tev(uid, "task.started", a, task="T1")
+    w.edit(uid, "sev", {}, {"plan": "a different plan"})
+    assert refused(w, uid, "task.done", a, task="T1") == Code.TASK_PLAN_OPEN
+    w.decide(uid, "sev", "plan")
+    w.tev(uid, "task.done", a, task="T1")

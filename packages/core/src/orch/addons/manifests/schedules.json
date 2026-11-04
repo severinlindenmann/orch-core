@@ -1,0 +1,16 @@
+{
+  "schema": "orch.addon/2",
+  "name": "schedules",
+  "version": "0.1.0",
+  "title": "Schedules",
+  "entry": {
+    "cmd": [
+      "orch-schedules",
+      "serve"
+    ]
+  },
+  "capabilities": [
+    "spawn_agent"
+  ],
+  "agents_md": "Schedules: set a follow-up when work must wait more than an hour: orch follow-up --in 2d --brief-file brief.md, then end your session; orch starts a fresh one then."
+}

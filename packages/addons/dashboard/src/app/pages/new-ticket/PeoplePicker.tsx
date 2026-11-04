@@ -1,5 +1,6 @@
 import type { Member, Visibility } from '@/api/types'
 import { can } from '@/api/permissions'
+import { Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export interface PeopleValue {
@@ -10,8 +11,9 @@ export interface PeopleValue {
 
 const chip = (on: boolean) =>
   cn(
-    'inline-flex h-6 items-center rounded-md border px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-brand',
-    on ? 'border-brand bg-brand-soft text-brand' : 'border-input text-text-muted hover:bg-accent hover:text-text',
+    'inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-brand',
+    // W24: picked = a check mark and bold text on the brand tint, not the tint alone (too faint, especially on a phone)
+    on ? 'border-brand bg-brand-soft font-medium text-brand-chip-text' : 'border-input text-text-muted hover:bg-accent hover:text-text',
   )
 
 export const fieldCls =
@@ -24,6 +26,7 @@ function Chips({ label, members, value, onChange }: { label: string; members: Me
         const on = value.includes(m.person)
         return (
           <button key={m.person} type="button" aria-pressed={on} className={chip(on)} onClick={() => onChange(on ? value.filter((p) => p !== m.person) : [...value, m.person])}>
+            {on && <Check data-testid="chip-check" className="size-3" aria-hidden />}
             {m.name}
           </button>
         )

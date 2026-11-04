@@ -226,3 +226,26 @@ def test_unbound_sender_is_refused_by_authz_itself(rhub):
     h, acc, a, b = setup(rhub)
     a.request("binding_put", {"object": G.unbound(seq=1)})
     assert AccessAuthz(h.registry, acc).may_route(G.WS_A, G.WS_B) is False
+
+
+def test_the_signed_alias_must_be_the_invites_bound_owner(rhub):
+    """Run 12: a forged owner in the connect link ends in a refused join; the matching one is accepted."""
+    h = rhub()
+    h.server._invites = AliasInvites(h.invites, {"inv1": U})
+    forged = h.open(first=True)
+    with pytest.raises(LinkError) as e:
+        forged.request("join", {**h.join_body(), "alias_users": [G.U_BOB]})
+    assert e.value.code == "owner_alias_mismatch"
+    assert h.registry.owner_alias(G.WS_A) is None
+    ok = h.open(first=True)
+    ok.request("join", {**h.join_body(), "alias_users": [U]})
+    assert h.registry.owner_alias(G.WS_A) == U
+
+
+def test_an_alias_without_a_bound_owner_is_refused(rhub):
+    h = rhub()
+    h.server._invites = AliasInvites(h.invites, {})
+    c = h.open(first=True)
+    with pytest.raises(LinkError) as e:
+        c.request("join", {**h.join_body(), "alias_users": [U]})
+    assert e.value.code == "owner_alias_mismatch"

@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.agents_risk",
+    "message": "agents on this computer can act as you",
+    "hint": "set up the separate agent user first, or confirm that you accept the risk",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

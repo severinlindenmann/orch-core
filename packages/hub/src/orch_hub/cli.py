@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from .config import dev_of
 from .contract.canon import CanonError, unb64u
 from .contract.hub import FACTORS
+from .dataformat import DataFormatError, check_update
 from .keys import HubKeys, KeysError, default_state_dir
 from .keys.store import dumps
 
@@ -50,6 +51,20 @@ def _parser() -> argparse.ArgumentParser:
         "workspace host or agent users, see --dev-shared-machine)",
     )
     sv.add_argument(
+        "--link-ws-listen",
+        help="R6: a second listener for the link over WebSocket, IP:port: loopback (a TLS front on this machine) or one "
+        "private address; plain HTTP, serves only /orch/link/1 (see docs/deployment.md, Link over 443)",
+    )
+    sv.add_argument(
+        "--link-ws-public",
+        help="R6: a public address of the WebSocket front to list in hub_where, wss://name[:port] (or ws://); a hint only",
+    )
+    sv.add_argument(
+        "--link-ws-behind-front",
+        action="store_true",
+        help="R6: allow a non-private --link-ws-listen address; only when a TLS-terminating front is the only way to it",
+    )
+    sv.add_argument(
         "--dev-shared-machine",
         action="store_true",
         help="dev only: allow --link-listen on a machine that has host/agent users (needs a dev card; network link, not separation)",
@@ -65,11 +80,20 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="orch-publish base URL (https, or http on loopback, private or 100.64/10 addresses)",
     )
-    sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
+    sv.add_argument(
+        "--api-host",
+        help="host the workspaces sign (default: the host:port of --publish-url); with --publish-share-url it is also "
+        "the public API origin the hub signs in its publish_where: https://<api-host> (http on loopback for a dev hub)",
+    )
+    sv.add_argument(
+        "--publish-share-url",
+        help="the public origin of the share links, https://name[:port] (http on loopback for a dev hub); with "
+        "--api-host the hub signs and serves both as its publish_where (#1838). Never the private --publish-url",
+    )
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
     sv.add_argument(
         "--web-listen",
-        help="host:port of the web API: loopback (the edge fronts it) or one private/NetBird IP of this computer (dev, plain http); default: no web API",
+        help="host:port of the web API: loopback (the edge fronts it) or one private network address of this computer (dev, plain http); default: no web API",
     )
     sv.add_argument(
         "--relay-url",
@@ -81,6 +105,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     sv.add_argument("--web-origin", action="append", default=[], help="exact origin of the console (repeatable)")
     sv.add_argument("--api-origin", help="the public API origin the phone pairs with: one of the --web-origin values")
+    sv.add_argument(
+        "--hooks-listen",
+        help="host:port of the public webhook listener (/h/<token> only; the edge fronts it). Needs --public-hooks-url; default: off",
+    )
+    sv.add_argument(
+        "--public-hooks-url",
+        help="the origin senders use for webhooks, e.g. https://hub.example.com (https; http only for a dev hub). Needs --hooks-listen",
+    )
     ins = sub.add_parser(
         "inspect", help="dev only: read-only JSON view of the registry (pins, mode, binding, op counts)"
     )
@@ -88,7 +120,7 @@ def _parser() -> argparse.ArgumentParser:
     ins.add_argument("--workspace", help="only this workspace id")
     ins.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
     rl = sub.add_parser(
-        "releases", help="dev: release metadata of the bound full-mode workspaces, read at orch-publish (admin read)"
+        "releases", help="dev: the links and apps of the bound full-mode workspaces, read at orch-publish (admin read)"
     )
     rl.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     rl.add_argument(
@@ -129,9 +161,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     rgs = rg.add_subparsers(dest="cmd", required=True)
     rgs.add_parser("register", help="register or rotate the account by hub card (POST /v2/hubs, unsigned)")
+    from .backup.cli import add_parser as add_backup_parser
+    from .backup.cli import add_restore_parser
+
+    add_backup_parser(sub)
+    add_restore_parser(sub)
     from .access.cli import add_parsers
 
     add_parsers(sub)
+    hp = sub.add_parser(
+        "helper",
+        help="run the service helper (start/stop/restart this machine's parts for the console; unix socket only)",
+    )
+    hp.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    hp.add_argument("--print-sudoers", action="store_true", help="print the sudoers lines to install, then exit")
+    hp.add_argument("--user", help="with --print-sudoers: the user the helper runs as")
     from .spaces.cli import add_parsers as add_space_parsers
 
     add_space_parsers(sub)
@@ -150,8 +194,78 @@ def _relay_register(args: argparse.Namespace) -> int:
     return 0
 
 
+def _helper(args: argparse.Namespace) -> int:
+    from .services.helper_backends import load_config, sudoers_text
+    from .services.helper_proto import HelperError
+    from .services.helper_server import run_helper
+
+    state = Path(args.state) if args.state else default_state_dir()
+    if not args.print_sudoers:
+        return run_helper(state)
+    try:
+        if not args.user:
+            raise HelperError("bad_config", "--user is needed")
+        print(sudoers_text(args.user, list(load_config(state).parts.values())), end="")
+    except HelperError as e:
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+#: #1463: while a removal runs or stalls only these command groups work (an ALLOW list: a command added later is refused by
+#: default). ``serve`` must run (it resumes the removal); the others only read.
+_CLOSING_ALLOWED = frozenset({"serve", "helper", "doctor", "inspect", "releases"})
+
+
+def _closing_refused(args: argparse.Namespace) -> bool:
+    if args.group in _CLOSING_ALLOWED:
+        return False
+    if args.group == "keys" and args.cmd == "card" and args.relay_url is None and args.tls_spki_sha256 is None:
+        return False  # printing the card writes nothing
+    try:
+        state = Path(args.state) if getattr(args, "state", None) else default_state_dir()
+    except KeysError:
+        return False
+    return (state / "hub-removal.json").exists()
+
+
+def _guarded(args: argparse.Namespace, run: Callable[[], int], *, init: bool = False) -> int:
+    """Run a command that opens the state dir under the format rule (``orch_hub.dataformat``): it refuses while an update
+    runs or is unfinished, and on data that is not at this code's format, and it holds the shared format lock until it
+    ends (so ``orch update`` cannot start under it). A state dir that is not there yet is left to the command to report.
+    ``init`` also works on a dir that has no ``format.json`` yet, but only while there are no keys in it: it takes the lock
+    without reading the format (there is none), and a dir that holds keys but lost its ``format.json`` is refused like any
+    other (``format.missing``)."""
+    from .backup.hubop import open_state
+
+    handle = None
+    try:
+        state = Path(args.state) if getattr(args, "state", None) else default_state_dir()
+        if state.exists():
+            fresh = init and not (state / "format.json").exists() and not (state / "meta.json").exists()
+            handle = open_state(state, check_format=not fresh)
+        else:
+            check_update(state)
+    except KeysError as e:
+        print(f"orch-hub: {e}", file=sys.stderr)
+        return 1
+    except DataFormatError as e:
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
+    try:
+        return run()
+    finally:
+        if handle is not None:
+            handle.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if _closing_refused(args):
+        print("orch-hub: refused: hub_closing (this hub is being removed)", file=sys.stderr)
+        return 1
+    if args.group == "helper":
+        return _helper(args)
     if args.group == "serve":
         from .serve import serve
 
@@ -164,29 +278,43 @@ def main(argv: Sequence[str] | None = None) -> int:
                 link_listen=args.link_listen,
                 dev_shared_machine=args.dev_shared_machine,
                 bind_all=args.bind_all,
+                link_ws_listen=args.link_ws_listen,
+                link_ws_public=args.link_ws_public,
+                link_ws_behind_front=args.link_ws_behind_front,
                 api_host=args.api_host,
+                publish_share_url=args.publish_share_url,
                 web_listen=args.web_listen,
                 relay_url=args.relay_url,
                 trusted_peers=frozenset(args.trusted_peer),
                 behind_edge=args.behind_edge,
                 web_origins=frozenset(args.web_origin),
                 api_origin=args.api_origin,
+                hooks_listen=args.hooks_listen,
+                public_hooks_url=args.public_hooks_url,
             )
-        except (ValueError, KeysError) as e:
+        except (ValueError, KeysError, DataFormatError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)
             return 1
     if args.group in ("users", "groups", "grants", "channels", "access"):
         from .access.cli import run as run_access
 
-        return run_access(args)
+        return _guarded(args, lambda: run_access(args))
     if args.group == "spaces":
         from .spaces.cli import run as run_spaces
 
-        return run_spaces(args)
+        return _guarded(args, lambda: run_spaces(args))
+    if args.group == "backup-key":
+        from .backup.cli import run as run_backup_key
+
+        return run_backup_key(args)
+    if args.group == "restore":
+        from .backup.cli import run_restore
+
+        return run_restore(args)
     if args.group == "relay":
-        return _relay_register(args)
+        return _guarded(args, lambda: _relay_register(args))
     if args.group == "releases":
-        return _releases(args)
+        return _guarded(args, lambda: _releases(args))
     if args.group == "doctor":
         from .doctor import run
 
@@ -226,6 +354,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"orch-hub: {e}", file=sys.stderr)
             return 1
         return 0
+    return _guarded(args, lambda: _keys(args), init=args.cmd == "init")
+
+
+def _keys(args: argparse.Namespace) -> int:
     try:
         state = Path(args.state) if args.state else default_state_dir()
         if args.cmd == "init":
@@ -275,7 +407,7 @@ def _releases(args: argparse.Namespace) -> int:
             if reg.mode(args.workspace) != "full":  # the admin read covers bound full-mode workspaces only (§10.6)
                 print("orch-hub: refused: not_bound", file=sys.stderr)
                 return 1
-        rows = client.releases(args.workspace)
+        rows = client.published(args.workspace)
     except (ValueError, KeysError) as e:
         print(f"orch-hub: refused: {e}", file=sys.stderr)
         return 1
@@ -285,7 +417,7 @@ def _releases(args: argparse.Namespace) -> int:
     finally:
         if reg is not None:
             reg.close()
-    print(dumps({"releases": rows}))
+    print(dumps({"published": rows}))
     return 0
 
 

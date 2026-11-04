@@ -45,13 +45,13 @@ def _signed(key: ec.EllipticCurvePrivateKey, label_key: str, o: dict[str, Any]) 
     return {"o": o, "sig": b64u(S.sign(key, L[label_key] + cj(o)))}
 
 
-def binding(wsk, hub: HubKeys, ws: str, seq: int = 1) -> dict[str, Any]:
+def binding(wsk, hub: HubKeys, ws: str, seq: int = 1, mode: str = "selective") -> dict[str, Any]:
     return _signed(
         wsk,
         "sig_hub_binding",
         {
             "v": 2, "suite": 2, "hv": 0, "kind": "hub.binding", "workspace_id": ws, "wsk_pub": pub_b64(wsk),
-            "hub_id": hub.hub_id, "hk_root_pub": b64u(hub.hk_root_pub), "mode": "selective", "binding_seq": seq,
+            "hub_id": hub.hub_id, "hk_root_pub": b64u(hub.hk_root_pub), "mode": mode, "binding_seq": seq,
             "valid_from_ms": NOW - 1000, "dev": True,
         },
     )  # fmt: skip
@@ -111,6 +111,11 @@ class RecordingSync:
             raise self.fail
         self.calls.append(("binding", workspace_id, dict(obj)))
 
+    def put_allow(self, workspace_id, obj):
+        if self.fail:
+            raise self.fail
+        self.calls.append(("allow", workspace_id, dict(obj)))
+
 
 class FakeUpstream:
     """A loopback HTTP server standing in for orch-publish: records requests, answers a scripted response."""
@@ -118,6 +123,7 @@ class FakeUpstream:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.status, self.headers, self.body, self.delay = 200, {}, b'{"ok":true}', 0.0
+        self.script: list[tuple[int, bytes]] = []  # per-request (status, body) answers, used before the defaults
         up = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -133,12 +139,13 @@ class FakeUpstream:
                 )
                 if up.delay:
                     threading.Event().wait(up.delay)
-                self.send_response(up.status)
+                status, body = up.script.pop(0) if up.script else (up.status, up.body)
+                self.send_response(status)
                 for k, v in up.headers.items():
                     self.send_header(k, v)
-                self.send_header("Content-Length", str(len(up.body)))
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(up.body)
+                self.wfile.write(body)
 
             do_GET = do_PUT = do_POST = do_DELETE = _do
 

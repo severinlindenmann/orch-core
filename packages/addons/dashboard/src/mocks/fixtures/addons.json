@@ -1016,7 +1016,7 @@
                   "ticket": { "type": "string", "title": "Ticket", "oneOf": { "$ref": "addon.ticketOptions" } },
                   "mode": { "type": "string", "title": "Mode", "default": "work", "oneOf": [{ "const": "refine", "title": "Refine" }, { "const": "work", "title": "Work on ticket" }, { "const": "fix", "title": "Fix failing checks" }, { "const": "continue", "title": "Continue after feedback" }] },
                   "harness": { "type": "string", "title": "Harness", "default": "claude-code", "oneOf": [{ "const": "claude-code", "title": "Claude Code" }, { "const": "codex", "title": "Codex" }] },
-                  "where": { "type": "string", "title": "Where", "default": "background", "oneOf": [{ "const": "terminals", "title": "Terminals" }, { "const": "background", "title": "Background" }] }
+                  "where": { "type": "string", "title": "Where", "default": "background", "oneOf": [{ "const": "terminals", "title": "Command window" }, { "const": "background", "title": "Background" }] }
                 }
               },
               "formData": { "$ref": "addon.page.form" },
@@ -1048,7 +1048,7 @@
             "type": "object",
             "properties": {
               "harness": { "type": "string", "title": "Default harness", "oneOf": [{ "const": "claude-code", "title": "Claude Code" }, { "const": "codex", "title": "Codex" }] },
-              "where": { "type": "string", "title": "Default place to run", "oneOf": [{ "const": "terminals", "title": "Terminals" }, { "const": "background", "title": "Background" }] }
+              "where": { "type": "string", "title": "Default place to run", "oneOf": [{ "const": "terminals", "title": "Command window" }, { "const": "background", "title": "Background" }] }
             }
           },
           "formData": { "$ref": "addon.settings" },

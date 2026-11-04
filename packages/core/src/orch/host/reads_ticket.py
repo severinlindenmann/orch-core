@@ -435,6 +435,11 @@ def _gates(x: _Ticket) -> dict[str, dict[str, Any]]:
             gate["decisions_more"] = True
         gate["revoked_decisions"] = list(g.revoked_decisions)
         gate["hash"] = full or None
+        if name in ("requirements", "plan") and g.input is not None:
+            from .seqgates import single_only
+
+            if single_only(thaw(g.input)):  # display only: the combined approval cannot carry files or add-on fields
+                gate["single_only"] = True
         gate["policy_hash"] = None if g.blocked or not full else g.policy_hash
         out[name] = gate
     return out

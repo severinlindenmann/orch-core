@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "sign.cancelled",
+    "message": "nothing was signed",
+    "hint": "run it again to review",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

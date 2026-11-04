@@ -129,7 +129,10 @@ def stage(served, name="standup", **more):
 def install(served, human, name="standup", **more):
     """stage → prepare → sign → submit; returns (stage result, prepared, submit result)."""
     st = ok(stage(served, name, **more))["data"]
-    prepared = human.prepare("addon.grant", {"name": name, "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": name, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     return st, prepared, ok(human.submit_res(prepared["request"]["id"], signed.events))
 

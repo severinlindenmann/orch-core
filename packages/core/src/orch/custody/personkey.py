@@ -82,7 +82,7 @@ __all__ = [
 
 SIGN_LABELS: tuple[str, ...] = (
     "sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation", "sig_device_rotate",
-    "sig_hub_owner_proof",
+    "sig_hub_owner_proof", "sig_remote_owner_proof",
 )  # fmt: skip
 """What a person-key source signs: certificates, cert challenges and rejections (R6) and revocations. Never
 ``sig_ws_delegation`` (see the module docstring)."""

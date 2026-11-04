@@ -266,7 +266,7 @@ def test_a_planted_tier_b_run_directory_never_wins_over_the_tier_a_one(monkeypat
     """H7 review: any local account can create /Users/Shared/orch/run/<uid>; in tier A only --run, ORCH_HOST_RUN_DIR
     or <state>/run is used, by orch host, the thin CLI and orch sign alike."""
     from orch import hostclient
-    from orch.host import cli, handoff, listener
+    from orch.host import cli, listener, signer_registry
 
     service = tmp_path / "svc"
     monkeypatch.setattr(listener, "default_run_directory", lambda uid: service)
@@ -279,7 +279,7 @@ def test_a_planted_tier_b_run_directory_never_wins_over_the_tier_a_one(monkeypat
     assert cli._control_path(tmp_path / "r", state, {}) == tmp_path / "r" / "control" / "host.sock"
     assert cli._control_path(None, state, {"ORCH_HOST_RUN_DIR": "/x"}) == Path("/x/control/host.sock")
     assert hostclient.workspace_socket({}, state, UID, wid) == state / "run" / wid / "host.sock"
-    assert handoff._socket(None, state, UID, wid) == state / "run" / wid / "host.sock"
+    assert signer_registry._socket(None, state, UID, wid) == state / "run" / wid / "host.sock"
 
 
 # --- 7: drain flushes queued answers --------------------------------------------------------------------------

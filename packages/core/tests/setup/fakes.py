@@ -129,6 +129,19 @@ class FakePorts:
     def git_init(self, root: Path) -> None:
         self.log.append(("git_init", str(root)))
 
+    def privatize(self, root: Path) -> None:
+        self.log.append(("privatize", str(root)))
+
+    def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
+        self.log.append(("trust_folder", str(root)))
+        return True
+
+    def background_blocked(self) -> list[str]:
+        return list(getattr(self, "blocked", []))
+
+    def trust_why(self, root: Path, *, allow_parent: bool = False) -> str:
+        return "fake why"
+
     def records_setup(self, wid: str, root: Path) -> None:
         self.log.append(("records_setup", wid, str(root)))
         if getattr(self, "fail_records", False):
@@ -139,6 +152,9 @@ class FakePorts:
         if self.fail_runner:
             raise RuntimeError("no service")
 
+    def runner_refresh(self) -> None:
+        self.log.append(("runner_refresh",))
+
     def runner_hello(self, wid: str, timeout: float) -> bool:
         self.log.append(("runner_hello",))
         return self.hello
@@ -148,7 +164,7 @@ class FakePorts:
         return FakeLink(self)
 
     @contextlib.contextmanager
-    def unlock(self, wid, passphrase, digest, fields):
+    def unlock(self, wid, passphrase, digest, fields, one_click=False):
         self.unlocks += 1
         self.log.append(("unlock",))
         yield steps_backend()

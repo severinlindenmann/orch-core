@@ -39,8 +39,8 @@ __all__ = [
 
 #: the decided card line (tie-break D-P2-31): workspace card, Start dialog and terminal header
 CARD_TEXT = (
-    "Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, "
-    "or any agent it starts, can run commands and read your files and keys."
+    "Agents and terminals you start here work as you on this computer. They can run programs and open your files, "
+    "including secret keys, and so can anything that takes over this dashboard. Only continue on a computer you trust."
 )
 NO_TERMINALS_TEXT = "--no-terminals only hides terminals in the dashboard; it does not make agent execution safe."
 
@@ -75,7 +75,7 @@ def risk_text(prefix: str, workspace_id: str, terminals: bool, agent_user: str |
         "",
         CARD_TEXT,
         "",
-        "That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create "
+        "Those keys include your SSH keys and your orch keys. The dashboard can then start agents, create "
         "worktrees" + (" and open terminals" if terminals else "") + " for this workspace, as you.",
         "Nothing on this machine that runs as you is kept out by this switch; it only decides what the dashboard is "
         "allowed to start.",

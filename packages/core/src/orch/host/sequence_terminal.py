@@ -1,6 +1,6 @@
-"""``orch sign CODE`` for the first request of a sequence (batch 11, finding 9): the terminal path.
+"""Direct CLI signing for a sequence (batch 11, finding 9): the terminal path.
 
-One review (the whole intent: the ticket and every written section), one confirmation word, ONE passphrase unlock for
+One review (the whole intent: the ticket and every written section), one Enter confirmation, ONE passphrase unlock for
 the batch (the key is open only for the sequence; the scalar is zeroised when it ends), then the engine of
 :mod:`orch.host.sequence` signs every step. A custody that signs without a factor (one-click) signs step by step.
 """
@@ -13,6 +13,7 @@ from contextlib import ExitStack, contextmanager
 from typing import Any
 
 from orch import canon
+from orch.ops.errors import OrchError
 
 from . import sequence, signer
 
@@ -98,7 +99,7 @@ def sign_sequence(
     person: str,
     device: str,
     workspace: Callable[[str], tuple[str, str] | None],
-    confirm: Callable[[str, str], bool],
+    confirm: Callable[[str], bool],
     sessions: sequence.Sessions,
     new_idem: Callable[[], str],
     prefix: str = "",
@@ -138,8 +139,8 @@ def sign_sequence(
                     f"…{signer._clean(str(resumed['ticket']['uid'])[-8:])}); no second ticket is made.\n\n"
                 )
             review = _prefixed(review, note)
-        if not confirm(review, signer.confirm_word(prepared, workspace)):
-            signer._refuse("not confirmed")
+        if not confirm(review):
+            raise OrchError("sign.cancelled", "nothing was signed")
     except BaseException as exc:
         signer.cancel_request(call, request_id, exc)
         raise

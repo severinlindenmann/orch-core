@@ -122,6 +122,7 @@ def test_the_ops_are_declared():
     assert shareops.SHARE_READS == {"share.rules", "share.preview"}
     assert set(shareops.SHARE_OPS) == {
         "share.rules", "share.preview", "share.rule_add", "share.rule_remove", "share.revoke", "share.sync",
+        "share.audience",
     }  # fmt: skip
 
 
@@ -129,12 +130,108 @@ def test_without_a_hub_every_share_op_is_hub_not_joined(served):
     assert err(req(served, "share.rules")) == "hub.not_joined"
 
 
-def test_full_mode_refuses_every_share_op(served, full):
-    for op, args in (("share.rules", {}), ("share.rule_add", {"rule": {"kind": "tag", "tag": "x"}, "expect": "p" * 43}),
-                     ("share.sync", {}), ("share.revoke", {"ref": "K-1"})):  # fmt: skip
-        res = req(served, op, args)
-        assert err(res) == "hub.refused" and "wrong_mode" in res["error"]["message"], op
+def test_full_mode_shares_a_ticket_with_named_people(served, full):
+    uid, key = labelled(served, "Public note", "public")
+    served.ticket("Plain list")
+    rule = {"kind": "ticket", "ticket": key, "audience": {"users": ["b" * 32], "groups": []}}
+    prev = ok(req(served, "share.preview", {"add": rule}))["data"]
+    assert prev["review"]["mode"] == "full" and "already holds this workspace" in prev["review"]["scope_short"]
+    got = ok(req(served, "share.rule_add", {"rule": rule, "expect": prev["plan"]}))["data"]
+    assert got["synced"] is True and got["put"] == 1 and full.count("share_put") == 1
+    (item,) = full.opened
+    assert item["item_kind"] == "ticket" and item["audience"]["users"] == ["b" * 32] and item["chain"]["log"] == uid
+    assert ok(req(served, "share.revoke", {"ref": key}))["data"]["revoke"] == 1 and full.count("share_revoke") == 1
+
+
+def test_full_mode_refuses_summaries_and_a_plan_that_was_not_shown(served, full):
+    for kind in ("needs_you", "questions"):
+        res = req(served, "share.preview", {"add": {"kind": kind}})
+        assert err(res) == "invalid.input" and "already sees what needs you" in res["error"]["message"]
+    _, key = labelled(served, "Public note", "public")
+    rule = {"kind": "ticket", "ticket": key}
+    assert err(req(served, "share.rule_add", {"rule": rule, "expect": "p" * 43})) == "invalid.input"
     assert full.ops == []
+    rules = ok(req(served, "share.rules"))["data"]["rules"]
+    assert all(r["kind"] != "needs_you" for r in rules)
+
+
+def test_full_mode_default_rule_sends_no_summary(served, full):
+    served.ticket("Plain list")
+    assert ok(req(served, "share.sync"))["data"]["put"] == 0 and full.ops == []
+
+
+def test_a_member_and_an_agent_cannot_share_in_full_mode(served, full):
+    _, key = labelled(served, "Public note", "public")
+    res = agent(served, "share.rule_add", {"rule": {"kind": "ticket", "ticket": key}})
+    assert err(res) in ("op.not_allowed", "human_only") and full.ops == []
+
+
+def test_a_person_who_is_not_an_owner_cannot_share_in_full_mode(served, full, monkeypatch):
+    from orch.host import shareops
+
+    _, key = labelled(served, "Public note", "public")
+    rule = {"kind": "ticket", "ticket": key}
+    prev = ok(req(served, "share.preview", {"add": rule}))["data"]
+
+    def no(_call):
+        raise shareops.HostError("role.denied", "share rules are for workspace owners")
+
+    monkeypatch.setattr(shareops, "_owner", no)  # the person's role is not owner
+    assert err(req(served, "share.rule_add", {"rule": rule, "expect": prev["plan"]})) == "role.denied"
+    assert full.ops == []
+
+
+def test_a_hub_log_mode_mismatch_is_refused(served, selective, monkeypatch):
+    from orch.host import peerops
+
+    real = peerops._hub_state
+
+    def lying(service, **kw):
+        st = real(service, **kw)
+        st.mode = "full"  # hub.json says full, the signed log says selective
+        return st
+
+    monkeypatch.setattr(peerops, "_hub_state", lying)
+    assert err(req(served, "share.rules")) == "hub.state_mismatch"
+
+
+def test_unbind_through_the_host_forgets_what_was_sent(served, selective, human):
+    from orch.host import shareops
+
+    _, key = labelled(served, "Public note", "public")
+    ok(rule_op(served, "share.rule_add", {"kind": "ticket", "ticket": key}))
+    svc = served.h.host.services[served.wid]
+    assert shareops._load(svc).sent  # noqa: SLF001
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
+    st = shareops._load(svc)  # noqa: SLF001
+    assert not st.sent and st.confirmed is None and st.rules
+
+
+def test_after_a_switch_to_full_the_automatic_pass_revokes_summaries_and_keeps_the_ticket(
+    served, selective, monkeypatch
+):
+    from orch.host import shareops
+
+    _, key = labelled(served, "Public note", "public")
+    ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
+    ok(rule_op(served, "share.rule_add", {"kind": "ticket", "ticket": key}))  # + the default needs-you summary
+    svc = served.h.host.services[served.wid]
+    sent = set(shareops._load(svc).sent)  # noqa: SLF001
+    assert any(lg.startswith("ticket:") for lg in sent) and any(not lg.startswith("ticket:") for lg in sent)
+    before = selective.count("share_revoke")
+    monkeypatch.setattr(shareops, "_is_full", lambda service: True)  # the log now says full
+    monkeypatch.setattr(shareops, "_bound_hub", lambda service: _ok_state(service))
+    shareops.auto_sync(svc)
+    left = set(shareops._load(svc).sent)  # noqa: SLF001
+    assert left and all(lg.startswith("ticket:") for lg in left)
+    assert selective.count("share_revoke") > before
+
+
+def _ok_state(service):
+    from orch.host import peerops
+
+    return peerops._hub_state(service, full=False)  # noqa: SLF001
 
 
 def test_an_agent_cannot_read_or_change_the_rules(served, selective):
@@ -143,6 +240,8 @@ def test_an_agent_cannot_read_or_change_the_rules(served, selective):
                      ("share.revoke", {"ref": "K-1"})):  # fmt: skip
         res = agent(served, op, args)
         assert err(res) in ("op.not_allowed", "human_only"), (op, res)
+        assert "tickets_state" not in res.get("data", {})
+        assert "not_sent_count" not in res.get("data", {})
     assert selective.ops == []
     rules = ok(req(served, "share.rules"))["data"]["rules"]
     assert [r["kind"] for r in rules] == ["needs_you"]
@@ -249,6 +348,32 @@ def test_a_question_to_the_owner_is_a_summary_and_with_a_rule_the_full_question(
     ok(rule_op(served, "share.rule_add", {"kind": "questions"}))
     assert len([i for i in selective.opened if i["item_kind"] == "question"]) == 1  # the same item: nothing re-sent
     assert q["content"]["text"] == "which bank?" and q["content"]["id"] == "Q1"
+
+
+@pytest.mark.parametrize("which", ["question", "summary"])
+def test_w09_revoking_either_half_of_a_question_revokes_both(served, selective, which):
+    """W09 (#1074): the needs-you summary and the question item are one question; withdrawing one by hand withdraws
+    the other too (the summary alone would still show the question's first line)."""
+    _, key = served.ticket("Savings")
+    ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
+    assert sync_shown(served)["put"] == 2
+    items = {i["kind"]: i["logical"] for i in ok(req(served, "share.preview"))["data"]["items"]}
+    got = ok(req(served, "share.revoke", {"ref": items[which]}))["data"]
+    assert got["revoke"] == 2 and selective.count("share_revoke") == 2
+    assert ok(req(served, "share.sync"))["data"]["put"] == 0  # neither comes back
+
+
+def test_w09_the_preview_line_of_a_question_carries_the_text_that_is_sent(served, selective):
+    _, key = served.ticket("Savings")
+    long = (
+        "Which bank account should the savings go to: the joint one at the old bank,"
+        " or the new one at the other bank in town, please?"
+    )
+    assert 120 < len(long.encode()) <= 140  # longer than the one-line title, within a question's limit
+    ok(agent(served, "ask", {"ref": key, "text": long.strip()}))
+    rows = ok(req(served, "share.preview"))["data"]["items"]
+    (q,) = [r for r in rows if r["kind"] == "question"]
+    assert q["line"].endswith(long.strip())  # the full text the question item carries, not the 120-character title
 
 
 def test_a_rule_survives_an_unreachable_hub_and_the_next_sync_finishes(served, selective, monkeypatch):
@@ -383,21 +508,25 @@ def manual_auto(monkeypatch):
     return m
 
 
-def settle(served, quick, *, need=1, timeout=10.0):
-    """Wait until the workspace's auto thread has finished ``need`` more passes (and is idle)."""
+def settle(served, quick, *, timeout=10.0):
+    """Wait until a finished auto pass has seen every commit made so far, and the thread is idle.
+
+    Not "one more pass than now": the pass a commit wakes may already have finished when this is called (debounce
+    0.1 s, a slow test thread), and then no further pass ever comes (CI flake 29 Oct, "passes=3, wanted 4")."""
     import time
 
     svc = served.h.host.services[served.wid]
     a = quick.state_of(svc)
     assert a is not None, "the auto thread is not armed"
-    target = a.passes + need
+    with a.cv:
+        target = a.marks  # every commit so far has marked (on_commit runs inside the commit)
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         with a.cv:
-            if a.passes >= target and a.dirty_since is None:
+            if a.covered >= target and a.dirty_since is None:
                 return a
         time.sleep(0.02)
-    raise AssertionError(f"no auto pass finished (passes={a.passes}, wanted {target})")
+    raise AssertionError(f"no auto pass covered the commits (covered={a.covered}, marks={target}, passes={a.passes})")
 
 
 def test_an_edit_to_a_shared_ticket_goes_out_as_a_higher_version_without_a_sync(served, selective, quick_auto):
@@ -412,15 +541,35 @@ def test_an_edit_to_a_shared_ticket_goes_out_as_a_higher_version_without_a_sync(
     assert selective.count("share_revoke") == 0
 
 
-def test_a_burst_of_edits_is_one_debounced_pass(served, selective, quick_auto, monkeypatch):
-    monkeypatch.setattr(quick_auto, "DEBOUNCE_S", 0.5)
+def test_a_burst_of_edits_is_one_debounced_pass(served, selective, manual_auto):
+    """On the manual clock: the edits come half a debounce apart, so each one moves the deadline and only the quiet
+    after the last one lets the pass run. (On the wall clock with a 0.5 s debounce, a test thread slower than 0.5 s
+    between two edits made a second pass, CI flake 29 Oct "[1, 2, 3] == [1, 2]".)"""
+    from orch.host import shareauto
+
     _, key = labelled(served, "Public note", "public")
     ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
     for n in range(4):
         ok(agent(served, "set", {"ref": key, "pairs": [f"title=Edit {n}"]}))
-    settle(served, quick_auto)
+        a = manual_auto.step(served, shareauto.DEBOUNCE_S / 2)  # inside the debounce: no pass yet
+        assert a.passes == 0
+    a = manual_auto.step(served, shareauto.DEBOUNCE_S)  # quiet for a whole debounce: the one pass
+    assert a.passes == 1
     assert [i["item_version"] for i in selective.opened] == [1, 2]
     assert selective.opened[1]["content"]["title"] == "Edit 3"
+
+
+def test_settle_also_counts_a_pass_that_finished_before_it_was_called(served, selective, quick_auto):
+    """Repro of the settle race (CI 29 Oct, "no auto pass finished (passes=3, wanted 4)"): the pass a commit woke can
+    finish before the test starts to wait; settle must still return."""
+    _, key = labelled(served, "Public note", "public")
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    a = quick_auto.state_of(served.h.host.services[served.wid])
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    with a.cv:  # the pass has run and the thread is idle before settle is called
+        assert a.cv.wait_for(lambda: a.covered >= a.marks and a.dirty_since is None, timeout=10)
+    settle(served, quick_auto, timeout=2.0)
+    assert [i["item_version"] for i in selective.opened] == [1, 2]
 
 
 def test_a_ticket_that_stops_matching_is_revoked(served, selective, quick_auto):
@@ -461,15 +610,15 @@ def test_an_item_that_left_and_comes_back_needs_a_new_confirm(served, selective,
     assert selective.count("share_put") == 1 and selective.count("share_revoke") == 1
 
 
-def test_full_mode_never_sends_even_when_the_thread_runs(served, full, quick_auto):
+def test_full_mode_default_rule_pass_sends_nothing_when_the_thread_runs(served, full, quick_auto):
     from orch.host import shareauto
 
     svc = served.h.host.services[served.wid]
     _, key = labelled(served, "Public note", "public")
-    shareauto.arm(svc)  # as if a leftover share state armed it
+    shareauto.arm(svc)
     ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
-    a = settle(served, quick_auto)
-    assert a.parked and str(a.last).startswith("parked:") and full.ops == []
+    settle(served, quick_auto)
+    assert full.ops == []  # the default needs-you rule never leaves in full mode
 
 
 def test_no_pass_before_a_selective_join(served, quick_auto):

@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "wait.incomplete",
+    "message": "the gate still lacks items: nobody can approve it yet",
+    "hint": "fill what is missing, then orch wait",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}

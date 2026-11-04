@@ -25,13 +25,13 @@ from tests.host.test_hub_ops import (  # noqa: F401 - fixtures
     stub,
 )
 from tests.hub import logview
-from tests.hub.fake import sign_with
+from tests.hub.fake import BareLink, sign_with
 from tests.hub.vec import private_key, pub
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 
-class LogHub:
+class LogHub(BareLink):
     """Answers ``log_sync`` the way the hub does (the test-side port of its rules) and records every page."""
 
     def __init__(self, wsk_pub: bytes, wk: dict[int, bytes]) -> None:
@@ -425,6 +425,7 @@ def test_d15b_the_hub_holds_the_hosts_own_projection_of_each_ticket(human, serve
     try:
         src = logsyncops.StoreSource(store)
         assert p == src.proj(uid)  # the same values the host would admit with: nothing moved since
+        assert isinstance(p["waiting"], list) and p["waiting"] == sorted(set(p["waiting"]))  # R14b
         assert p["roster_v"] == store.state.workspace.roster_v and p["status"] == store.state.tickets[uid].status
         assert (p["seq"], p["head"]) == (store.log_seq(uid), store.head_at(uid, store.log_seq(uid)))
         assert src.proj("workspace") is None
@@ -439,7 +440,6 @@ def test_d15b_a_changed_projection_with_no_new_line_is_sent_once_for_a_burst(mon
     uid, _key = human.ticket("one")
     assert until(lambda: uid in loghub.view.proj and loghub.logs() == local_summary(served))
     # members are added by local signing below; C8 makes full mode sign through the hub, so lift that rule here
-    monkeypatch.setattr("orch.model.breakglass.local_refusal", lambda ws, e: None)
     before = len(loghub.pages)
     roster = loghub.view.proj[uid]["roster_v"]
     seq = loghub.view.proj[uid]["seq"]

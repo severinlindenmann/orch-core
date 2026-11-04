@@ -12,7 +12,7 @@ from orch.crypto.encoding import unb64u
 from orch.hubclient import HubRefused, HubState, flush_outbox, join_selective, leave, wire
 
 from . import contract as H
-from .fake import FakeHub, host_join_proof
+from .fake import BareLink, FakeHub, host_join_proof
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
@@ -24,7 +24,7 @@ def sign_wsk(b: bytes) -> bytes:
     return S.sign(WSK, b)
 
 
-class Wire:
+class Wire(BareLink):
     """An in-process HubTransport on the fake hub; ``down`` makes it unreachable."""
 
     def __init__(self, hub: FakeHub) -> None:
@@ -107,7 +107,14 @@ def test_hub_never_sees_wk_material(host: Host, hub: FakeHub) -> None:
     assert ws.wk_seals == [] and all(op != "wk_seal" for _, op, _ in hub.calls)
     # nothing the hub received is a wrap, a member list or a key: only the join body members
     for m in host.wire.sent:
-        assert m["o"]["op"] == "join" and set(m["o"]["body"]) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
+        assert m["o"]["op"] == "join" and set(m["o"]["body"]) == {
+            "invite",
+            "card",
+            "pk_pub",
+            "binding",
+            "owner_proof",
+            "alias_users",
+        }
 
 
 def test_wk_seal_refused_in_selective(host: Host, hub: FakeHub) -> None:
@@ -334,7 +341,7 @@ def test_same_hub_rejoin_delivers_first_then_binds(host: Host, hub: FakeHub) -> 
     assert [c[1] for c in hub.calls if c[0] == WS] == ["join", "binding_put", "join"]
 
 
-class Dead:
+class Dead(BareLink):
     def __init__(self) -> None:
         self.sent: list[dict] = []
 

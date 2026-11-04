@@ -1,5 +1,5 @@
 # ruff: noqa: F811  (the `shub` fixture is imported then named as an argument)
-"""share_put / share_revoke over real links (protocol.md §10.2, §10.2b): selective only, the version rule, tombstones,
+"""share_put / share_revoke over real links (protocol.md §10.2, §10.2b): both modes (full: ticket items only), the version rule, tombstones,
 purge, limits, and the `share` events on the hub audit chain."""
 
 from __future__ import annotations
@@ -143,20 +143,15 @@ def test_item_cap(shub, monkeypatch):
     refused(c, "share_put", body(IT2, 2), "too_many_items")  # re-sharing a revoked id counts as a new live item
 
 
-def test_full_mode_refused(shub):
+def test_full_mode_accepts_ticket_items_only(shub):
     h = shub()
-    h.join("full")
-    for op, b in (("share_put", body()), ("share_revoke", {"item_id": IT1})):
-        c = h.open()  # a refusal at the link drops it: one fresh link per op
-        c.send_raw(c.build(op, b))
-        with pytest.raises(LinkError) as e:
-            c.recv_reply()
-        assert e.value.code == "wrong_mode"  # §10.2 step 3: refused at the link, never reaches the store
+    c = h.join("full")
+    refused(c, "share_put", body(IT1, 1), "wrong_mode")  # a needs_you summary: the hub's views already cover it
     assert h.share_store.usage(G.WS_A) == (0, 0)
+    assert c.request("share_revoke", {"item_id": IT1}) == {}  # revoke is allowed (idempotent, nothing held)
 
 
-def test_service_itself_refuses_full_mode(shub):
-    """Defence in depth: even if the link layer let it through, the handler checks the live binding's mode."""
+def test_service_unknown_workspace_and_full_summary(shub):
     h = shub()
     h.join("full")
     with pytest.raises(Refused) as e:
@@ -196,14 +191,13 @@ def test_unbind_purges_every_item_and_keeps_the_versions(shub):
     refused(c, "share_put", body(), "not_bound")
 
 
-def test_switch_to_full_purges(shub):
+def test_switch_to_full_keeps_items_and_hides_summaries(shub):
     h = shub()
     c = h.join()
-    c.request("share_put", body())
+    c.request("share_put", body())  # a needs_you summary, shared in selective mode
     assert c.request("binding_put", {"object": G.binding(seq=2, mode="full")}) == {}
-    assert h.share_store.usage(G.WS_A) == (0, 0)
-    ev = audit_records(h)[-1][1]
-    assert (ev["change"], ev["count"]) == ("purge", 1)
+    assert h.share_store.usage(G.WS_A)[0] == 1  # kept: items belong to the binding, not to the mode
+    assert h.svc.list_shared(OWNER, G.WS_A) == []  # but a summary is never served in full mode
 
 
 def test_purge_with_nothing_live_writes_no_record(shub):

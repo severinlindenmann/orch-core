@@ -1,4 +1,5 @@
 import { HubTab } from './hub/HubTab'
+import { CompanyTab } from './company/CompanyTab'
 import { Link } from '@tanstack/react-router'
 import { can, roleOf } from '@/api/permissions'
 import { SettingsSkeleton } from '../skeletons'
@@ -11,6 +12,7 @@ import { General } from './General'
 import { AddonManager } from './addons'
 import { Gates } from './Gates'
 import { Members } from './Members'
+import { Profile } from './Profile'
 import { Relay } from './relay'
 import { Skills } from './Skills'
 import { Connections } from './Connections'
@@ -19,6 +21,8 @@ import { isRealHost } from '@/api/features'
 import { HostGates } from './host/Gates'
 import { HostGeneral } from './host/General'
 import { HostDevices } from './host/Devices'
+import { RemoteAccess } from './host/RemoteAccess'
+import { remoteServed } from '@/api/remote'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
@@ -45,6 +49,7 @@ function HostPhone({ workspace }: { workspace: Workspace }) {
         </div>
       </section>
       <HostDevices workspace={workspace} />
+      {remoteServed(workspace.id) && <RemoteAccess ws={workspace.id} />}
     </div>
   )
 }
@@ -69,8 +74,10 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {tab === 'members' && <HostMembers workspace={workspace} />}
         {tab === 'gates' && <HostGates workspace={workspace} />}
         {tab === 'grants' && <HostGrants workspace={workspace} />}
+        {tab === 'profile' && <Profile key={workspace.id} workspace={workspace} />}
         {tab === 'devices' && <HostPhone key={workspace.id} workspace={workspace} />}
         {tab === 'hub' && <HubTab key={workspace.id} workspace={workspace} />}
+        {tab === 'company' && <CompanyTab key={workspace.id} workspace={workspace} isOwner={isOwner} />}
       </SettingsFrame>
     )
   }
@@ -81,9 +88,11 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
     <SettingsFrame current={current} addon={addon} ws={workspace.id}>
       {!isOwner && <p className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">{ONLY_OWNERS}</p>}
       {current === 'hub' && <HubTab key={workspace.id} workspace={workspace} />}
+      {current === 'company' && <CompanyTab key={workspace.id} workspace={workspace} isOwner={isOwner} />}
       {current === 'general' && <General workspace={workspace} canEdit={isOwner} />}
       {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
       {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}
+      {current === 'profile' && <Profile key={workspace.id} workspace={workspace} />}
       {current === 'relay' && <Relay workspace={workspace} canEdit={isOwner} viewer={me.data.person} />}
       {current === 'addons' && <AddonManager workspace={workspace} canEdit={isOwner} settingsOf={addon} />}
       {current === 'skills' && <Skills workspace={workspace} canEdit={isOwner} />}

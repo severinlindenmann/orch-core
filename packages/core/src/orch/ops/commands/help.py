@@ -14,7 +14,7 @@ OP = operation(
         {"topic": STR, "workflows": arr(STR), "steps": arr(obj({"op": STR, "call": STR}))},
         optional=("workflows", "steps"),
     ),
-    errors=(err("not_found", "orch help lists the workflows", ["orch", "help"]),),
+    errors=(err("not_found", "orch help lists the workflows", ["orch", "help"]), err("addon.off")),
 )
 
 

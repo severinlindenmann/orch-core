@@ -38,14 +38,14 @@ class Workspace(BaseModel):
     runner: dict | None = None
     # V3 C11: the host's signing mode (`full`/`unknown`: approvals go through the hub); null: not known.
     signing: str | None = None
-    # The signed workspace icon (`settings.icon`): an icon and a colour of core's closed lists, or null (none signed:
-    # the page shows the default from the id). `icon_known`: the host reports the setting (an older host does not).
+    # The workspace icon (unsigned, `config.json`, run 13 D6): an icon and a colour of core's closed lists, or null
+    # (none set: the page shows the default from the id). `icon_known`: the host reports the setting.
     icon: dict | None = None
     icon_known: bool = False
 
 
 def workspace_icon(settings) -> dict | None:
-    """The host's `icon` from `workspace.settings`: only a plain pair of core's closed lists, else ``None`` (the
+    """The host's `icon` from `workspace.show`: only a plain pair of core's closed lists, else ``None`` (the
     default shows; nothing the host sent outside the lists reaches the page)."""
     from orch.wsicons import COLOUR_LABELS, ICON_LABELS
 

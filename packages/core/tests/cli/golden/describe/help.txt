@@ -6,4 +6,5 @@ args:
   WORKFLOW  workflow name
 errors:
   not_found (exit 2): orch help lists the workflows | fix: orch help
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
 out: ok help {topic} / next: {next}

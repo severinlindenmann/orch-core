@@ -56,6 +56,7 @@ def test_the_passkey_routes_are_the_only_ones_before_login():
         ("POST", "/auth/passkey/login"),
         ("POST", "/auth/enroll/options"),
         ("POST", "/auth/enroll/register"),
+        ("POST", "/auth/switch"),  # H1: a one-use hub switch ticket, checked by the hub
     }
 
 
@@ -129,7 +130,7 @@ NAMED = [
     ("POST", "/api/w/{ws}/runs/{run}/attach", TERMINALS),
     ("POST", "/api/w/{ws}/terminals/open", TERMINALS),
     ("POST", "/api/w/{ws}/terminals/preview", TERMINALS),
-    ("POST", "/api/w/{ws}/handoff", ALLOWED),
+    ("POST", "/api/w/{ws}/click/prepare", ALLOWED),
     ("POST", "/api/w/{ws}/click/custody/seal", ALLOWED),
     ("POST", "/api/w/{ws}/click/rotate/seal", ALLOWED),
     ("POST", "/api/passkeys/enroll-link", STEP_UP),
@@ -147,6 +148,14 @@ NAMED = [
 def test_the_named_routes_have_the_decided_rule(front, remote, method, template, rule):
     assert TABLE[(method, template)][0] == rule
     assert answered_no(call(front, method, template, remote), (method, template)) == (rule not in (ALLOWED, STEP_UP))
+
+
+def test_click_prepare_is_the_only_prepare_route():
+    """The terminal hand-off (unbound requests) is gone: no table row and no app route prepares anything else."""
+    assert not [k for k in TABLE if "/handoff" in k[1] or k[1].endswith("/hub/command")]
+    assert [k for k in TABLE if k[1].endswith("/prepare") and "/click/" in k[1]] == [
+        ("POST", "/api/w/{ws}/click/prepare")
+    ]
 
 
 def test_terminals_come_back_with_the_policy_switch(gateway, auth, tmp_path, stub, remote):
@@ -172,3 +181,17 @@ def test_loopback_is_not_gated(loop, local, stub):
         path = fill(template).replace("/w/x", f"/w/{stub.ws}")
         res = loop.request(method, path, json={}, headers=bearer(local, ORIGIN))
         assert not gate_refused(res), template
+
+
+# --- R3: the `remote-device` column is never wider than the front's table (T3) -------
+def test_the_device_column_refuses_what_the_front_refuses_or_steps_up():
+    """A stream holds no passkey and answers nothing before login: whatever the front refuses, asks a step-up for, or
+    answers before login stays refused in a stream. (Its own walk is `test_remote_device_gate.py`.)"""
+    stream_only = {  # R3 T4: a presence exists inside a stream only; the front refuses it, a stream answers it
+        ("POST", routegate.W + "/remote/presence/nonce"),
+        ("POST", routegate.W + "/remote/presence"),
+    }
+    for key, (rule, _) in TABLE.items():
+        if rule in (REFUSED, STEP_UP, PRE_LOGIN) and key not in routegate.VIEW_WRITES | stream_only:
+            assert routegate.REMOTE_DEVICE[key][0] == REFUSED, key
+    assert set(TABLE) <= set(routegate.REMOTE_DEVICE)

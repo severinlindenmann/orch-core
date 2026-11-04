@@ -6,6 +6,7 @@ import { b64u, cj, hex, sha256, unb64u, utf8 } from "./cj.js";
 
 export const LABEL_REG = "orch/v2/hub-channel-reg|";
 export const LABEL_PROOF = "orch/v2/hub-channel-proof|";
+export const LABEL_HUB_REMOVE = "orch/v2/hub-remove|"; // the console digest of "Remove hub" (protocol.md, hub_remove_digest)
 const LABEL_CHANNEL_ID = "orch/v2/id/channel|"; // H(label || suite byte 2 || key_pub)[:16], protocol.md section 2.3
 const ECDSA = { name: "ECDSA", hash: "SHA-256" };
 const SKEW_MS = 120_000;
@@ -24,14 +25,24 @@ export async function generateKey() {
   return { pair, keyPub: b64u(raw), channelId: hex((await sha256(new Uint8Array([...utf8(LABEL_CHANNEL_ID), 2, ...raw]))).slice(0, 16)) };
 }
 
-/** What the browser verifies about a registration challenge before it signs it (protocol.md 6.3). */
+/** The mode of the hub that served this page: the `dev` flag of its held card. A challenge must carry exactly this flag. */
+export async function fetchHubDev() {
+  const res = await fetch("/api/v1/hub/card", { credentials: "same-origin", cache: "no-store" });
+  const dev = res.ok ? (await res.json())?.card?.o?.dev : undefined;
+  if (typeof dev !== "boolean") throw new ChannelError("challenge_invalid");
+  return dev;
+}
+
+/** What the browser verifies about a registration challenge before it signs it (protocol.md 6.3).
+ * `me.dev` is the serving hub's own mode: a dev challenge is never accepted by a real hub page, nor the reverse. */
 export function checkChallenge(o, me, now) {
   const bad = () => {
     throw new ChannelError("challenge_invalid");
   };
   const keys = "attestation channel_kind dev expires_ms hub_id hv key_pub kind nonce suite user_id v";
   if (o === null || typeof o !== "object" || Object.keys(o).sort().join(" ") !== keys) bad();
-  if (o.v !== 2 || o.suite !== 2 || o.hv !== 0 || o.kind !== "hub.channel_register" || o.dev !== true) bad();
+  if (o.v !== 2 || o.suite !== 2 || o.hv !== 0 || o.kind !== "hub.channel_register") bad();
+  if (typeof me.dev !== "boolean" || o.dev !== me.dev) bad();
   if (o.channel_kind !== "browser" || o.attestation !== "session") bad();
   if (o.key_pub !== me.keyPub || o.user_id !== me.userId) bad();
   if (me.hubId && o.hub_id !== me.hubId) bad();
@@ -46,9 +57,16 @@ export function checkChallenge(o, me, now) {
 
 /** Signs the registration object after checkChallenge passed. Returns {o, sig} as /channels/register/complete wants it. */
 export async function signRegistration(privateKey, o, me, now) {
-  checkChallenge(o, me, now);
+  checkChallenge(o, { ...me, dev: me.dev ?? (await fetchHubDev()) }, now);
   const sig = new Uint8Array(await crypto.subtle.sign(ECDSA, privateKey, utf8(LABEL_REG + cj(o))));
   return { o, sig: b64u(sig) };
+}
+
+/** The digest the admin signs to remove the hub: SHA-256("orch/v2/hub-remove|" || cj(ctx)), computed here from the context
+ * the hub returned. The page never signs a digest the hub sends; it compares it with this one and refuses on a mismatch. */
+export async function hubRemoveDigest(ctx) {
+  if (ctx === null || typeof ctx !== "object" || Array.isArray(ctx)) throw new ChannelError("malformed");
+  return sha256(utf8(LABEL_HUB_REMOVE + cj(ctx)));
 }
 
 /** The custodial proof over a digest this page computed itself: Sign(key, "orch/v2/hub-channel-proof|" || digest). */

@@ -1,3 +1,5 @@
+import { SharedToday } from './SharedToday'
+import { SpacesToday } from './SpacesToday'
 import { HubBanner } from '../../shell/HubBanner'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
@@ -11,7 +13,8 @@ import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
 import { useAttention, type Attention } from '../../attention'
 import { SEEN_PREFIX, useTodayGeneration } from '../../todayRestart'
-import { usePageHeader } from '../../shell/ShellUi'
+import { usePageHeader, useShellActions } from '../../shell/ShellUi'
+import { Button } from '@/components/ui/button'
 import { TodaySkeleton } from '../skeletons'
 import { LoadFailed } from '@/components/LoadFailed'
 import { LOADER_WAIT_MS } from '../../routeData'
@@ -22,7 +25,8 @@ import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ReloginGroup } from './relogin'
-import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, NoticeRow, SigningContext, QuestionRow, TerminalWaitRow, VerdictRow } from './rows'
+import { FollowupCards, useTodayFollowups } from '../schedules/TodayFollowups'
+import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, NoticeRow, SigningContext, QuestionRow, TerminalWaitRow, VerdictRow, WritingRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useSessionState, useTodayWide, type Directory } from './shared'
 import { queries } from '@/api/queries'
@@ -35,6 +39,10 @@ function dateLine(now: string) {
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/** How long a row answered from Today stays, collapsed to the answer, after it left the host's list. */
+export const ANSWERED_MS = 8_000
+const sameItem = (a: NeedsYouItem, b: NeedsYouItem) => a.kind === b.kind && a.ticket === b.ticket && a.ref === b.ref
 
 function readSeen(key: string): Set<string> | null {
   try {
@@ -57,6 +65,7 @@ function writeSeen(key: string, ids: string[]) {
 function actionRef(a: HumanAction): string {
   if (a.kind === 'answer') return a.question
   if (a.kind === 'verdict') return 'verify'
+  if (a.kind === 'approve_both') return 'requirements'
   return a.gate
 }
 
@@ -134,7 +143,7 @@ export function TodayPage() {
     <TodayInbox
       key={`${ws}:${me.data.person}:${readOnly}:${ds}:${generation}`}
       generation={`${ds}:${generation}`}
-      items={readOnly ? today.data.read_only_open : today.data.needs_you}
+      items={readOnly ? today.data.read_only_open : attention.items}
       decisions={decisionsQ.data}
       readOnly={readOnly}
       canAddon={can(role, 'addon.action')}
@@ -144,6 +153,13 @@ export function TodayPage() {
     />
     </>
   )
+}
+
+/** Follow-ups are said once: with nothing else, the follow-ups clause alone; "Nothing needs you" only when both are 0. */
+export function needsLine(n: number, followups: number): string {
+  const follow = followups ? `${plural(followups, 'follow-up', 'follow-ups')} to look at` : ''
+  if (n > 0) return follow ? `${n} need you · ${follow}` : `${n} need you`
+  return follow || 'Nothing needs you'
 }
 
 function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, attention, generation }: {
@@ -161,13 +177,29 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
   const addons = useAddons()
+  const { openNewTicket } = useShellActions()
+  const canCreate = can(useRole(), 'ticket.create')
   // Two columns only when the page itself is wide (the window minus the dock), never because the window is.
   const wide = useTodayWide()
   const now = today.data!.now
   const sessions = useMemo(() => agentsQ.data ?? [], [agentsQ.data])
   const dir: Directory = { workspace, agents: sessions }
 
-  const entries = useMemo(() => toEntries(items, decisions), [items, decisions])
+  // An answer sent from its row leaves the host's list at once; the row stays, collapsed to "You answered: …", for
+  // ANSWERED_MS (it keeps its place: no "Nothing needs you" under the person's pointer the moment they answer).
+  const [answered, setAnswered] = useState<{ item: NeedsYouItem; at: number }[]>([])
+  const listed = useMemo(() => {
+    const kept = answered.filter((a) => !items.some((i) => sameItem(i, a.item))).map((a) => a.item)
+    return kept.length ? [...items, ...kept] : items
+  }, [items, answered])
+  useEffect(() => {
+    if (!answered.length) return
+    const first = Math.min(...answered.map((a) => a.at))
+    const t = setTimeout(() => setAnswered((l) => l.filter((a) => Date.now() - a.at < ANSWERED_MS)), Math.max(0, first + ANSWERED_MS - Date.now()))
+    return () => clearTimeout(t)
+  }, [answered])
+  const keepAnswered = (item: NeedsYouItem) => setAnswered((l) => [...l.filter((a) => !sameItem(a.item, item)), { item, at: Date.now() }])
+  const entries = useMemo(() => toEntries(listed, decisions), [listed, decisions])
   // The order on screen changes only on load and on "Show new": arrivals wait in `fresh`, nothing moves under the pointer.
   // "New" means new since the person's last look: ids not in the list they last saw here (kept per workspace and
   // person in the browser; a first visit, a dataset switch or Reset marks nothing new). New items lead their group.
@@ -195,6 +227,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
     else setOrder((o) => pruneOrder(o, entries))
   }, [shown.length, fresh.length, entries, takeFresh])
   const groups = useMemo(() => buildGroups(shown), [shown])
+  const followups = useTodayFollowups()
 
   // Exactly one open row: on load the first blocking question, else the first row.
   const [expanded, setExpanded] = useState<string | null>(() => {
@@ -263,10 +296,13 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
     }
     const askedBy = e.item.kind === 'question' ? byKey[e.item.ticket]?.questions_state.find((q) => q.id === e.item.ref)?.asked_by : undefined
     const props = { item: e.item, ticket: byKey[e.item.ticket], askedBy: askedBy ? displayName(dir, askedBy) : undefined, now, expanded: expanded === row.id, onToggle: () => toggle(row.id), sign, decider: readOnly ? deciderOf(e) : undefined, locked }
-    if (e.item.kind === 'question') return <QuestionRow key={row.id} {...props} />
+    if (e.item.kind === 'question') {
+      const item = e.item
+      return <QuestionRow key={row.id} {...props} viewer={viewer} onAnswered={() => keepAnswered(item)} />
+    }
     if (e.item.kind === 'approval') return <ApprovalRow key={row.id} {...props} />
     if (e.item.kind === 'verdict') return <VerdictRow key={row.id} {...props} />
-    if (e.item.kind === 'terminal_wait') return <TerminalWaitRow key={row.id} item={e.item} now={now} />
+    if (e.item.kind === 'terminal_wait') return <TerminalWaitRow key={row.id} item={e.item} ticket={byKey[e.item.ticket]} now={now} />
     return <NoticeRow key={row.id} item={e.item} now={now} />
   }
 
@@ -288,6 +324,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
   // A host that does not serve agent sessions says nothing about them: no count, no panel.
   const agentsKnown = hasFeature('agents', ws)
   const n = attention.needsYou.total
+  const needs = needsLine(n, followups.cards.length)
   const counts = attention.agents
   const waiting = attention.waitingOnOthers
   const whoWaits = waiting.who.map((p) => displayName(dir, p)).join(', ')
@@ -301,7 +338,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
         <span>
           {readOnly
             ? `${dateLine(now)} · Nothing needs you · ${waiting.count} open in the workspace`
-            : `${dateLine(now)} · ${n === 0 ? 'Nothing needs you' : `${n} need you`}${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
+            : `${dateLine(now)} · ${needs}${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
         </span>
         {readOnly && (
           <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-muted">
@@ -331,6 +368,17 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
         )}
       </div>
       <ReloginGroup now={now} />
+      {!readOnly && attention.writing.length > 0 && (
+        <section aria-label="Now" className="overflow-hidden rounded-lg border border-border bg-surface">
+          <h2 className="border-b border-border px-3 py-2 text-xs font-medium text-text-muted">Now (agent is writing the plan)</h2>
+          <ul>
+            {attention.writing.map((w) => (
+              <WritingRow key={`${w.ticket}:${w.ref}`} item={w} now={now} />
+            ))}
+          </ul>
+        </section>
+      )}
+      {!readOnly && <FollowupCards today={followups} />}
       {readOnly ? [...byPerson].map(([person, personEntries]) => (
         <PersonSummary key={person} person={person} entries={personEntries} scope={scope} renderRow={renderRow} />
       )) : groups.map((g) => (
@@ -345,7 +393,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           reveal={reveal.groups.includes(g.id) ? reveal.n : 0}
         />
       ))}
-      {groups.length === 0 && (
+      {groups.length === 0 && followups.cards.length === 0 && (
         <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
           <p className="text-[15px] font-medium text-text">{readOnly ? 'Nothing is open in the workspace' : 'Nothing needs you right now'}</p>
           <p className="mt-1 text-[13px] text-text-muted">
@@ -353,8 +401,13 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
               ? "You'll see a row here when an agent asks you something or needs your OK."
               : counts.working > 0
                 ? `${plural(counts.working, 'agent is', 'agents are')} working. You will see a row here when one needs a decision.`
-                : 'No agent is working either. Pick a ticket from the board to start something.'}
+                : 'No agent is working either.'}
           </p>
+          {canCreate && (
+            <Button size="lg" className="mt-5" data-testid="first-task" onClick={openNewTicket}>
+              Give your AI helper a task
+            </Button>
+          )}
         </div>
       )}
       {!readOnly && waiting.count > 0 && (
@@ -379,6 +432,8 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           <aside className="min-w-0 space-y-4">
             {agentsKnown && <AgentsPanel {...agentProps} />}
             <Glance readOnly={!canAddon} max={GLANCE_TILES} />
+            <SpacesToday ws={ws} />
+            <SharedToday ws={ws} />
             <Recently recent={today.data!.recent} now={now} />
           </aside>
         </div>
@@ -387,6 +442,8 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           {agentsKnown && <AgentsBar {...agentProps} />}
           {queue}
           <Glance readOnly={!canAddon} />
+          <SpacesToday ws={ws} />
+            <SharedToday ws={ws} />
         </div>
       )}
       {signTicket && <SignDialog ticket={signTicket} action={signing!.action} onClose={() => setSigning(null)} onPending={setPending} />}

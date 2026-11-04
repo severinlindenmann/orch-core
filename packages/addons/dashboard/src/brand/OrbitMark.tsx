@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-/** The Orbit mark. Fixed brand colors on purpose: it must look the same everywhere. */
+/** The Orbit mark. The hex colours are the dark-theme look and the fallback; the classes switch the ring, dot and cut-out with the theme (#421). */
 export function OrbitMark({ size = 24, className }: { size?: number; className?: string }) {
   return (
     <svg
@@ -11,9 +11,9 @@ export function OrbitMark({ size = 24, className }: { size?: number; className?:
       aria-label="orch"
       className={cn('shrink-0', className)}
     >
-      <circle cx="32" cy="32" r="20" fill="none" stroke="#e8eaed" strokeWidth="6" />
-      <circle cx="32" cy="32" r="6" fill="#2fc6a3" />
-      <circle cx="47" cy="17" r="7" fill="#2fc6a3" stroke="#0a0c0f" strokeWidth="3" />
+      <circle cx="32" cy="32" r="20" fill="none" stroke="#e8eaed" className="stroke-text" strokeWidth="6" />
+      <circle cx="32" cy="32" r="6" fill="#2fc6a3" className="fill-brand" />
+      <circle cx="47" cy="17" r="7" fill="#2fc6a3" stroke="#0a0c0f" className="fill-brand stroke-sidebar" strokeWidth="3" />
     </svg>
   )
 }

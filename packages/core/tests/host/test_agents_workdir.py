@@ -118,6 +118,12 @@ def test_workdir_get_and_delete_touch_only_the_ticket_folder(ready, tmp_path):  
     assert (victim / "keep").read_text() == "mine" and (root / "mine.txt").exists()  # nothing else was touched
     assert (root / ".orch-work" / other / "a.txt").exists()  # another ticket's folder stays
     assert ok(c.call("workdir.delete", {"ticket": key}, idem=True))["data"]["deleted"] is False  # already gone
+    import json
+
+    lines = (world.lab.state / "host" / "audit-security.jsonl").read_text().splitlines()
+    mine = [json.loads(x) for x in lines if json.loads(x)["event"] == "workdir.delete"]
+    assert [(m["ticket"], m["deleted"]) for m in mine] == [(key, True), (key, False)]
+    assert all(m["principal"] and m["workspace_id"] for m in mine)
 
 
 def test_workdir_delete_is_a_persons_op_needs_an_idem_and_refuses_a_running_folder(ready):  # noqa: F811
@@ -135,3 +141,34 @@ def test_workdir_delete_is_a_persons_op_needs_an_idem_and_refuses_a_running_fold
     ok(start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"]))
     assert err(c.call("workdir.delete", {"ticket": key}, idem=True)) == "worktree.in_use"
     assert (Path(world.lab.root) / ".orch-work" / key).is_dir()
+
+
+def test_a_claude_agent_in_a_work_folder_gets_a_prompt_without_any_path(ready):  # noqa: F811
+    # run 16 P01: a path outside the work folder raised a hidden "read outside the working directories" question
+    world = ready
+    c = world.conn()
+    _, key = world.ticket()
+    pre = preview(c, ticket=key, harness="claude-code", mode="work")
+    assert pre["cwd"] == {"kind": "workdir", "ticket": key}
+    prompt_text = pre["argv"][-1]
+    assert prompt_text == f"Run orch status, then work on ticket {key}. Your rules are in your system prompt."
+    assert "--append-system-prompt-file" in pre["argv"]
+    assert not any(str(world.lab.root) in a for a in pre["argv"][5:])
+
+
+def test_workdir_get_lists_plain_files_only_when_asked(ready, tmp_path):  # noqa: F811
+    c = ready.conn()
+    _, key = ready.ticket()
+    folder = Path(ready.lab.root) / ".orch-work" / key
+    folder.mkdir(parents=True)
+    (folder / "hello.txt").write_text("hi")
+    (folder / "bad name!.txt").write_text("x")  # a name the server would not take
+    (folder / "sub").mkdir()
+    (folder / "link").symlink_to(tmp_path)
+    assert "items" not in ok(c.call("workdir.get", {"ticket": key}))["data"]
+    got = ok(c.call("workdir.get", {"ticket": key, "list": True}))["data"]
+    assert got["items"] == [{"name": "hello.txt", "bytes": 2}]
+    for i in range(30):
+        (folder / f"f{i:02}.txt").write_text("z")
+    got = ok(c.call("workdir.get", {"ticket": key, "list": True}))["data"]
+    assert len(got["items"]) == 20 and got["items_truncated"] is True

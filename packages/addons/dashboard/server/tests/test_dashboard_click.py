@@ -3,17 +3,19 @@ rules the section 0.8.6 item 7 puts on this process. The signer is faked here (a
 runs in test_realhost_click.py."""
 
 import base64
+import hashlib
 import json
 import logging
 import re
 import secrets
 import threading
 import time
+from datetime import UTC
 from pathlib import Path
 
 import pytest
 from conftest import ORIGIN
-from orch.click.protocol import ClickError
+from orch.click.protocol import HUB_SELECTIVE_RISK, ClickError
 
 from orch_dashboard import click_signer
 
@@ -44,14 +46,23 @@ class Fake:
 
 class Script:
     def __init__(self, ws):
-        self.ws, self.enabled, self.available, self.contract = ws, True, True, 3
+        self.ws, self.enabled, self.available, self.contract = ws, True, True, 4
         self.features: list | None = None  # `status.features`: ["custody"] for a signer with the switch
         self.refuse: dict[str, ClickError] = {}
         self.offer: dict = {}  # the answer to `custody_off {begin}`
         self.rotation: dict = {}  # the answer to `rotate {begin}`
         self.github: dict = {}  # the answer to `github_token {begin}` (#1198 C16)
         self.runner_on = False  # dashboard execution, as the fake signer holds it (#1198 C14)
-        self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
+        self.view = {
+            "view": {
+                "risk": RISK,
+                "lines": [CANARY],
+                "op": "approve",
+                "headline": "Approve DEMO-0001",
+                "risk_lines": [],
+            },
+            "view_digest": HASH,
+        }
         self.prepared = 0
         self.intents: dict[str, dict] = {}  # the host's idem record: idem -> {binding, request id, state}
         self.states: dict[str, str] = {}  # request id -> state at the (faked) host
@@ -78,6 +89,8 @@ class Script:
             if self.features is not None:
                 out["features"] = self.features
             return out
+        if op == "cancel_holds":
+            return {"state": "cancelled"}
         if op == "stash":
             return {"state": "complete"}
         if op == "stepup":  # #1198 R1-6: the signer's one-use nonce for a passkey step-up
@@ -172,6 +185,7 @@ class HostCheck:
         self.reads, self.checks, self.cancelled, self.pending = [], [], [], {}
         self.mismatch = False
         self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
+        self.review: list | None = None  # the committed events the host's record answers
         self.replay_error: str | None = None  # an idem code the host answers to the "Already done" replay
         self.verified: dict = {}  # what `adapters.handoff.request` answers (the verified record)
         self.key: str | None = None  # the ticket key of the host's row, once a sequence created it
@@ -186,7 +200,7 @@ class HostCheck:
             return {
                 "op": "log",
                 "request": {"id": REQ, "state": "submitted", "submitted_at": "2026-10-13T15:20:00Z"},
-                "material": {"review": [{"type": "log.added", "payload": {"message": "host text"}}]},
+                "material": {"review": self.review or [{"type": "log.added", "payload": {"message": "host text"}}]},
             }
         if op == "human.cancel":
             self.cancelled.append(args["request_id"])
@@ -239,6 +253,15 @@ def prepare(client, token, stub, body=None):
     return client.post(url(stub, "prepare"), json=body or approve(), headers=hdr(token))
 
 
+def test_a_prepare_body_that_does_not_validate_gets_a_plain_sentence_not_just_a_code(client, token, stub, script):
+    res = prepare(
+        client, token, stub, {"action": "addon_enable", "name": "publish", "publish": {"server": "ftp://x:y"}}
+    )
+    err = res.json()["error"]
+    assert res.status_code == 400 and err["code"] == "invalid.input"
+    assert err["message"] == "That could not be used. Check it and try again." and "ftp" not in res.text
+
+
 def test_the_signer_is_one_child_started_on_first_use_with_a_clean_environment(client, token, stub, script, gateway):
     assert script.started == []  # nothing starts at boot
     got = client.get("/api/workspaces", headers=hdr(token, False)).json()
@@ -270,9 +293,9 @@ def test_no_click_feature_unless_the_flag_is_on_and_the_signer_can_sign(
     assert ws["click"]["problem"] == "disabled"
 
 
-@pytest.mark.parametrize("contract", [1, 2, 4, 0, True, "3", None, 3.0])
+@pytest.mark.parametrize("contract", [1, 2, 3, 5, 0, True, "4", None, 4.0])
 def test_a_signer_of_another_contract_is_refused(client, token, stub, script, contract):
-    script.contract = contract  # strict: only the int 3 (3.0 == 3 in Python must not pass)
+    script.contract = contract  # strict: only the int 4 (4.0 == 4 in Python must not pass)
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" not in ws["features"] and ws["click"] is None
     assert script.clients[0].closed  # that child is stopped
@@ -282,13 +305,13 @@ def test_a_signer_of_another_contract_is_refused(client, token, stub, script, co
     assert [c for c in script.clients[0].calls if c[0] == "prepare"] == []
 
 
-def test_a_contract_3_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
-    script.contract = 3
+def test_a_contract_4_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
+    script.contract = 4
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" in ws["features"] and ws["click"]["available"] is True
     res = prepare(client, token, stub)
     assert res.status_code == 200, res.text
-    assert gateway.click.contract == 3
+    assert gateway.click.contract == 4
 
 
 def test_prepare_chooses_the_op_here_and_derives_the_idem_from_the_action(client, token, stub, script, auth):
@@ -346,6 +369,36 @@ def test_a_member_add_sends_the_certificate_as_a_file(client, token, stub, scrip
     args = [c for c in script.clients[0].calls if c[0] == "prepare"][0][1]
     assert args["op"] == "member.add" and args["args"]["cert"] == "-"
     assert base64.b64decode(args["files"]["cert"]["b64"]) == cert.encode()
+    assert "reader_decl" not in args["args"] and set(args["files"]) == {"cert"}
+
+
+def test_a_member_add_sends_the_reader_declaration_as_its_own_file(client, token, stub, script):
+    import base64
+    import json
+
+    pk = base64.urlsafe_b64encode(b"\x04" + b"a" * 64).rstrip(b"=").decode()
+    cert, decl = json.dumps({"v": 1}), json.dumps({"o": {"kind": "reader_decl"}, "sig": "x"})
+    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": cert, "reader_decl": decl}
+    res = prepare(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    args = [c for c in script.clients[0].calls if c[0] == "prepare"][0][1]
+    assert args["args"]["cert"] == "-" and args["args"]["reader_decl"] not in ("-", None)
+    assert base64.b64decode(args["files"]["reader_decl"]["b64"]) == decl.encode()
+    assert base64.b64decode(args["files"]["cert"]["b64"]) == cert.encode()
+
+
+@pytest.mark.parametrize("decl", ["[]", "{", '{"a": 1.5}', '{"a": 1, "a": 2}', '{"o": "' + "x" * 4096 + '"}'])
+def test_a_member_add_with_a_reader_declaration_that_is_no_strict_json_object_is_refused(
+    client, token, stub, script, decl
+):
+    import base64
+    import json
+
+    pk = base64.urlsafe_b64encode(b"\x04" + b"a" * 64).rstrip(b"=").decode()
+    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": json.dumps({"v": 1})}
+    res = prepare(client, token, stub, {**body, "reader_decl": decl})
+    assert res.status_code == 400, res.text
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
 
 
 def test_view_is_the_signers_view_unchanged(client, token, stub, script):
@@ -355,7 +408,7 @@ def test_view_is_the_signers_view_unchanged(client, token, stub, script):
     assert res.json() == script.view  # nothing added, hidden or re-rendered
     assert res.headers["cache-control"] == "no-store"
     call = [c for c in script.clients[0].calls if c[0] == "view"][0]
-    assert call[1] == {"workspace_id": stub.ws, "request_id": REQ}
+    assert call[1] == {"workspace_id": stub.ws, "request_id": REQ, "contract": 4}  # run 13 C3: announced
 
 
 def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(client, token, stub, script):
@@ -365,7 +418,14 @@ def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(clie
     assert res.status_code == 200
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
-    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH}
+    assert sent == {
+        "workspace_id": stub.ws,
+        "request_id": REQ,
+        "view_digest": HASH,
+        "contract": 4,
+        "delay_s": 0,
+        "session": hashlib.sha256(token.encode()).hexdigest(),
+    }
 
 
 @pytest.mark.parametrize(
@@ -383,7 +443,7 @@ def test_sign_bodies_are_checked(client, token, stub, script, body):
     assert [c for c in script.clients[0].calls if c[0] == "sign"] == []
 
 
-def test_a_request_belongs_to_the_person_so_any_session_of_theirs_can_use_it(client, token, stub, script, auth):
+def test_a_request_belongs_only_to_the_preparing_session(client, token, stub, script, auth):
     prepare(client, token, stub)
     other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(other["token"]))
@@ -559,7 +619,7 @@ def test_no_route_but_the_click_routes_calls_the_signer():
     # the gateway reads `status` for the card; the step-up ceremony asks for a passkey nonce (`stepup`); nothing else
     assert holders == ["click.py", "gateway.py", "stepup_routes.py"]
     assert [m for m in re.findall(r'signer\.call\("(\w+)"', (root / "stepup_routes.py").read_text())] == ["stepup"]
-    assert "orch.click" not in (root / "handoff.py").read_text()
+    assert "orch.click" not in (root / "signing.py").read_text()
 
 
 def test_the_status_route_is_the_card_only(client, token, stub, script):
@@ -589,10 +649,8 @@ def policy_body(n):
 
 def families(stub):
     """(name, prepare url, request-scoped calls: (method, url-for-an-id) per step)."""
-    hand = f"/api/w/{stub.ws}/handoff"
     click = f"/api/w/{stub.ws}/click"
     return {
-        "handoff": {"prepare": hand, "steps": [("get", lambda r: f"{hand}/{r}"), ("delete", lambda r: f"{hand}/{r}")]},
         "click": {
             "prepare": f"{click}/prepare",
             "steps": [("post", lambda r: f"{click}/view"), ("post", lambda r: f"{click}/cancel")],
@@ -600,9 +658,8 @@ def families(stub):
     }
 
 
-@pytest.fixture(params=["handoff", "click"])
+@pytest.fixture(params=["click"])
 def family(request, stub, script, rich):
-    script.enabled = request.param != "handoff"  # the terminal hand-off exists only where click-to-sign is off
     return request.param, families(stub)[request.param]
 
 
@@ -786,7 +843,7 @@ def test_m2_the_view_is_checked_against_the_hosts_own_record(client, token, stub
     kw = host_check.checks[0]
     assert kw["expect_op"] == "approve" and kw["expect_key"] == "DEMO-0001" and kw["expect_events"] is None
     # A settings change carries the exact event it must prepare.
-    from orch_dashboard.handoff import SettingsSet
+    from orch_dashboard.signing import SettingsSet
 
     body = {"action": "settings_set", "grant_hours": 12}
     assert SettingsSet(**body)
@@ -810,6 +867,63 @@ def test_l3_a_view_without_the_verbatim_risk_line_is_not_shown(client, token, st
     script.view = {"view": {**script.view["view"], "risk": "Convenience signing is fine."}, "view_digest": HASH}
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"headline": None},
+        {"headline": ""},
+        {"headline": "two\nlines"},
+        {"headline": 3},
+        {"risk_lines": None},
+        {"risk_lines": "one line"},
+        {"risk_lines": [3]},
+        {"risk_lines": [""]},
+        {"risk_lines": ["a\nb"]},
+        {"risk_lines": ["x"] * 65},
+        {"headline_detail": ""},
+        {"headline_detail": "“two\nlines”"},
+        {"headline_detail": 3},
+    ],
+)
+def test_c3_a_view_without_its_headline_or_risk_lines_is_not_shown(client, token, stub, script, bad):
+    """Contract 4 (run 13 C3): `headline` (one line) and `risk_lines` (lines, maybe none) are the signer's; a View that
+    lacks them, or carries another shape, is not passed on."""
+    prepare(client, token, stub)
+    view = {**script.view["view"], **bad}
+    script.view = {"view": {k: v for k, v in view.items() if v is not None}, "view_digest": HASH}
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert CANARY not in res.text
+
+
+def test_c3_the_view_and_its_risk_lines_are_passed_on_unchanged(client, token, stub, script):
+    prepare(client, token, stub)
+    risk = []  # approve is on the closed one-press allowlist
+    view = {**script.view["view"], "risk_lines": risk, "headline_detail": "“Export does nothing”"}
+    script.view = {"view": view, "view_digest": HASH}
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == script.view  # nothing added, hidden or re-rendered
+
+
+def test_c3_this_server_announces_its_contract_on_prepare_view_and_sign_only(client, token, stub, script):
+    prepare(client, token, stub)
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    signed = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    calls = script.clients[0].calls
+    announced = {op for op, args in calls if "contract" in args}
+    assert announced == {"prepare", "view", "sign"}
+    assert all(args["contract"] == 4 and type(args["contract"]) is int for op, args in calls if op in announced)
+
+
+def test_c3_a_signer_refusing_the_announced_contract_is_click_contract(client, token, stub, script):
+    script.refuse["prepare"] = ClickError("contract.mismatch", "this signer speaks click contract 5")
+    res = prepare(client, token, stub)
+    assert res.status_code == 501 and res.json()["error"]["code"] == "click.contract"
+    assert "orch-core" in res.json()["error"]["message"]
 
 
 def test_the_risk_constant_is_core_s(script):
@@ -1021,7 +1135,7 @@ def test_n6_status_never_waits_for_the_channel(script, stub, tmp_path):
     held.wait(2)
     t0 = time.monotonic()
     assert signer.status() == signer._last
-    assert time.monotonic() - t0 < 0.3
+    assert time.monotonic() - t0 < 0.6  # waiting for the lock would take the 1 s hold; idle takes ~1 ms
     t.join()
 
 
@@ -1272,6 +1386,83 @@ def test_1087_an_ended_attempt_is_never_signed_later_and_pressing_again_is_a_fre
     assert script.states[rid] == "bound"  # prepared, not signed: signing it is the person's own next click
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}},
+        {"action": "quick_start", "title": "Plan the launch", "description": "Why."},
+    ],
+)
+def test_p06_a_new_ticket_with_the_text_of_an_earlier_one_shows_its_own_review(
+    client, token, stub, script, host_check, rich, body
+):
+    """Run-10 J04c-01: an earlier ticket with the same title and text left an unreadable signed record. The first
+    press must show a fresh review (a new request, its own idem), never the dead end;
+    only the person's Sign signs it."""
+    script.features = ["custody", "sequence"]
+    first = prepare(client, token, stub, body)
+    assert first.status_code == 200, first.text
+    script.states[first.json()["request_id"]] = "submitted"  # the earlier ticket was signed
+    host_check.replay_error = "idem.conflict"  # and its record cannot be read here
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 200, again.text
+    rid = again.json()["request_id"]
+    assert rid != first.json()["request_id"] and script.prepared == 2
+    assert script.states[rid] == "bound"  # prepared, not signed
+    assert again.json()["repeat"] is True  # the page says: this makes another ticket like one already signed
+    idems = [a["idem"] for c, a in script.clients[0].calls if c == "prepare"]
+    assert len(set(idems)) == 2  # a new intent id: no earlier signature is reused
+
+
+def test_p06_a_lost_response_repress_of_a_new_ticket_is_already_done_with_its_sequence_replayed(
+    client, token, stub, script, host_check, rich
+):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    first = prepare(client, token, stub, body)
+    script.states[first.json()["request_id"]] = "submitted"
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
+    assert script.prepared == 1 and "sequence" not in again.json()  # no second ticket
+    replay = [a for a in host_check.reads if "sequence" in a]
+    assert replay and replay[0]["sequence"]["intent"]  # the host binds the sequence: it is sent along
+
+
+def test_p06_when_the_stepped_retry_is_also_signed_it_steps_once_more(client, token, stub, script, host_check, rich):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    a = prepare(client, token, stub, body).json()["request_id"]
+    script.states[a] = "submitted"
+    host_check.replay_error = "idem.conflict"
+    b = prepare(client, token, stub, body).json()["request_id"]
+    script.states[b] = "submitted"
+    c = prepare(client, token, stub, body)
+    assert c.status_code == 200, c.text
+    assert c.json()["request_id"] not in (a, b) and c.json()["repeat"] is True and script.prepared == 3
+
+
+def test_p06_already_done_names_the_created_ticket_in_plain_fields(client, token, stub, script, host_check, rich):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    first = prepare(client, token, stub, body)
+    script.states[first.json()["request_id"]] = "submitted"
+    host_check.review = [
+        {"type": "ticket.created", "key": "DEMO-0007", "title": "Plan the launch", "ticket_type": "feature"},
+        {"type": "log.added", "payload": {"message": "x"}},
+    ]
+    err = prepare(client, token, stub, body).json()["error"]
+    assert err["code"] == "intent.done" and err["ticket"] == {"key": "DEMO-0007", "title": "Plan the launch"}
+
+
+def test_p06_a_comment_with_an_unreadable_signed_record_still_blocks(client, token, stub, script, host_check, rich):
+    prepare(client, token, stub, comment(1))
+    assert sign_lost(client, token, stub).status_code == 200
+    host_check.replay_error = "idem.conflict"
+    again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.blocked"
+    assert script.prepared == 1
+
+
 def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client, token, stub, script, rich):
     prepare(client, token, stub, comment(1))
     assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
@@ -1287,7 +1478,7 @@ def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client,
 
 
 def test_794_the_walk_is_capped(client, token, stub, script, rich):
-    from orch_dashboard.handoff import NEXT_RETRY_HOPS
+    from orch_dashboard.signing import NEXT_RETRY_HOPS
 
     for r in range(NEXT_RETRY_HOPS + 1):
         got = client.post(url(stub, "prepare"), json={**comment(1), "retry": r}, headers=hdr(token))
@@ -1349,13 +1540,27 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
 
 
-# -- the terminal hand-off stays available where click-to-sign is on (#1170) -----------------------------------------
+# -- no unbound request is prepared any more: click/prepare is the only prepare route ---------------------------------
 
 
-def test_a_click_workspace_still_prepares_a_terminal_handoff(client, token, stub, script, rich):
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    assert res.status_code == 200, res.text
-    assert res.json().get("code")  # the code for `orch sign`
+def test_no_unbound_request_can_be_prepared(client, token, stub, script, host_check, rich):
+    for method in ("post", "get", "delete"):
+        path = f"/api/w/{stub.ws}/handoff" + ("" if method == "post" else "/" + REQ)
+        res = client.request(method, path, json=comment(1) if method == "post" else None, headers=hdr(token))
+        assert res.status_code in (404, 405), (method, res.text)
+    assert host_check.reads == []  # nothing reached the host
+
+
+def test_an_open_unbound_request_of_the_same_intent_is_never_reused(client, token, stub, script, host_check):
+    """A request prepared by the old terminal hand-off (no signer) has another host binding: the click prepare is
+    refused (`intent.open`), never handed that request to sign."""
+    script.refuse["prepare"] = ClickError("idem.conflict", "this idem was used for other arguments")
+    host_check.listing = [
+        {"id": REQ, "op": "log", "key": "DEMO-0001", "state": "prepared", "expires_at": "2026-10-13T15:30:00Z"}
+    ]
+    res = prepare(client, token, stub, comment(1))
+    assert res.json()["error"]["code"] == "intent.open"
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
 
 
 def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
@@ -1364,32 +1569,6 @@ def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, s
     res = sign_lost(client, token, stub)
     assert res.json()["error"]["reason"] == "disabled"
     assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404  # ended
-
-
-def test_flip_on_with_an_open_terminal_attempt_of_the_same_action_is_refused_with_its_expiry(
-    client, token, stub, script, host_check, rich
-):
-    host_check.listing = [
-        {
-            "id": "hr_" + "0" * 24 + "99",
-            "code": "7F3K-Q2MA",
-            "state": "prepared",
-            "op": "log",
-            "key": "DEMO-0001",
-            "expires_at": "2026-10-12T12:10:00Z",
-        },
-        {"id": REQ, "code": None, "state": "bound", "op": "log", "key": "DEMO-0001", "expires_at": "x"},  # a click one
-    ]
-    res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "intent.open"
-    assert "terminal" in err["message"] and "2026-10-12T12:10:00Z" in err["message"]
-    assert script.prepared == 0
-    # Another action (or an ended attempt) is not blocked.
-    other = client.post(url(stub, "prepare"), json={**comment(1), "key": "DEMO-0002"}, headers=hdr(token))
-    assert other.status_code == 200
-    host_check.listing[0]["state"] = "expired"
-    assert client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token)).status_code == 200
 
 
 def test_submitted_sign_refusal_uses_host_record_warning(client, token, stub, script, host_check):
@@ -1570,7 +1749,7 @@ def test_concurrent_uncertain_sign_remarks_after_definite_failure(client, token,
     ],
 )
 def test_a_definite_sign_failure_clears_the_mark_only_with_nothing_in_flight_or_unknown(steps, marked):
-    from orch_dashboard.handoff import Handoffs
+    from orch_dashboard.signing import Handoffs
 
     handoffs = Handoffs()
     until = handoffs.clock() + 100
@@ -1583,7 +1762,7 @@ def test_a_definite_sign_failure_clears_the_mark_only_with_nothing_in_flight_or_
 
 
 def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
-    from orch_dashboard.handoff import Handoffs
+    from orch_dashboard.signing import Handoffs
 
     handoffs = Handoffs()
     until = handoffs.clock() + 100
@@ -1601,10 +1780,7 @@ def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
 # -- M7b: the runner grant, a click request in the deposit-only grant mode (D-P2-27, section 0.8.6 item 6) ------------
 
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
-DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 SECRET = "demo-not-a-real-secret-tail"
 GRANT = "gr_01M4Y46B485AXD4CBEJZ15Z1TV"
 
@@ -1623,6 +1799,8 @@ def grant_view(**over):
         "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
         "fingerprint": "0123456789ab",
         "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
+        "headline": "Give your orch runner agent access for 8 hours",
+        "risk_lines": [DEPOSIT_RISK],
         "deposit": True,
         "deposit_line": DEPOSIT_LINE,
         "confirm": {"kind": "click"},
@@ -1632,7 +1810,7 @@ def grant_view(**over):
 
 @pytest.fixture
 def deposits(script, monkeypatch, host_check):
-    """A contract-3 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
+    """A contract-4 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
     leave this server (the host's `result` with a secret in it, and an unknown field)."""
     global GRANT_WS
     GRANT_WS = script.ws
@@ -1767,7 +1945,7 @@ def test_each_deposit_field_is_checked(client, token, stub, deposits, answer, ou
 
 
 def test_expected_admits_only_the_callers_runner_grant():
-    from orch_dashboard.handoff import RunnerGrant, expected
+    from orch_dashboard.signing import RunnerGrant, expected
 
     me = "p_" + "1" * 32
     good = {
@@ -2121,13 +2299,27 @@ def test_publish_setup_and_share_are_one_click(client, token, stub, script, host
     assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
-MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
+MARKET = {
+    "action": "market_grant",
+    "name": "echo",
+    "staged": "st_" + "0" * 32,
+    "grant": {
+        "name": "echo",
+        "version": "1.0.0",
+        "package_sha256": "sha256:" + "a" * 64,
+        "capabilities": ["network"],
+        "fields": {},
+        "sections": [],
+        "artifact_kinds": [],
+        "staged": "st_" + "0" * 32,
+    },
+}
 
 
 @pytest.fixture
 def host_serves_grant(monkeypatch):
     """The test host's welcome does not list addon.grant (a real one does); the column check is not what is tested."""
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
 
     monkeypatch.setattr(handoff, "WORKSPACE_OPS", tuple(o for o in handoff.WORKSPACE_OPS if o != "addon.grant"))
 
@@ -2137,20 +2329,48 @@ def test_a_market_install_is_one_click_and_the_signer_gets_the_host_review_mater
 ):
     """V3-D38: the grant of a staged marketplace package goes to the signer like any other action. The server names
     the op and its two arguments; the review (capabilities, marketplace block) is the host's and the signer's."""
+    script.features = ["custody", "sequence"]
     res = prepare(client, token, stub, MARKET)
     assert res.status_code == 200, res.text
     (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
-    assert args["op"] == "addon.grant" and args["args"] == {"name": "echo", "staged": MARKET["staged"]}
-    assert "sequence" not in args and "files" not in args
+    assert args["op"] == "addon.grant" and args["args"] == {
+        "name": "echo",
+        "staged": MARKET["staged"],
+        "digest": "sha256:" + "a" * 64,
+        "caps": ["network"],
+    }
+    assert args["sequence"]["intent"]["kind"] == "addon_enable" and "files" not in args
     again = prepare(client, token, stub, MARKET)  # the same stage is the same request
     assert again.json()["request_id"] == res.json()["request_id"] and script.prepared == 1
-    other = prepare(client, token, stub, {**MARKET, "staged": "st_" + "1" * 32})  # a new review is a new request
+    other = prepare(
+        client,
+        token,
+        stub,
+        {**MARKET, "staged": "st_" + "1" * 32, "grant": {**MARKET["grant"], "staged": "st_" + "1" * 32}},
+    )  # a new review is a new request
     assert other.status_code == 200 and script.prepared == 2
 
 
 def test_a_market_install_for_publish_is_a_click_too(client, token, stub, script, rich, host_serves_grant):
-    res = prepare(client, token, stub, {**MARKET, "name": "publish"})
+    res = prepare(client, token, stub, {**MARKET, "name": "publish", "grant": {**MARKET["grant"], "name": "publish"}})
     assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
+
+
+def legacy_agent_sequence(client, token, stub):
+    """Retained pre-upgrade request: these relay tests still check progress/result sanitization.
+
+    New requests with agent access are refused; the real signer also refuses signing a retained one.
+    """
+    from orch_dashboard.signing import NewTicketSequence
+
+    res = prepare(client, token, stub, SEQUENCE)
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    ws, op, _, epoch = client.app.state.clicks.get(rid)
+    body = NewTicketSequence.model_validate({**SEQUENCE, "agent": {"hours": 24}})
+    client.app.state.clicks.add(ws, rid, op, body, epoch)
+    client.app.state.handoffs.note_intent(client.app.state.person_of(ws), rid, body.intent())
+    return res
 
 
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
@@ -2158,7 +2378,7 @@ def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_i
 ):
     """U4: the server (never error text) says the ticket landed and only the access is missing."""
     script.features = ["custody", "sequence"]
-    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    res = legacy_agent_sequence(client, token, stub)
     assert res.status_code == 200, res.text
     rid = res.json()["request_id"]
     seen = {}
@@ -2182,7 +2402,7 @@ def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(c
     """The page starts the agent for exactly the ticket this signature created: its key must reach it when the sequence
     ends in a deposit (the access), as it does when there is none. The deposit fields stay the closed set."""
     script.features = ["custody", "sequence"]
-    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    res = legacy_agent_sequence(client, token, stub)
     assert res.status_code == 200, res.text
     rid = res.json()["request_id"]
     base = script.handler
@@ -2210,7 +2430,7 @@ def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(c
 def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(client, token, stub, script, host_check):
     """The deposit's result is the grant's: it carries no ticket key. The host's own row of the request does."""
     script.features = ["custody", "sequence"]
-    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    rid = legacy_agent_sequence(client, token, stub).json()["request_id"]
     base = script.clients[0].handler
 
     def handler(op, args):
@@ -2235,7 +2455,7 @@ def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(cl
 def test_an_odd_ticket_key_or_seq_is_not_passed_on(client, token, stub, script, host_check):
     """The key must be a ticket key (from the result and from the host's row alike); seq must be a real integer."""
     script.features = ["custody", "sequence"]
-    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    rid = legacy_agent_sequence(client, token, stub).json()["request_id"]
     base = script.clients[0].handler
     answer = {}
 
@@ -2368,6 +2588,8 @@ def reveal_view(**over):
         "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
         "fingerprint": "0123456789ab",
         "lines": ["grant for Demo Owner", "", REVEAL_RISK, REVEAL_LINE],
+        "headline": "Give agents access for 2 hours",
+        "risk_lines": [REVEAL_RISK, "Agents get this authority for 2 hours, until it ends or you stop it."],
         "seal": seal,
         "confirm": {"kind": "click"},
     }
@@ -2432,11 +2654,6 @@ def test_agent_access_needs_a_signer_that_can_seal(client, token, stub, reveals)
     reveals.features = ["custody"]
     res = prepare(client, token, stub, agent_access())
     assert res.status_code != 200 and sent_of(reveals, "prepare") == []
-
-
-def test_agent_access_is_not_a_terminal_hand_off(client, token, stub, reveals):
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=agent_access(), headers=hdr(token))
-    assert res.status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -2545,7 +2762,7 @@ def test_the_server_logs_never_hold_the_envelope_or_the_secret(client, token, st
 
 
 def test_expected_admits_only_the_callers_agent_access():
-    from orch_dashboard.handoff import AgentAccess, expected
+    from orch_dashboard.signing import AgentAccess, expected
 
     me = "p_" + "1" * 32
     good = {
@@ -2564,12 +2781,12 @@ def test_expected_admits_only_the_callers_agent_access():
 
 
 def test_a_new_page_key_is_a_new_request_and_the_same_key_the_same_one():
-    from orch_dashboard.handoff import AgentAccess
+    from orch_dashboard.signing import AgentAccess
 
     other = "E" + "A" * 86
     a = AgentAccess(action="agent_access", reveal_key=PAGE_KEY)
     b = AgentAccess(action="agent_access", reveal_key=other)
-    from orch_dashboard.handoff import intent_idem
+    from orch_dashboard.signing import intent_idem
 
     def idem(body):
         return intent_idem(
@@ -2653,6 +2870,8 @@ def backup_view(**over):
         "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
         "fingerprint": "0123456789ab",
         "lines": ["join the hub", "", BACKUP_LINE],
+        "headline": "Join a hub",
+        "risk_lines": [HUB_SELECTIVE_RISK],
         "seal": seal,
         "backup_key_line": BACKUP_LINE,
         "confirm": {"kind": "click"},
@@ -2715,11 +2934,6 @@ def test_a_hub_step_needs_a_signer_that_takes_the_backup_key(client, token, stub
     backup.features = ["custody"]
     res = prepare(client, token, stub, hub_join())
     assert res.status_code != 200 and sent_of(backup, "prepare") == []
-
-
-def test_a_hub_step_is_not_a_terminal_hand_off(client, token, stub, backup):
-    assert client.post(f"/api/w/{stub.ws}/handoff", json=hub_join(), headers=hdr(token)).status_code == 400
-    assert client.post(f"/api/w/{stub.ws}/handoff", json={"action": "hub_leave"}, headers=hdr(token)).status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -3244,7 +3458,7 @@ def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script,
 
 def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub, backup, monkeypatch):
     """B10/B13: leave, join, mode full, leave is a new request each time; a repeat with no change is not."""
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
 
     state = {"joined": True, "mode": "selective", "binding_seq": 1, "hub_id": HUB_ID, "binding": "bound"}
     monkeypatch.setattr(handoff, "hub_base", lambda link: {"hub": dict(state)})
@@ -3263,7 +3477,7 @@ def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub
 def test_hub_base_is_the_log_head_and_the_hub_state():
     from orch.host.journal import CURSOR_PREFIX
 
-    from orch_dashboard.handoff import hub_base
+    from orch_dashboard.signing import hub_base
 
     body = base64.urlsafe_b64encode(json.dumps({"e": "E", "j": 7, "p": "P", "r": "R9", "w": "W"}).encode())
     cursor = CURSOR_PREFIX + body.decode().rstrip("=") + ".mac"
@@ -3276,3 +3490,590 @@ def test_hub_base_is_the_log_head_and_the_hub_state():
 
     want = {"joined": True, "hub_id": "ab", "mode": "full", "binding_seq": 4, "binding": "bound"}
     assert hub_base(L()) == {"head": {"e": "E", "j": 7, "r": "R9"}, "hub": want}
+
+
+def test_c2_switch_cannot_prepare(client, auth, stub, script):
+    from orch_dashboard.policy import LOOPBACK
+
+    switched = auth.open_switch(LOOPBACK, stub.ws)["token"]
+    result = prepare(client, switched, stub)
+    assert result.status_code == 403
+    assert result.json()["error"]["code"] == "session.readonly"
+    assert script.prepared == 0
+
+
+def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
+    request_id = prepare(client, token, stub).json()["request_id"]
+    cancelled = client.post(url(stub, "cancel"), json={"request_id": request_id}, headers=hdr(token))
+    assert cancelled.status_code == 200
+    late = client.post(url(stub, "sign"), json={"request_id": request_id, "view_digest": HASH}, headers=hdr(token))
+    assert late.status_code == 404
+    fresh = prepare(client, token, stub, {**approve(), "retry": 1})
+    assert fresh.status_code == 200
+    assert fresh.json()["request_id"] != request_id
+
+
+@pytest.mark.parametrize("minutes,expected_grant", [(None, True), (14, True), (15, False), (16, False)])
+def test_d2_host_clock_selects_last_grant(client, token, stub, script, monkeypatch, minutes, expected_grant):
+    from datetime import datetime, timedelta
+
+    from orch_dashboard.gateway import Gateway
+
+    script.features = ["custody", "sequence"]
+    real = Gateway.call
+    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
+
+    def call(self, ws, op, *args, **kwargs):
+        if op == "whoami":
+            return {
+                "runner": {
+                    "now": now.isoformat(),
+                    "grant": (
+                        {"startable": True, "until": (now + timedelta(minutes=minutes)).isoformat()}
+                        if minutes is not None
+                        else None
+                    ),
+                }
+            }
+        return real(self, ws, op, *args, **kwargs)
+
+    monkeypatch.setattr(Gateway, "call", call)
+    res = prepare(
+        client, token, stub, {**SEQUENCE, "launch": {"harness": "codex", "mode": "refine"}, "agent": {"hours": 8}}
+    )
+    assert res.status_code == 200, res.text
+    args = next(args for op, args in script.clients[0].calls if op == "prepare")
+    intent = args["sequence"]["intent"]
+    assert intent["launch"] == {"harness": "codex", "mode": "refine"}
+    assert ("agent" in intent) is expected_grant
+    if expected_grant:
+        assert intent["agent"] == {"hours": 8, "scope": "workable"}
+
+
+def test_d2_valid_access_create_start_view_uses_stored_body(client, token, stub, script, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from orch_dashboard.gateway import Gateway
+
+    script.features = ["custody", "sequence"]
+    real = Gateway.call
+    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
+
+    def call(self, ws, op, *args, **kwargs):
+        if op == "whoami":
+            return {
+                "runner": {
+                    "now": now.isoformat(),
+                    "grant": ({"startable": True, "until": (now + timedelta(minutes=16)).isoformat()}),
+                }
+            }
+        return real(self, ws, op, *args, **kwargs)
+
+    monkeypatch.setattr(Gateway, "call", call)
+    res = prepare(
+        client, token, stub, {**SEQUENCE, "launch": {"harness": "codex", "mode": "refine"}, "agent": {"hours": 8}}
+    )
+    assert res.status_code == 200, res.text
+    args = next(args for op, args in script.clients[0].calls if op == "prepare")
+    intent = args["sequence"]["intent"]
+    assert intent["launch"] == {"harness": "codex", "mode": "refine"}
+    assert "agent" not in intent
+
+    # /view must retrieve the body stored by /prepare, after agent was removed.
+    # The browser proposed a grant; the test never supplies a stripped body.
+    script.view["view"].update(
+        op="new",
+        headline="Create ticket and start agent",
+        risk_lines=[],
+        confirm={"kind": "click", "mode": "press"},
+    )
+    shown = client.post(url(stub, "view"), json={"request_id": res.json()["request_id"]}, headers=hdr(token))
+    assert shown.status_code == 200, shown.text
+    view = shown.json()["view"]
+    assert view["op"] == "new"
+    assert view["risk_lines"] == []
+    assert view["confirm"] == {"kind": "click", "mode": "press"}
+
+
+@pytest.mark.parametrize(
+    "op,risk,mode,ok",
+    [
+        ("grant", ["Agents can run as you for 8 hours"], "press", True),
+        ("new", ["Agents can run as you for 8 hours"], "press", False),
+        ("grant", [], "press", False),
+        ("grant", ["Agents can run as you for 8 hours"], "arm", False),
+    ],
+)
+def test_grant_sequence_requires_risk_view_in_press_mode(client, token, stub, script, op, risk, mode, ok):
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 8}})
+    assert res.status_code == 200, res.text
+    script.view["view"].update(op=op, risk_lines=risk, confirm={"kind": "click", "mode": mode})
+    res = client.post(url(stub, "view"), json={"request_id": res.json()["request_id"]}, headers=hdr(token))
+    assert res.status_code == (200 if ok else 409), res.text
+
+
+@pytest.mark.parametrize(
+    "op,risk,ok", [("new", [], True), ("new", ["risk"], False), ("grant", [], False), ("grant", ["risk"], True)]
+)
+def test_relay_preserves_one_press_allowlist(op, risk, ok):
+    from orch_dashboard.click import contract4_view_ok
+
+    assert contract4_view_ok({"op": op, "headline": "Review", "risk_lines": risk}) is ok
+
+
+@pytest.mark.parametrize("finish", ["cancelled", "not_sent", "unknown"])
+def test_d5_hold_relays_session_delay_and_preserves_cancel_and_reconnect(
+    client, token, stub, script, auth, host_check, gateway, finish
+):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    outcome = {"state": "held", "deadline_ms": int(time.time() * 1000) + 10000}
+
+    def delayed(op, args):
+        if op == "sign":
+            assert args["delay_s"] == 10
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            return dict(outcome)
+        if op == "status" and args.get("request_id"):
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            return dict(outcome)
+        if op == "cancel":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            outcome["state"] = "cancelled"
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    signed = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert signed.status_code == 200
+    assert signed.json() == {**outcome, "duplicate": False}
+    other = other_session(client, auth)
+    denied = client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(other))
+    assert denied.status_code == 404
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "held"
+    prepared = next(args for op, args in script.clients[0].calls if op == "prepare")
+    assert prepared["session"] == hashlib.sha256(token.encode()).hexdigest()
+    if finish != "unknown":
+        outcome["state"] = finish
+        route = "cancel" if finish == "cancelled" else "state"
+        assert client.post(url(stub, route), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == finish
+        host_check.pending[REQ] = "cancelled"
+        before = len(script.clients[0].calls)
+        client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token))
+        assert not any(op == "status" for op, _ in script.clients[0].calls[before:])  # held was pruned
+        return
+    outcome["state"] = "unknown"
+    host_check.pending[REQ] = "submitted"
+    gateway.click.restarts += 1  # a stale signer epoch must not sweep a possibly signed hold
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
+    assert not host_check.cancelled
+
+
+@pytest.mark.parametrize("everywhere", [False, True])
+def test_d5_logout_cancels_session_holds(client, token, stub, script, auth, everywhere):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    pending = set()
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["request_id"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel_holds":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            pending.clear()
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 200
+    assert pending == {REQ}
+    if everywhere:
+        auth.logout_everywhere(kind=auth.login_kind(token))
+    else:
+        assert client.post("/auth/logout", headers=hdr(token)).status_code == 200
+    assert not pending  # the signer's deadline queue has no intent left to sign
+    client.app.state.cancel_clicks(token)
+    assert not pending  # cancellation by session is idempotent
+    assert (
+        client.post(
+            url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+        ).status_code
+        == 401
+    )
+
+
+def test_d5_session_ending_after_authentication_cannot_enqueue(client, token, stub, script, auth, monkeypatch):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = auth.valid
+
+    def end_before_send(value, touch=True):
+        if not touch:
+            auth.logout(value)
+        return original(value, touch=touch)
+
+    monkeypatch.setattr(auth, "valid", end_before_send)
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 409
+    assert result.json()["error"]["code"] == "session.ended"
+    assert not any(op == "sign" for op, _ in script.clients[0].calls)
+
+
+@pytest.mark.parametrize("cancel_failure", [False, True, "timeout"])
+def test_d5_lost_sign_reply_logout_destroys_unsigned_queue(client, token, stub, script, auth, gateway, cancel_failure):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    channel = script.clients[0]
+    original = channel.handler
+    pending = set()
+    close = channel.close
+
+    def destroy():
+        pending.clear()  # the process's in-memory unsigned queue dies with it
+        close()
+
+    channel.close = destroy
+    if cancel_failure == "timeout":
+
+        class LiveProcess:
+            killed = False
+
+            def poll(self):
+                return 0 if self.killed else None
+
+            def kill(self):
+                self.killed = True
+
+        channel.proc = LiveProcess()  # timeout leaves a live signer, even with an unsettled sign
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["request_id"])
+            raise ClickError("internal", "lost held reply")
+        if op == "cancel_holds":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            if cancel_failure == "timeout":
+                raise TimeoutError("cancel timed out")
+            if cancel_failure:
+                raise ClickError("internal", "cancel failed")
+            pending.clear()
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    channel.handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code != 200
+    assert pending == {REQ}
+    # Lost replies must retain the hold routing, including its session check.
+    other = other_session(client, auth)
+    assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(other)).status_code == 404
+    epoch = gateway.click.restarts
+    auth.logout(token)
+    assert not pending  # advancing the deadline can no longer sign anything
+    assert gateway.click.restarts == epoch + int(bool(cancel_failure))
+    assert channel.closed == bool(cancel_failure)
+    if cancel_failure == "timeout":
+        assert channel.proc.killed
+
+
+def test_d5_hung_cancel_does_not_hold_auth_lock(client, token, stub, script, auth, gateway):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    other = other_session(client, auth)
+    channel = script.clients[0]
+    original = channel.handler
+    entered, release, validated = threading.Event(), threading.Event(), threading.Event()
+
+    def hung(op, args):
+        if op == "cancel_holds":
+            entered.set()
+            assert release.wait(3)
+            raise TimeoutError("IPC deadline")
+        return original(op, args)
+
+    channel.handler = hung
+    logout = threading.Thread(target=auth.logout, args=(token,))
+    logout.start()
+    try:
+        assert entered.wait(2)
+        assert token in auth.ending
+
+        def validate():
+            assert auth.valid(other)
+            validated.set()
+
+        reader = threading.Thread(target=validate)
+        reader.start()
+        assert validated.wait(1)  # completes even BEFORE the blocked IPC times out
+    finally:
+        release.set()
+        logout.join(3)
+    reader.join(2)
+    assert not logout.is_alive()
+    assert channel.closed
+    assert gateway.click.restarts >= 1
+
+
+def test_d5_logout_waits_for_inflight_hold_outside_auth_lock(client, token, stub, script, auth):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    other = other_session(client, auth)
+    channel = script.clients[0]
+    original = channel.handler
+    sending, release, ending = threading.Event(), threading.Event(), threading.Event()
+    pending = set()
+    cleanup = auth.on_session_end
+
+    def end(value):
+        ending.set()
+        cleanup(value)
+
+    auth.on_session_end = end
+
+    def delayed(op, args):
+        if op == "sign":
+            sending.set()
+            assert release.wait(3)
+            pending.add(args["request_id"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel_holds":
+            pending.clear()
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    channel.handler = delayed
+    results = []
+    sender = threading.Thread(
+        target=lambda: results.append(
+            client.post(
+                url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+            )
+        )
+    )
+    sender.start()
+    logout = threading.Thread(target=auth.logout, args=(token,))
+    try:
+        assert sending.wait(2)
+        logout.start()
+        assert ending.wait(2)
+        assert token in auth.ending
+        assert auth.valid(other)
+        assert not auth.valid(token)
+    finally:
+        release.set()
+        sender.join(3)
+        logout.join(3)
+    assert not sender.is_alive() and not logout.is_alive()
+    assert results[0].status_code == 200
+    assert not pending
+
+
+@pytest.mark.parametrize("header", [None, "3", "4"])
+def test_every_click_route_requires_current_page_contract(client, token, stub, header):
+    from fastapi.routing import APIRoute
+
+    client.headers.pop("X-Orch-Click-Contract", None)
+    headers = hdr(token)
+    if header is not None:
+        headers["X-Orch-Click-Contract"] = header
+    routes = [r for r in client.app.routes if isinstance(r, APIRoute) and "/click/" in r.path]
+    assert len(routes) == 17
+    for route in routes:
+        path = route.path.replace("{ws}", stub.ws)
+        res = client.request(next(iter(route.methods)), path, json={}, headers=headers)
+        error = res.json().get("error", {})
+        if header != "4":
+            assert error.get("code") == "click.contract", (path, res.text)
+            assert error["message"] == "Reload the page: this page is out of date."
+        else:
+            assert error.get("message") != "Reload the page: this page is out of date.", path
+
+
+@pytest.mark.parametrize("op,risk", [("approve", ["risk"]), ("member.role", [])])
+def test_relay_refuses_risk_allowlist_mismatch(op, risk):
+    from orch_dashboard.click import contract4_view_ok
+
+    assert not contract4_view_ok({"op": op, "headline": "Review", "risk_lines": risk})
+
+
+def test_relay_caps_headline_at_sixty():
+    from orch_dashboard.click import contract4_view_ok
+
+    assert contract4_view_ok({"op": "approve", "headline": "x" * 60, "risk_lines": []})
+    assert not contract4_view_ok({"op": "approve", "headline": "x" * 61, "risk_lines": []})
+
+
+def test_d5_logout_everywhere_continues_after_callback_failure(client, token, stub, script, auth):
+    other = other_session(client, auth)
+    prepare(client, other, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    pending = set()
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["session"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel_holds":
+            pending.discard(args["session"])
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(other)
+    )
+    assert result.status_code == 200
+    cleanup = auth.on_session_end
+    seen = []
+
+    def end(value):
+        seen.append(value)
+        if value == token:
+            raise RuntimeError("first cleanup failed")
+        cleanup(value)
+
+    auth.on_session_end = end
+    auth.logout_everywhere(kind=auth.login_kind(token))
+    assert seen == [token, other]
+    assert not pending
+    assert not auth.ending
+
+
+def test_d5_background_renews_only_live_holds(client, token, stub, script, auth):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    renewed = threading.Event()
+    finished = threading.Event()
+
+    def delayed(op, args):
+        if op == "sign" or (op == "status" and args.get("request_id")):
+            return {"state": "submitted" if finished.is_set() else "held", "deadline_ms": 10000}
+        if op == "session_alive":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            renewed.set()
+            return {"state": "alive"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 200
+    assert renewed.wait(3)
+    finished.set()
+    renewed.clear()
+    assert not renewed.wait(2.5)
+    auth.logout(token)
+
+
+# -- R2 T4: a remote-access change is viewed and signed only by the loopback session that prepared it ---------------
+
+REMOTE_SET = {"action": "remote_set", "level": "view", "premises": "no", "days": 1}
+
+
+def view_of(client, token, stub):
+    return client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+
+
+def test_a_remote_session_cannot_even_prepare_a_remote_change(client, token, stub, backup, monkeypatch):
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, t: "remote", raising=False)
+    res = prepare(client, token, stub, REMOTE_SET)
+    assert res.status_code == 403 and res.json()["error"]["code"] == "op.not_allowed"
+
+
+STATES = (
+    "prepared",
+    "viewed",
+    "signed",
+    "cancelled",
+    "forgotten",
+    "expired",
+    "record_dropped",
+    "record_replaced",
+    "unknown",
+)
+TOKENS = ("same", "other_loopback", "remote", "none")
+STEPS = ("view", "sign", "state")
+
+
+def put_in_state(client, token, stub, backup, state):
+    """A remote change prepared by `token`, then brought into `state` the way the code does it."""
+    clicks = client.app.state.clicks
+    if state == "unknown":
+        return
+    prepared_ok = prepare(client, token, stub, REMOTE_SET).status_code == 200
+    assert prepared_ok
+    backup.view = backup_view(op="remote.set")
+    if state == "viewed":
+        assert view_of(client, token, stub).status_code == 200
+    elif state in ("signed", "cancelled", "forgotten"):
+        clicks.forget(REQ)  # every end of a request goes through forget: it tombstones the binding
+    elif state == "expired":
+        clicks.forget(REQ)
+        clicks.clock = lambda t=clicks.clock(): t + 10_000  # past BINDING_KEEP: purged (and the record is long gone)
+    elif state == "record_dropped":
+        clicks.ops.pop(REQ, None)
+    elif state == "record_replaced":
+        ws, _, _, epoch = clicks.ops[REQ]
+        clicks.ops[REQ] = (ws, "approve", None, epoch)
+
+
+@pytest.mark.parametrize("step", STEPS)
+@pytest.mark.parametrize("who", TOKENS)
+@pytest.mark.parametrize("state", STATES)
+def test_authorize_table_over_states_tokens_and_steps(client, token, stub, backup, auth, monkeypatch, state, who, step):
+    put_in_state(client, token, stub, backup, state)
+    other = other_session(client, auth)
+    caller = {"same": token, "other_loopback": other, "remote": other, "none": None}[who]
+    if who == "remote":
+        real = client_login_kind().login_kind
+        monkeypatch.setattr(
+            client_login_kind(), "login_kind", lambda self, t: "remote" if t == other else real(self, t), raising=False
+        )
+    headers = hdr(caller) if caller else {"Origin": ORIGIN}
+    if step in ("view", "state"):
+        res = client.post(url(stub, step), json={"request_id": REQ}, headers=headers)
+    else:
+        res = client.post(
+            url(stub, "sign"),
+            json={"request_id": REQ, "view_digest": HASH, "sealed": {"hub.backup_key": BACKUP_ENV}},
+            headers=headers,
+        )
+    open_gate = who == "same" and state in ("prepared", "viewed", "record_dropped", "record_replaced")
+    if not open_gate:
+        assert res.status_code in (401, 403, 404), (state, who, step, res.status_code)
+        if who != "none":
+            assert res.status_code == 404, (state, who, step)
+        assert sent_of(backup, "sign") == []  # nothing reached the signer
+    else:
+        blind = step == "sign" and state in ("record_dropped", "record_replaced")  # never signed without the action
+        assert res.status_code != 404 or blind, (state, who, step)
+
+
+def test_a_bound_request_cannot_be_taken_over_by_preparing_it_again_from_another_session(
+    client, token, stub, backup, auth
+):
+    assert prepare(client, token, stub, REMOTE_SET).status_code == 200
+    other = other_session(client, auth)
+    res = prepare(client, other, stub, REMOTE_SET)
+    assert res.status_code in (404, 409), res.text
+    assert client.app.state.clicks.binding(REQ)[0] == token
+
+
+def test_a_tombstone_is_kept_for_its_lifetime_and_purged_after(client, token, stub, backup):
+    assert prepare(client, token, stub, REMOTE_SET).status_code == 200
+    clicks = client.app.state.clicks
+    clicks.forget(REQ)
+    assert clicks.binding(REQ) == (token, True)  # tombstoned, not deleted
+    start = clicks.clock()
+    clicks.clock = lambda: start + 1
+    assert clicks.binding(REQ) is not None
+    clicks.clock = lambda: start + 10_000
+    assert clicks.binding(REQ) is None

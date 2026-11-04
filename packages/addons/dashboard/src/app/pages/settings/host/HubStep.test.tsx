@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import { ARM_MS, BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import * as sealed from '@/api/sealed'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { trustedPresses } from '@/test/hostHarness'
 import { HubStep } from './HubStep'
 
 const WS = '705d40abbb8c1c90354a1acaa94c935c'
@@ -47,13 +48,16 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-function mount(action: Parameters<typeof HubStep>[0]['action'] = JOIN) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TooltipProvider><HubStep ws={WS} action={action} onClose={vi.fn()} /></TooltipProvider></QueryClientProvider>)
+function mount(action: Parameters<typeof HubStep>[0]['action'] = JOIN, list: Array<{ id: string }> = []) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue(list as never)
+  return render(<QueryClientProvider client={client}><TooltipProvider><HubStep ws={WS} action={action} onClose={vi.fn()} /></TooltipProvider></QueryClientProvider>)
 }
 const input = async () => (await screen.findByTestId('hub-backup-input', {}, T)) as HTMLInputElement
-const signBtn = () => screen.getByRole('button', { name: 'Sign and join the hub' })
+const signBtn = () => screen.getByRole('button', { name: 'Connect' })
 async function press() {
   await waitFor(() => expect(signBtn()).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
   fireEvent.pointerDown(signBtn())
   fireEvent.click(signBtn())
 }
@@ -135,7 +139,7 @@ describe('a hub step by click', () => {
     mount()
     await input()
     expect(screen.getByText('demo-hub-id').closest('details')).not.toHaveAttribute('open')
-    expect(screen.getByText('Show exactly what is signed')).toBeTruthy()
+    expect(screen.getByText('What you sign')).toBeTruthy()
   })
 
   it('a failed leave has a plain error, closed details, Cancel and a working retry', async () => {
@@ -144,7 +148,9 @@ describe('a hub step by click', () => {
     s.view.mockResolvedValue(view({ op: 'hub.leave' }))
     mount({ action: 'hub_leave' })
     expect(await screen.findByRole('alert', {}, T)).toHaveTextContent("Couldn't leave the hub. Nothing changed. Try again.")
-    expect(screen.getByText(/raw failure reason/).closest('details')).not.toHaveAttribute('open')
+    expect(screen.queryByText(/raw failure reason/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'More information' }))
+    expect(await screen.findByText(/raw failure reason/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
@@ -163,7 +169,7 @@ describe('a hub step by click', () => {
     s.view.mockResolvedValue(view({ op: 'hub.leave' }))
     mount({ action: 'hub_leave' })
     await input()
-    expect(screen.getByRole('button', { name: 'Sign and leave the hub' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Leave hub' })).toBeInTheDocument()
   })
 })
 
@@ -183,5 +189,19 @@ describe('the sticky sign bar', () => {
     bar.getBoundingClientRect = () => ({ top: 690 }) as DOMRect
     fireEvent.focus(el)
     expect(scroller.scrollTop).toBe(78) // 760 - 690 + 8
+  })
+})
+
+describe('the hub join review names the workspace', () => {
+  const two = [{ id: WS, running: true }, { id: 'w_other', running: true }]
+  it('with several workspaces the workspace line is on the main surface', async () => {
+    mount(JOIN, two as never)
+    await input()
+    await waitFor(() => expect(screen.getByTestId('sign-workspace').closest('details')).toBeNull(), T)
+  })
+  it('with one workspace it is folded under Details', async () => {
+    mount(JOIN, [{ id: WS, running: true }] as never)
+    await input()
+    expect(screen.getByTestId('sign-workspace').closest('details')).not.toBeNull()
   })
 })

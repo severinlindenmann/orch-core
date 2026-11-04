@@ -143,6 +143,9 @@ def test_r7_click_custody_missing_only_when_not_converted():
 
 @pytest.fixture(autouse=True)
 def fake_signer(monkeypatch):
+    from orch.ops import human
+
+    monkeypatch.setattr(human, "review_prompt", lambda text: True)
     monkeypatch.setattr(host_signer, "check", lambda *a, **k: None)
 
     def sign(prepared, *, backend, key_id, workspace_id):
@@ -230,7 +233,7 @@ def test_finish_runs_without_genesis_and_with_the_persons_own_custody(tmp):
     assert p["done"] is True and "genesis" not in n and ports.unlocks == 1
     assert p["workspace"] and p["workspace"]["prefix"] == PROF["prefix"]  # the page's Done and the terminal name it
     assert ports.submits == ["addon.granted", "grant.issued"]
-    assert [s["id"] for s in p["steps"]] == ["addon:worktrees", "runner_grant"]
+    assert [s["id"] for s in p["steps"]] == ["perms", "addon:worktrees", "runner_grant"]  # P14: perms in Finish too
     assert ports.passphrase_seen is None  # no new passphrase in finish mode
 
 
@@ -273,6 +276,70 @@ def test_unreadable_facts_refuse_the_launch(tmp):
         f.launch(str(tmp.work))
     assert e.value.code == "setup.facts_unreadable"
     assert fx  # module imported
+
+
+def test_finish_click_on_a_one_click_workspace_needs_no_terminal_check(tmp):
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True, convenience=True)]
+    f = finish_flow(tmp, FakePorts(), box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    assert rv["tty_confirm"] is False and rv["fingerprint"] is None
+    assert "custody" not in [fl["id"] for fl in rv["flags"]]
+
+
+def test_finish_click_on_a_terminal_custody_workspace_keeps_the_custody_item_without_a_check(tmp):
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, FakePorts(), box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    assert "custody" in [fl["id"] for fl in rv["flags"]]
+    assert rv["tty_confirm"] is False and rv["fingerprint"] is None
+
+
+def test_finish_terminal_method_keeps_the_terminal_check(tmp):
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, FakePorts(), box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "terminal", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    assert rv["tty_confirm"] is True and len(rv["fingerprint"]) == 3
+
+
+def test_finish_click_conversion_without_a_terminal_fails_with_tty_unavailable(tmp):
+    ports = FakePorts(FakeTerminal([]))
+
+    def no_tty(prompt):
+        raise OSError("no tty")
+
+    ports.terminal.ask_secret = no_tty
+    box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours_set=True)]
+    f = finish_flow(tmp, ports, box)
+    f.dispatch(
+        "POST",
+        "profile",
+        {},
+        {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8},
+    )
+    rv = f.dispatch("POST", "review", {}, {})[1]
+    ports.expect(f.review.plan)
+    out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
+    f.thread.join(10)
+    p = progress(f, out["run_id"])
+    assert p["done"] is False and p["error"]["code"] == "tty.unavailable"
 
 
 def test_finish_moves_a_passphrase_key_to_one_click_by_asking_the_passphrase_on_the_terminal(tmp):
@@ -330,18 +397,6 @@ def _review_rows(tmp, facts, profile):
 CLICK_PROF = {**PROF, "method": "click", "addons": ["dashboard"], "agent_grant": False, "agent_hours": 8}
 
 
-def test_m1_one_click_on_a_workspace_whose_sign_methods_leave_click_out_adds_click_first(tmp):
-    done = dict(addons=frozenset({"dashboard"}), grant_hours_set=True)
-    rv = _review_rows(tmp, mkfacts(**done, sign_methods=("terminal",)), CLICK_PROF)
-    row = next(i for i in rv["items"] if i["id"] == "settings")
-    assert any("terminal" in ln and "click" in ln for ln in row["lines"] + row["details"])
-    assert not any("grant_hours" in ln for ln in row["lines"] + row["details"])  # only what is actually missing
-    # never set (click allowed by default) or already allowing click: no settings item
-    for methods in (None, ("terminal", "click")):
-        rv = _review_rows(tmp, mkfacts(**done, sign_methods=methods), CLICK_PROF)
-        assert "settings" not in [i["id"] for i in rv["items"]]
-
-
 def test_m2_a_runner_grant_retry_row_says_it_re_issues_access(tmp):
     facts = mkfacts(addons=frozenset({"dashboard", "terminals"}), runner_enabled=True, grant_issued=True)
     rv = _review_rows(tmp, facts, {**PROF, "addons": ["dashboard", "terminals"]})
@@ -357,11 +412,6 @@ def test_m2_a_runner_grant_retry_row_says_it_re_issues_access(tmp):
     ][-1].get("note", "")
 
 
-def test_facts_read_the_explicit_sign_methods():
-    assert facts_of(ws(settings={"sign_methods": ["terminal"]})).sign_methods == ("terminal",)
-    assert facts_of(ws()).sign_methods is None
-
-
 def test_finish_on_a_complete_workspace_can_be_closed_with_the_dashboard_url(tmp):
     """B12 N9: nothing missing -> state says complete; finish is allowed without a run and ends as done."""
     on = frozenset({"dashboard", "terminals", "worktrees", "start-agent", "quick"})
@@ -372,3 +422,74 @@ def test_finish_on_a_complete_workspace_can_be_closed_with_the_dashboard_url(tmp
     out = f.dispatch("POST", "finish", {}, {})[1]
     assert out["url"] and out["workspace_id"]
     assert f.finished and f.outcome == "done"
+
+
+def test_finish_when_the_dashboard_does_not_open_is_retryable_and_keeps_the_session(tmp):
+    """r11-P01: the dashboard service did not open -> 503 setup.dashboard_unavailable (retryable); the setup session
+    stays open (not finished), and a second Finish that works returns the login link and ends the session."""
+    on = frozenset({"dashboard", "terminals", "worktrees", "start-agent", "quick"})
+    f = finish_flow(tmp, FakePorts(), [mkfacts(addons=on, grant_issued=True)])
+    answers: list = [RuntimeError("service down"), None]
+
+    def url(_wid):
+        a = answers.pop(0) if answers else "http://127.0.0.1:8151/#launch=abc&to=%2F"
+        if isinstance(a, Exception):
+            raise a
+        if a is None:
+            raise SetupError("setup.dashboard_unavailable", "no login link", 503, retry=True)
+        return a
+
+    f.e.workspace_url = url
+    for _ in range(2):
+        with pytest.raises(SetupError) as e:
+            f.dispatch("POST", "finish", {}, {})
+        assert e.value.code == "setup.dashboard_unavailable" and e.value.status == 503
+        assert e.value.extra.get("retry") is True
+        assert "service down" not in e.value.message  # the cause is logged, never sent to the page
+        assert not f.finished and f.outcome == "paused"
+    out = f.dispatch("POST", "finish", {}, {})[1]
+    assert out["url"] == "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    assert f.finished and f.outcome == "done"
+
+
+def _complete_finish(tmp, url, env):
+    on = frozenset({"dashboard", "terminals", "worktrees", "start-agent", "quick"})
+    f = finish_flow(tmp, FakePorts(), [mkfacts(addons=on, grant_issued=True)])
+    f.e.env = env  # the setup process's own environment: the one the terminal hint reads
+    f.e.workspace_url = lambda _wid: url
+    return f.dispatch("POST", "finish", {}, {})[1]
+
+
+LOGIN = "http://127.0.0.1:8151/#launch=SECRETTOKEN123&to=%2F"
+SSH = {"USER": "ann", "SSH_CONNECTION": "10.0.0.2 5555 203.0.113.7 22"}
+
+
+@pytest.fixture(autouse=True)
+def _linux_no_ssh_in_process_environ(monkeypatch):
+    # the process's os.environ must NOT decide: it has no SSH_CONNECTION here, the Env's does
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr("sys.platform", "linux")
+
+
+def test_run18_p01_headless_finish_returns_a_ready_tunnel_line_without_the_login_link(tmp, monkeypatch):
+    monkeypatch.setattr("getpass.getuser", lambda: "anna")
+    out = _complete_finish(tmp, LOGIN, SSH)  # os.environ is not headless; the Env's environment is
+    assert out["tunnel"] == "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8151:127.0.0.1:8151 anna@203.0.113.7"
+    assert "USER@SERVER" not in out["tunnel"]
+    assert "SECRETTOKEN123" not in out["tunnel"] and "launch" not in out["tunnel"] and "#" not in out["tunnel"]
+
+
+def test_run18_p01_the_process_environ_does_not_decide(tmp, monkeypatch):
+    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.2 5555 203.0.113.7 22")  # os.environ says SSH, the Env says desktop
+    out = _complete_finish(tmp, LOGIN, {"USER": "ann", "DISPLAY": ":0"})
+    assert "tunnel" not in out
+
+
+def test_run18_p01_not_headless_finish_has_no_tunnel(tmp):
+    out = _complete_finish(tmp, LOGIN, {"USER": "ann", "DISPLAY": ":0"})
+    assert "tunnel" not in out and out["url"] == LOGIN
+
+
+def test_run18_p01_a_non_local_url_gets_no_tunnel(tmp):
+    assert "tunnel" not in _complete_finish(tmp, "http://example.com:8151/#launch=x", SSH)

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.too_old",
+    "message": "this orch is too old to update directly",
+    "hint": "run the installer again",
+    "fix": {
+      "argv": [
+        "orch",
+        "update",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

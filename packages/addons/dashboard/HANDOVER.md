@@ -1226,7 +1226,7 @@ The browser opens plain `/setup` and bypasses dashboard shared sessions. `POST /
 | POST /auth/setup {} | POST /claim {code,port} | Server consumes setup.code; no workspace needed |
 | GET /api/setup/state | unchanged | Initial facts and mode |
 | POST /api/setup/profile | unchanged | Exact closed profile |
-| POST /api/setup/secrets/reveal, secrets/confirm | unchanged | One-shot text reveal and three-word check |
+| POST /api/setup/secrets/reveal, secrets/confirm | unchanged | One-shot text reveal and one acknowledgement |
 | POST /api/setup/review, create | unchanged | Core rows, digest and terminal confirmation |
 | GET /api/setup/progress?run_id | unchanged | Step statuses / failure / retry facts |
 | POST /api/setup/finish, cancel | unchanged | Complete or defer; drop setup scope |
@@ -1255,3 +1255,21 @@ Criteria pass through host proof, accepted metadata and stale flags without chan
 
 Routes (all owner-only on the host; the server adds no role check of its own): `GET /api/w/<ws>/hub` (host `hub.status`: `mode`, `joined`, `hub_id`, `member`, `link`, `reachable` (null: the host does not say), `not_told`, `owed`, `reseal_needed`, `key_change_pending`, `log_sync_stuck`, `groups` (from the hub, not signed), `snapshot_version`), `GET /hub/share` (`share.rules` + `share.preview {}`: rules with counts, shared tickets by key), `POST /hub/share/preview {add|remove}` (`share.preview`), `POST /hub/command {kind, ...}` (the Terminal line; nothing is sent to the host). Feature `hub` needs the host to list `hub.status`, `share.rules`, `share.preview`. Mock: `?hub=standalone|selective|full|offline|nottold`.
 Gaps for core: a hub-reachability field in `hub.status` (offline banner), per-ticket sharing reason and last read time, hub name/company and admin names, number of people losing access on a leave, a prepare hand-off for `hub.join`/`hub.mode`/`hub.leave` (verification fingerprint), `orch hub share apply` (one signed review for several rule changes), `orch hub leave --hub-unreachable`.
+
+### D3 staged install contract (28 Oct 2026)
+
+`market_grant` now carries `{name, staged, grant, settings?}`. `grant` is the exact body returned by unsigned `market.stage`; `settings` contains only this add-on's required non-secret values. The server builds `addon_enable`, with optional `settings.set` first and `addon.grant {name, staged, digest, caps}` last. The signed grant uses `package_sha256`/`capabilities` and additionally signs `staged`. Host checks reject an already-on add-on and consume changed/expired stages with `addon.stage_changed`. The stage response also supplies `settings_schema`; defaults are explicitly included in the values reviewed and signed.
+
+D3 uses the local signer sequence. The existing single-event hub approval route returns `op.unsupported` for it. Signature vectors are shared from `contracts/core/f1/signatures.json` by core, hub, relay and mobile; this repository has no separate vendored copies.
+
+D3 review fix (#1520): enabled updates use `market_update {name, staged, digest, caps}` through the existing signing endpoints, mapped to plain `addon.grant` with those exact args (no enable sequence). The update diff remains visible before signing; capability risk comes from the signer's event-derived risk lines. `market_grant` remains the install-and-enable sequence. Staged grant digest and caps are required; retryable submit refusals retain the stage.
+
+### D2: create, optional access, then start (2026-10-28)
+
+`new_sequence` accepts `launch: {harness, mode, model?}` and proposed `agent: {hours}`. Preparation reads host `whoami.runner.now` and the current valid grant: with at least 15 minutes left, it omits the grant; otherwise the grant is the final signed step. The sequence digest includes launch choices. Contract 4 View risk lines cover every sequence step; informational `info_lines` appear only behind “i”.
+
+`POST /api/w/{ws}/agents/start {after_request}` resolves the ticket and launch choices from the host record. Client ticket/spec/idem values are ignored. Incomplete sequences return `sequence.incomplete`; another principal/person cannot use the request. Launch uses the normal host plan and current grant checks, and a request-derived idem plus a durable `after_request` run binding makes retries replay the first run. No new signed event type is introduced.
+
+### D5 — unsigned hold (2026-10-28)
+
+The signer's View includes `hold_allowed`, covered by `view_digest`. `POST click/sign` accepts `delay_s: 10` and returns `{state: "held", deadline_ms, duplicate: false}` without signed artifacts. The HTTP server supplies the authenticated preparing session, never a body-supplied session. `click/state` reports held/submitted/not_sent/cancelled/unknown; `click/cancel` returns cancelled or already_signed. Holds survive page closure, not signer restart. A later refusal is terminal and never retried. The signer permits only log, restricted set (labels/priority/size), move, section.set and follow_up.reschedule, excluding sequences. Its per-person cap is 20 and host expiry must leave at least 40 seconds when admitted.

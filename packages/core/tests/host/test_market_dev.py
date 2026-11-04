@@ -207,7 +207,15 @@ def test_a_dev_stage_cannot_be_granted_once_the_dev_class_is_gone(tmp_path, monk
             ok(person(served, "market.add", {"url": URL}))
             st = ok(stage(served, "hello"))["data"]
             h = Human(served)
-            prepared = h.prepare("addon.grant", {"name": "hello", "staged": st["stage"]})
+            prepared = h.prepare(
+                "addon.grant",
+                {
+                    "name": "hello",
+                    "staged": st["stage"],
+                    "digest": st["package_sha256"],
+                    "caps": st["grant"]["capabilities"],
+                },
+            )
             served.service.dev = None  # the class is gone between stage and submit
             res = h.submit_res(prepared["request"]["id"], h.sign(prepared).events)
             assert err(res) == "market.community_unisolated", res

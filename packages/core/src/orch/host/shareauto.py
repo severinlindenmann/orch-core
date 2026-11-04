@@ -3,9 +3,10 @@
 A commit to the workspace (any ticket change) marks the workspace dirty; after a quiet moment (:data:`DEBOUNCE_S`, at
 most :data:`MAX_WAIT_S` under a steady stream of commits) the thread runs :func:`orch.host.shareops.auto_sync`. That
 pass only re-sends or withdraws items of the selection the owner already confirmed (see
-:meth:`orch.hubclient.shares.ShareState.auto_wanted`); it never widens it. It does nothing in full mode, without a
-bound selective hub, or while the workspace is degraded. A hub that cannot be reached is retried with a growing delay
-(:data:`RETRY_MIN_S` to :data:`RETRY_MAX_S`); a pass that cannot ever apply (full mode, no hub) parks the thread until
+:meth:`orch.hubclient.shares.ShareState.auto_wanted`); it never widens it. It does nothing without a
+bound hub (selective or full), or while the workspace is degraded. A hub that cannot be reached is retried with a
+growing delay
+(:data:`RETRY_MIN_S` to :data:`RETRY_MAX_S`); a pass that cannot ever apply (no hub) parks the thread until
 the owner's next share operation arms it again.
 
 The thread is armed by the owner's share operations (the first save of ``hub/shares.json``) and, after a restart, at
@@ -54,6 +55,12 @@ class _Auto:
         self.not_before = 0.0
         self.backoff = RETRY_MIN_S
         self.passes = 0  # finished passes (tests wait on it)
+        #: commits seen (``mark``) and how many of them the last finished pass had seen when it started: a pass covers a
+        #: commit only if it started after it (tests wait for ``covered >= marks``; counting passes raced a pass that
+        #: finished before the test began to count, CI flake 29 Oct)
+        self.marks = 0
+        self.covered = 0
+        self._taking = 0
         self.last: dict[str, Any] | str | None = None
         self.thread = threading.Thread(
             target=self._loop, name=f"orch-shareauto-{service.workspace_id[:8]}", daemon=True
@@ -64,6 +71,7 @@ class _Auto:
             if self.dirty_since is None:
                 self.dirty_since = now
             self.last_touch = now
+            self.marks += 1
             self.cv.notify_all()
 
     def _wait_due(self) -> bool:
@@ -76,6 +84,7 @@ class _Auto:
                 due = max(min(self.last_touch + DEBOUNCE_S, self.dirty_since + MAX_WAIT_S), self.not_before)  # type: ignore[operator]
                 if now >= due:
                     self.dirty_since = None
+                    self._taking = self.marks
                     return True
                 self.cv.wait(due - now if _TIMED else None)
             return False
@@ -110,6 +119,7 @@ class _Auto:
             with self.cv:
                 self.last = result
                 self.passes += 1
+                self.covered = self._taking
                 self.cv.notify_all()
 
 

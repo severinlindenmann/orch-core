@@ -1,0 +1,1 @@
+err wait.incomplete the gate still lacks items: nobody can approve it yet · retry:false · next: fill what is missing, then orch wait · fix: orch show

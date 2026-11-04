@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- BOUND mode only (needs Developer ID Application cert + provisioning profile, owner action). -->
+  <key>keychain-access-groups</key>
+  <array><string>77D4THRYUN.io.severin.orch.remote-key</string></array>
+</dict>
+</plist>

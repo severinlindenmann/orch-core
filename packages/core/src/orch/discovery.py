@@ -57,6 +57,7 @@ from typing import Any
 
 from orch import layout as _layout
 from orch.layout import Layout, LayoutError, StorePin
+from orch.privdir import others_can_write
 
 __all__ = ["CONFIG_LIMIT", "CONFIG_SCHEMA", "Found", "LayoutError", "locate", "read_config", "same_root", "v2_config"]
 
@@ -125,7 +126,7 @@ def _owner() -> int:
 
 def _private(st: os.stat_result) -> bool:
     """Owned by :func:`_owner` and writable by no one else (no group or other write bit)."""
-    return st.st_uid == _owner() and not st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    return st.st_uid == _owner() and not others_can_write(st, _owner())
 
 
 def _shared(st: os.stat_result) -> bool:

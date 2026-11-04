@@ -112,6 +112,9 @@ class StoreSource:
             return {
                 "seq": fact.chain[0], "head": fact.chain[1], "ws_seq": wseq, "ws_head": whead,
                 "status": fact.status, "roster_v": f1["roster_v"], "gates": f1["gates"],
+                # R14b: the gates the workspace's own needs rule says wait now (what Mission Control counts), so the
+                # hub lists exactly those and nothing a policy or a missing section keeps from a person yet
+                "waiting": sorted({n.ref for n in fact.needs if n.kind == "approve" and n.ref in F1_GATES}),
             }  # fmt: skip
 
 

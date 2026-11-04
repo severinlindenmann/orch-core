@@ -51,6 +51,28 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--state", type=Path)
     run.add_argument("--run", type=Path)
+    run.add_argument(
+        "--hook-listen",
+        metavar="HOST:PORT",
+        help="receive webhook doorbells for follow-ups here (POST /h/<hook id>); off by default",
+    )
+    run.add_argument(
+        "--hook-url",
+        metavar="URL",
+        help="the public base URL agents are told for --hook-listen (default http://HOST:PORT)",
+    )
+    secret = sub.add_parser(
+        "hook-secret",
+        help="keep the HMAC secret of a webhook (GitHub X-Hub-Signature-256) on this host; read from stdin",
+    )
+    secret.add_argument("hook_id")
+    secret.add_argument("--state", type=Path)
+    sub.add_parser(
+        "prune",
+        help="remove orch from this computer (services, parts, state, keys, releases, workspace files); "
+        "orch host prune --help-prune lists the flags",
+        add_help=False,
+    )
     inst = sub.add_parser("install", help="install this code as an immutable release")
     inst.add_argument("--version")
     unit = sub.add_parser("unit", help="print a launchd or systemd unit (installing it is the setup helper's job)")
@@ -127,6 +149,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     conv.add_argument("--workspace", required=False, help="workspace id or prefix (on/off)")
     conv.add_argument("--state", type=Path)
+    wh = sub.add_parser(
+        "webhooks", help="receive webhook doorbells for follow-ups: on/off/show, kept in the host state dir"
+    )
+    wh.add_argument("switch", choices=("on", "off", "show"))
+    wh.add_argument("--address", default="127.0.0.1", help="on: address to listen on (default 127.0.0.1)")
+    wh.add_argument("--port", type=int, help="on: port to listen on (default: a free one, kept)")
+    wh.add_argument("--url", help="on: the public base URL agents are told (default http://ADDRESS:PORT)")
+    wh.add_argument("--state", type=Path)
     rdr = sub.add_parser(
         "readers",
         help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "
@@ -186,6 +216,10 @@ def _check_dev_runner(foreground: bool, run_dir: Path, env: Mapping[str, str]) -
 def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None) -> int:
     env = os.environ if env is None else env
     out = sys.stdout if out is None else out
+    if argv[:1] == ["prune"]:  # take orch off this computer (orch.prune): a person's job, its own flags
+        from orch.prune.cli import main as prune_main
+
+        return prune_main(argv[1:], env=env, out=out, err=sys.stderr)
     args = _parser().parse_args(argv)
     try:
         if args.cmd == "run":
@@ -204,7 +238,14 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
                 devmode.check_launch(args.foreground, env, run_dir, state)
                 dev = devmode.prove(state, env)
             preload()
-            host = Host(state, run_dir, dev_runner=args.dev_runner, dev=dev)
+            host = Host(
+                state,
+                run_dir,
+                dev_runner=args.dev_runner,
+                dev=dev,
+                hook_listen=args.hook_listen,
+                hook_url=args.hook_url,
+            )
             if dev is not None:
                 from .devmode import status_line
 
@@ -215,6 +256,15 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
                     "admitted without a service manager (dev and tests only)\n"
                 )
             asyncio.run(host.run())
+            return 0
+        if args.cmd == "hook-secret":
+            from . import hooks
+
+            value = sys.stdin.readline().strip()
+            if not value:
+                raise HostError("invalid.input", "give the secret on standard input")
+            hooks.set_secret(_state(args.state, env), os.getuid(), args.hook_id, value)
+            out.write("ok: the secret stays on this host\n")
             return 0
         if args.cmd == "install":
             from .release import install_release
@@ -244,6 +294,8 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             else:
                 out.write(units.tmpfiles_conf(args.user or str(os.getuid()), args.group or "root", os.getuid()))
             return 0
+        if args.cmd == "webhooks":
+            return _webhooks(args, env, out)
         if args.cmd == "convenience":
             return _convenience(args, env, out)
         if args.cmd == "readers":
@@ -490,6 +542,20 @@ def enable(
     if runner != "skip":
         _restart_stale_runner(state, env, run_dir, mine, data, force=runner == "force")
     return {"ok": True, "result": {"data": data}}
+
+
+def refresh_stale_runner(state: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    """Setup and ``orch install``: leave a current agent runner. A runner service of an older orch release is
+    restarted (only when it has no live runs; the result says so otherwise). Never raises; ``{}`` when nothing ran."""
+    from . import enable as svc
+    from .release import code_digest
+
+    data: dict[str, Any] = {}
+    try:
+        _restart_stale_runner(Path(state), env, svc.run_dir_for(Path(state), None, env), code_digest(), data)
+    except Exception:  # noqa: BLE001 - best effort; the host still refuses a stale start with runner.stale
+        pass
+    return data
 
 
 def _restart_stale_runner(
@@ -769,6 +835,33 @@ def _cwd_workspace(entries: list[dict[str, Any]]) -> str | None:
     return best[1] if best else None
 
 
+def _webhooks(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
+    """``orch host webhooks on|off|show``: the persisted receiver setting the service host reads at start (the unit
+    carries no flags). Takes effect at the next host start: ``orch host restart``."""
+    from orch.custody.cli import write_error
+
+    from . import hooks
+
+    state, uid = _state(args.state, env), os.getuid()
+    if env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", "an agent never changes what the host listens on")
+    if args.switch == "show":
+        out.write(json.dumps(hooks.read_settings(state, uid) or {}, sort_keys=True) + "\n")
+        return 0
+    if args.switch == "off":
+        hooks.write_settings(state, uid, None)
+        out.write("ok: webhooks off; takes effect at the next host start (orch host restart)\n")
+        return 0
+    if args.address in ("0.0.0.0", "::") and not args.url:
+        raise HostError("invalid.input", "listening on every address needs --url (the address agents use)")
+    port = args.port or hooks.free_port(args.address)
+    host = f"[{args.address}]" if ":" in args.address else args.address
+    url = args.url or f"http://{host}:{port}"
+    hooks.write_settings(state, uid, f"{host}:{port}", url)
+    out.write(f"ok: webhooks on at {host}:{port}, url {url}; takes effect at the next host start (orch host restart)\n")
+    return 0
+
+
 def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
     """``orch host convenience on|off|show [--workspace W]``: the per-workspace click-to-sign flag in the host state dir
     (host UID only). Switching it on is an operator decision: every reader of the workspace must know auth
@@ -894,18 +987,18 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         )
     out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
     if args.switch == "off":
-        from orch.custody import select  # the same custody reading `orch sign` resolves its key from
+        from orch.custody import select  # the same custody reading the CLI signer resolves its key from
 
         held = select.status(state, wid).get("custody")
         if moved is not None:
-            out.write("The key is back under your passphrase: sign in the terminal with orch sign <code>\n")
+            out.write("The key is back under your passphrase: sign in the terminal with the action’s CLI command\n")
         elif held == "convenience":
             out.write(
                 "The key stays in one-click custody, so it cannot sign in the terminal yet. To sign with a passphrase: "
                 f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place\n"
             )
         elif held == "passphrase":
-            out.write("Sign in the terminal with orch sign <code>\n")
+            out.write("Sign in the terminal with the action’s CLI command\n")
     if args.switch == "on":
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"

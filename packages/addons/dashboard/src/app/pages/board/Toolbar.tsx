@@ -94,7 +94,7 @@ export function Toolbar({
         onClick={() => set({ mine: !filters.mine })}
         className={cn(
           'h-8 rounded-md border px-2.5 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-brand',
-          filters.mine ? 'border-brand bg-brand-soft text-brand' : 'border-input text-text-muted hover:bg-accent hover:text-text',
+          filters.mine ? 'border-brand bg-brand-soft text-brand-chip-text' : 'border-input text-text-muted hover:bg-accent hover:text-text',
         )}
       >
         Mine
@@ -112,14 +112,14 @@ export function Toolbar({
           <ToggleGroupItem
             value="board"
             aria-label="Board view"
-            className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand"
+            className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text"
           >
             <SquareKanban className="size-3.5" /> Board
           </ToggleGroupItem>
           <ToggleGroupItem
             value="list"
             aria-label="List view"
-            className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand"
+            className="h-8 gap-1.5 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand-chip-text"
           >
             <LayoutList className="size-3.5" /> List
           </ToggleGroupItem>

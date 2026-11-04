@@ -34,7 +34,7 @@ import hashlib
 import os
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -43,6 +43,7 @@ from orch import canon
 __all__ = [
     "ADDON",
     "EDIT",
+    "GATES",
     "KIND",
     "MAX_STEPS",
     "TTL",
@@ -76,6 +77,8 @@ QUICK = "quick_task"
 EDIT = "edit_ticket"
 #: turning on an add-on that needs settings: ``settings.set`` then ``addon.grant``, on the workspace log (seqaddon.py)
 ADDON = "addon_enable"
+#: approving the requirements and the plan of an existing ticket with one signature: two ``approve`` ops (seqgates.py)
+GATES = "approve_gates"
 VERSION = 1
 MAX_STEPS = 16
 MAX_SECTION_BYTES = 65536
@@ -150,6 +153,10 @@ def validate_intent(intent: Any) -> dict[str, Any]:
         from . import seqaddon
 
         return seqaddon.validate(intent, SequenceInvalid)
+    if isinstance(intent, Mapping) and intent.get("kind") == GATES:
+        from . import seqgates
+
+        return seqgates.validate(intent, SequenceInvalid)
     if isinstance(intent, Mapping) and intent.get("kind") == EDIT:
         return _validate_edit(intent)
     return _validate_new_ticket(intent)
@@ -242,10 +249,10 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     from orch.schema import SECTIONS_BY_TYPE
 
     base = {"v", "kind", "ticket", "ticket_type", "head", "sections"}
-    if not base <= set(intent) <= base | {"acceptance", "tasks", "people", "links", "images"}:
+    if not base <= set(intent) <= base | {"title", "acceptance", "tasks", "people", "links", "images"}:
         raise SequenceInvalid(
-            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, tasks, links, images "
-            "and people"
+            "an edit has exactly v, kind, ticket, ticket_type, head, sections, title, acceptance, tasks, links, "
+            "images and people"
         )
     if intent["v"] != VERSION:
         raise SequenceInvalid("this signer does not know that sequence")
@@ -292,6 +299,8 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
         "head": head,
         "sections": out_sections,
     }
+    if "title" in intent:
+        out["title"] = _edit_title(intent["title"])
     if "acceptance" in intent:
         out["acceptance"] = _edit_acceptance(intent["acceptance"])
     if "tasks" in intent:
@@ -307,6 +316,24 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     if not steps(out):
         raise SequenceInvalid("nothing changes")
     return out
+
+
+def _edit_title(value: Any) -> dict[str, str]:
+    """A new title for the ticket: the title the person reviewed (``was``, bound by the event's base_rev) and the new
+    one, both one line of 1 to 200 characters, and different."""
+    if not isinstance(value, Mapping) or set(value) != {"was", "text"}:
+        raise SequenceInvalid("title is {was, text}")
+    was, text = value["was"], value["text"]
+    from orch.canon.text import TextError, check_plain
+
+    try:  # one line, no TAB, no surrounding space, no invisible character: two titles never look alike
+        check_plain(text, one_line=True, limit=200, what="the title")
+        _one_line(was, "the current title", 200)  # the host's word; may predate these rules, so only the basics
+    except TextError as exc:
+        raise SequenceInvalid(str(exc)) from None
+    if text == was:
+        raise SequenceInvalid("the title is the one it replaces")
+    return {"was": was, "text": text}
 
 
 def _edit_acceptance(value: Any) -> dict[str, Any]:
@@ -528,7 +555,13 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
 
     base = {"v", "kind", "title", "ticket_type", "set", "sections"}
     # B12D: acceptance and people are optional (left out when empty, so every earlier intent keeps its digest)
-    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {"acceptance", "people", "agent", "images"}:
+    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {
+        "acceptance",
+        "people",
+        "agent",
+        "images",
+        "launch",
+    }:
         raise bad("an intent has exactly v, kind, title, ticket_type, set, sections, acceptance, people, images, agent")
     if intent["v"] != VERSION or intent["kind"] != KIND:
         raise bad("this signer does not know that sequence")
@@ -601,6 +634,24 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
         from . import seqquick
 
         result["agent"] = seqquick.validate_agent(intent["agent"], SequenceInvalid)
+    if "launch" in intent:
+        launch = intent["launch"]
+        if (
+            not isinstance(launch, Mapping)
+            or not {"harness", "mode"} <= set(launch)
+            or not set(launch) <= {"harness", "mode", "model"}
+            or launch["harness"] not in ("claude-code", "codex")
+            or launch["mode"] not in ("refine", "work", "fix", "continue", "context")
+            or (
+                "model" in launch
+                and (
+                    not isinstance(launch["model"], str)
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:\[\]/-]{0,63}", launch["model"]) is None
+                )
+            )
+        ):
+            raise bad("launch is a harness, mode and optional model")
+        result["launch"] = dict(launch)
     if len(steps(result)) > MAX_STEPS:
         raise bad("too many changes for one review")
     return result
@@ -611,6 +662,8 @@ def label_of(intent: Mapping[str, Any]) -> str:
     no title: it changes a ticket that already exists)."""
     if intent["kind"] == EDIT:
         return f"edit {intent['ticket']['key']}"
+    if intent["kind"] == GATES:
+        return f"approve requirements and plan of {intent['ticket']['key']}"
     if intent["kind"] == ADDON:
         return f"turn on {intent['name']}"
     return str(intent["title"])
@@ -633,6 +686,10 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
         from . import seqaddon
 
         return seqaddon.steps(intent)
+    if intent["kind"] == GATES:
+        from . import seqgates
+
+        return seqgates.steps(intent)
     out: list[dict[str, Any]] = []
     if intent["kind"] == KIND:
         out.append(
@@ -673,7 +730,9 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
 
             out.append(seqquick.grant_step(intent["agent"]))
         return out
-    # EDIT: pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
+    # EDIT: the title, pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
+    if "title" in intent:
+        out.append({"op": "set", "args": {"pairs": [f"title={intent['title']['text']}"]}, "kind": "title", "ref": True})
     out.extend(_image_steps(intent))
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         out.append(
@@ -734,8 +793,8 @@ def step_args(intent: Mapping[str, Any], k: int, ref: str | None) -> tuple[str, 
     step = steps(intent)[k]
     args = copy.deepcopy(step["args"])
     if step["ref"]:
-        if ref is None and intent["kind"] == EDIT:
-            ref = intent["ticket"]["key"]  # an edit names its ticket from the first step on
+        if ref is None and intent["kind"] in (EDIT, GATES):
+            ref = intent["ticket"]["key"]  # these name their ticket from the first step on
         args = {"ref": ref, **args}
     return step["op"], args
 
@@ -775,6 +834,10 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
         from . import seqaddon
 
         return seqaddon.payload(intent, k)
+    if intent["kind"] == GATES:
+        from . import seqgates
+
+        return seqgates.payload(intent, k)
     plan = steps(intent)
     if plan[k]["kind"] == "grant":
         from . import seqquick
@@ -798,6 +861,12 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
             "label": img["alt"],
             "sha256": img["sha256"],
             "bytes": img["bytes"],
+        }
+    if step["kind"] == "title":
+        return {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.title": canon.value_hash(intent["title"]["was"])},
+            "set": {"ticket.title": intent["title"]["text"]},
         }
     if step["kind"] == "links":
         return {
@@ -939,15 +1008,19 @@ def check_step(
     if not isinstance(material, Mapping):
         raise stop()
     ticket = material.get("ticket")
-    if k == 0 and intent["kind"] == EDIT:
-        # an edit starts on the ticket the person reviewed, at the head they reviewed: anything else is another edit
+    if k == 0 and intent["kind"] in (EDIT, GATES):
+        # an edit (or the approval of both gates) starts on the ticket the person reviewed, at the head they reviewed:
+        # anything else is another edit
         t = intent["ticket"]
         who = {"key": t["key"], "uid": t["uid"]}
         if log != t["uid"] or ticket != who or ev.get("based_on") != intent["head"]:
             raise stop()
         if first is not None and dict(first) != who:
             raise stop()
-        _check_content(kind, want, material, plan, k, stop)
+        if intent["kind"] == GATES:
+            _check_gates(intent, k, prepared, material, who, done or {}, stop)
+        else:
+            _check_content(kind, want, material, plan, k, stop)
     elif k == 0:
         key = got.pop("key", None)  # the one host-chosen value: allocated by the host, shown "per host, not proven"
         if not isinstance(key, str) or not _KEY.fullmatch(key) or not isinstance(log, str) or not _ULID.fullmatch(log):
@@ -968,7 +1041,9 @@ def check_step(
         who = {"key": first["key"], "uid": first["uid"]}
         if prev_head is None or ev.get("based_on") != prev_head:
             raise stop()  # a foreign event in between, or not the head of the event this signer signed at k-1
-        if kind == "approve":
+        if kind == "approve" and intent["kind"] == GATES:
+            _check_gates(intent, k, prepared, material, who, done or {}, stop)
+        elif kind == "approve":
             _check_gate(intent, plan, k, prepared, material, who, done or {}, person)
         else:
             _check_content(kind, want, material, plan, k, stop)
@@ -1001,6 +1076,22 @@ def _check_content(
         or (carries_sequence and k > 0)
     ):
         raise stop()
+
+
+def _check_gates(
+    intent: Mapping[str, Any],
+    k: int,
+    prepared: Mapping[str, Any],
+    material: Mapping[str, Any],
+    who: Mapping[str, str],
+    done: Mapping[int, str],
+    stop: Callable[[], Aborted],
+) -> None:
+    """A step of the approval of both gates: the gate input is the intent's (seqgates.check_gate); the plan gate's
+    ``prior`` names exactly the requirements approval this signer signed at step 0 (``done[0]``)."""
+    from . import seqgates
+
+    seqgates.check_gate(intent, k, prepared, material, uid=who["uid"], prior_id=done.get(0), stop=stop)
 
 
 def _open_keys(kind: str) -> frozenset[str]:
@@ -1147,6 +1238,12 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
     person = first["actor"]["id"]
     intent = validate_intent(meta["intent"])
     plan = steps(intent)
+    if intent["kind"] == GATES:
+        # step 0 IS an ordinary gate approval, reviewed as one (its gate material, minus the sequence); the plan's
+        # approval is told in words and its texts are shown by build_content from the intent
+        out = copy.deepcopy(dict(prepared))
+        out["material"] = {key: v for key, v in out["material"].items() if key != "sequence"}
+        return out
     events = [copy.deepcopy(first)]
     texts: dict[str, str]
     texts = dict(material.get("texts") or {})  # an edit's first step may already be a section
@@ -1165,16 +1262,24 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
             **expected_payload(intent, k, person),
         }
         events.append(ev)
-        for sid in ev.get("sections") or {}:
+        for sid in (ev.get("sections") or {}) if plan[k]["op"] == "section.set" else ():
             texts[sid] = plan[k]["args"]["message"]
     new_material: dict[str, Any] = {"kind": "payload", "ticket": material.get("ticket"), "review": []}
     if texts:
         new_material["texts"] = texts
+    if intent["kind"] == ADDON:
+        for key in ("market", "deps"):
+            if material.get(key) is not None:
+                new_material[key] = copy.deepcopy(material[key])
     if intent["kind"] == ADDON and material.get("before"):
         new_material["before"] = copy.deepcopy(material["before"])  # the host's current settings (unsigned, labelled)
-    if intent["kind"] == EDIT and "links" in intent:
-        # the links the person reviewed: bound by the base_rev of the links event (the hash of exactly this value)
-        new_material["before"] = {"ticket.links": copy.deepcopy(intent["links"]["was"])}
+    if intent["kind"] == EDIT and ("links" in intent or "title" in intent):
+        # what the person reviewed: bound by the base_rev of that event (the hash of exactly this value)
+        new_material["before"] = {}
+        if "title" in intent:
+            new_material["before"]["ticket.title"] = intent["title"]["was"]
+        if "links" in intent:
+            new_material["before"]["ticket.links"] = copy.deepcopy(intent["links"]["was"])
     from orch.host import review
 
     new_material["review"] = [review.of(e, new_material) for e in events]
@@ -1201,12 +1306,23 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     the caller shows the full review (:func:`orch.host.signcontent.build`)."""
     from orch.host import signcontent
 
-    content = signcontent.build(expand(prepared), verified=verified)
+    full = expand(prepared)
+    content = signcontent.build(full, verified=verified)
     meta = prepared["material"]["sequence"]
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
     if intent["kind"] == ADDON:  # no ticket: the workspace's settings and one add-on
-        return _addon_content(content, intent, n)
+        content = _addon_content(content, intent, n, full["events"], verified=verified)
+        publisher = (prepared["material"].get("market") or {}).get("publisher", {}).get("fingerprint")
+        if intent.get("staged"):
+            rows = content.setdefault("fields_changed", [])
+            content["fields_changed"] = [row for row in rows if row["field"] != "package digest"]
+            if not any(row["field"] == "add-on" for row in rows):
+                signcontent._row(content, "add-on", intent["name"])
+            signcontent._row(content, "publisher (per host, not signed)", publisher or "unsigned")
+        return content
+    if intent["kind"] == GATES:
+        return _gates_content(content, prepared, intent, verified=verified)
     key = prepared["material"]["ticket"]["key"]
     # the key is the host's word: said so right next to it (invariant 1), with the end of the signed id
     key = f"{signcontent.one(key)} (key per host; signed id …{content['ticket']['uid_tail']})"
@@ -1216,8 +1332,12 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         content.setdefault("notes", []).extend(extra_lines(intent))
     elif intent["kind"] == EDIT:
         content["headline"] = f"Edit {key}"
-        content["subline"] = "its text, acceptance checks, tasks, repositories and people, as shown below"
+        content["subline"] = "its title, text, acceptance checks, tasks, repositories and people, as shown below"
         notes = content.setdefault("notes", [])
+        if "title" in intent:
+            notes.append(
+                f"Title: {signcontent.one(intent['title']['was'])} -> {signcontent.one(intent['title']['text'])}"
+            )
         if intent["sections"]:
             names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
             notes.append(f"Replaces the whole current text of: {names}.")
@@ -1231,10 +1351,12 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         if "owner" in intent.get("people", {}):
             notes.append("The owner is set last. After that you may no longer be able to change this ticket yourself.")
         notes.extend(_people_notes(intent))
-        notes.append(
-            "Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing "
-            "stops and nothing more is signed."
-        )
+        if intent["sections"] or any(k in intent for k in ("acceptance", "tasks", "links", "people", "images")):
+            # r12-P11: a title-only rename does not say it (a conflict refusal says it in plain words)
+            notes.append(
+                "Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing "
+                "stops and nothing more is signed."
+            )
     else:
         content.setdefault("notes", []).extend(extra_lines(intent))
         count = len(intent["sections"])
@@ -1266,30 +1388,115 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             f"Adds {len(intent['images'])} screenshot{'s' if len(intent['images']) != 1 else ''}. "
             "The dashboard shows each one from the file you pasted and checks its digest against the one signed."
         )
-    content.setdefault("notes", []).append(
-        f"One confirmation signs all {n} steps. If the ticket changes meanwhile, "
-        "signing stops and what is already signed stays."
-    )
+    return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
+
+
+def _gates_content(
+    content: dict[str, Any], prepared: Mapping[str, Any], intent: Mapping[str, Any], *, verified: bool
+) -> dict[str, Any]:
+    """The review of approving both gates: the requirements as a single approval shows them (built from the first
+    request), then the plan's sections and tasks from the intent, in full. The person reads both, then signs once."""
+    from orch.host import signcontent
+
+    key = prepared["material"]["ticket"]["key"]
+    uid_tail = content["ticket"]["uid_tail"]
+    content["ticket"] = {
+        **content["ticket"],
+        "title": intent["title"],
+        "key_note": f"key and title per host, not proven; the ticket's signed id ends …{uid_tail}",
+    }
+    ref = f"{signcontent.one(key)} (key per host; signed id …{uid_tail})"
+    content["headline"] = f"Approve requirements and plan of {ref}"
+    content["subline"] = "the requirements as shown, then the plan as shown; one signature approves both"
+
+    def title(gate: str, name: str) -> str:
+        return name if name.lower() == gate else f"{gate.capitalize()}: {name}"
+
+    sections = [{**s, "title": title("requirements", s["title"])} for s in content.get("sections", [])]
+    for sid, text in intent["plan"]["sections"].items():
+        if text:
+            sections.append({"id": f"plan:{sid}", "title": title("plan", signcontent._title(sid)), "text": text})
+    content["sections"] = sections
+    tasks = signcontent._tasks(intent["plan"]["tasks"])
+    content["tasks"] = tasks
+    plan_rule = prepared["material"]["sequence"].get("plan_policy")
+    if plan_rule is not None and verified:  # like a single approval's rule: only once the signer recomputed it
+        signcontent._row(content, signcontent.who_approves("plan"), signcontent.policy_words(plan_rule))
+        content["ticket"]["key_note"] += (
+            "; who approves the plan is read from this computer's settings and is not part of what you sign here"
+        )
+    notes = content.setdefault("notes", [])
+    notes.extend(extra_lines(intent))
     return content
 
 
-def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -> dict[str, Any]:
+def _addon_content(
+    content: dict[str, Any],
+    intent: Mapping[str, Any],
+    n: int,
+    events: Sequence[Mapping[str, Any]] = (),
+    *,
+    verified: bool = False,
+) -> dict[str, Any]:
     """The review of turning on an add-on that needs settings: the settings in words, then the grant (both are rows of
     the events, built by :func:`signcontent.build`), and what happens if signing stops between the two."""
     from orch.addons.settings_needs import TITLES
 
-    content["headline"] = f"Turn on {TITLES[intent['name']]}"
+    content["fields_inline"] = True  # (Publish folds them under the technical details below)
+    content.pop("summary", None)  # never folded behind a grant summary
+    content["headline"] = f"Turn on {TITLES.get(intent['name'], intent['name'])}"
     content["subline"] = "its settings are signed first, then the add-on is turned on"
     notes = content.setdefault("notes", [])
-    notes.append(
-        "Settings are signed first, then the add-on is turned on. If signing stops in between, "
-        "the settings stay and the add-on stays off."
-    )
-    notes.append(
-        f"One confirmation signs all {n} steps. If the workspace changes meanwhile, "
+    publish = (intent.get("settings") or {}).get("publish")
+    if isinstance(publish, Mapping) and set(publish) == {"server", "share"}:
+        # r12-P11: Publish says it in one plain line; the addresses (both rows) and the add-on's identity and
+        # capabilities stay in the review, folded under the technical details. The line names where files go.
+        from orch.host.signcontent import _reach
+
+        sent, opens = _reach(str(publish["server"])), _reach(str(publish["share"]))
+        content["fields_inline"] = False
+        notes[:] = [n for n in notes if not n.startswith(("Files you share go to this server", "Files are sent to: "))]
+        notes.insert(
+            0,
+            f"Files you share go to {sent}"
+            + ("" if sent == opens else f" (links open at {opens})")
+            + "; anyone with the link can read them.",
+        )
+    # P04: the built-in Publish (matched by the digest of the shipped package, never by name) is not third-party code,
+    # so the "runs its own code" warning is for marketplace add-ons only; any other event keeps it (fail closed).
+    from orch.addons import builtin
+    from orch.host import signcontent
+
+    # Fail closed: only a verified review of exactly [settings, ONE grant of the built-in Publish package] drops it.
+    grants = [e for e in events if e.get("type") == "addon.granted"]
+    settings = [e for e in events if e.get("type") == "settings.changed"]
+    others = [e for e in events if e.get("type") not in ("addon.granted", "settings.changed")]
+    if (
+        verified
+        and len(grants) == 1
+        and len(settings) <= 1
+        and not others
+        and builtin.is_builtin_package(grants[0], "publish")
+    ):
+        notes[:] = [x for x in notes if x != signcontent.ADDON_TRUST]
+    # "Settings are signed first, then the add-on is turned on; if signing stops in between ..." is in the technical
+    # details (:func:`steps_line`), where the signer's full review shows it.
+    return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
+
+
+def steps_line(intent: Mapping[str, Any], n: int) -> str:
+    """What one confirmation does for a sequence (technical details, r7-P10)."""
+    what = "workspace" if intent["kind"] == ADDON else "ticket"
+    if intent["kind"] == ADDON:
+        return (
+            f"One confirmation signs all {n} steps. Settings are signed first, then the add-on is turned on. "
+            "If signing stops in between, the settings stay and the add-on stays off. "
+            f"If the {what} changes meanwhile, signing stops and what is already signed stays."
+        )
+    return (
+        f"One confirmation signs all {n} steps. If the {what} changes meanwhile, "
         "signing stops and what is already signed stays."
     )
-    return content
 
 
 def technical_lines(intent: Mapping[str, Any]) -> list[str]:
@@ -1304,19 +1511,41 @@ def technical_lines(intent: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str]:
+def extra_lines(intent: Mapping[str, Any], *, full: bool = False) -> list[str]:
     """The steps that are not events of the plain review, in words (the plain view and the full review show them):
     the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5).
     A new ticket with an agent part: the grant sentence, and that the start itself is NOT signed (U4, I5)."""
     from . import seqquick
 
     if intent["kind"] == KIND:
+        if "launch" in intent:
+            launch = intent["launch"]
+            grant = seqquick.grant_line if full else seqquick.grant_note
+            return [
+                *([grant(intent["agent"])] if "agent" in intent else []),
+                # P14: which agent, its mode and what follows are technical details (full review), not the plain text
+                *(
+                    [
+                        f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}.",
+                        "Then: the agent starts on the new ticket.",
+                    ]
+                    if full
+                    else []
+                ),
+            ]
         if "agent" not in intent:
             return []
         return [
-            seqquick.grant_line(intent["agent"], now),
+            (seqquick.grant_line if full else seqquick.grant_note)(intent["agent"]),
             "Not signed: the agent start. After the ticket exists, the dashboard may start an agent that uses this "
             "access; that start is not part of this confirmation. Nothing here approves the requirements or the plan.",
+        ]
+    if intent["kind"] == GATES:
+        return [
+            "Signs two approvals: the requirements as written above, then the plan as written above.",
+            "If either text changes before you sign, nothing more is signed. Changes after the first approval stop "
+            "the second: the requirements then stay approved and the plan waits for you.",
+            "The answer and the verdict stay your own signatures.",
         ]
     if intent["kind"] != QUICK:
         return []
@@ -1325,7 +1554,7 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
         "The task still ends with your own verdict: nothing closes it for you.",
     ]
     if intent["agent"] is not None:
-        out.append(seqquick.grant_line(intent["agent"], now))
+        out.append((seqquick.grant_line if full else seqquick.grant_note)(intent["agent"]))
     return out
 
 
@@ -1401,6 +1630,10 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
         from . import seqaddon
 
         return seqaddon.lines(intent, clean)
+    if intent["kind"] == GATES:
+        from . import seqgates
+
+        return seqgates.lines(intent, clean)
     if intent["kind"] == QUICK:
         lines = [f"title: {clean(one(intent['title']))}", "description:"]
         lines += ["| " + clean(x) for x in intent["description"].split("\n")]
@@ -1411,6 +1644,8 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
         return lines
     if intent["kind"] == EDIT:
         lines = [f"edit: {clean(one(intent['ticket']['key']))}", f"type: {clean(intent['ticket_type'])}"]
+        if "title" in intent:
+            lines.append(f"title: {clean(one(intent['title']['was']))} -> {clean(one(intent['title']['text']))}")
         for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
             lines.append(f"section {clean(sid)} (replaces the current text):")
             lines += ["| " + clean(line) for line in intent["sections"][sid]["text"].split("\n")]

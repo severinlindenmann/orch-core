@@ -43,6 +43,8 @@ from orch.wsproto.sign import SignerRefused
 from .errors import HubRefused
 
 __all__ = [
+    "HUB_FILE_MAX",
+    "REQUEST_OVERHEAD",
     "HubPublishSigner",
     "HubPublishTransport",
     "PUBLIC_ROUTES",
@@ -58,8 +60,13 @@ __all__ = [
 PUBLIC_ROUTES: tuple[tuple[str, str], ...] = ()
 _NONCE_LEN = 16
 _H_REQUEST = b"orch/v2/hub-publish-request|"
-#: the link frame is 1 MiB; leave room for the envelope, the headers and the signature
+#: the link frame is 1.5 MB (protocol §10.3); leave room for the envelope, the headers and the signature
 REQUEST_MAX = 900_000
+#: room kept for the headers and the target inside ``REQUEST_MAX``
+REQUEST_OVERHEAD = 16 * 1024
+#: the largest file body that fits one ``publish_out`` frame: the body travels hex-encoded (2 characters per byte), so
+#: it is what is left of ``REQUEST_MAX`` after the overhead allowance, halved
+HUB_FILE_MAX = (REQUEST_MAX - REQUEST_OVERHEAD) // 2
 
 Approver = Callable[[str], "Mapping[str, Any] | None"]
 
@@ -239,7 +246,7 @@ class HubPublishTransport:
             "body_hex": body.hex(),
         }
         if len(body) * 2 + sum(len(k) + len(v) for k, v in headers.items()) + len(target) > REQUEST_MAX:
-            raise HubRefused("too_large")  # the link frame is 1 MiB; nothing was sent
+            raise HubRefused("too_large")  # over one link frame (HUB_FILE_MAX says it earlier); nothing was sent
         reply = self._link.call("publish_out", {"request": request})
         status, body_hex = reply.get("status"), reply.get("body_hex")
         if type(status) is not int or not 100 <= status <= 599 or type(body_hex) is not str:

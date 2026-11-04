@@ -29,6 +29,9 @@ KEY_BYTES: dict[str, tuple[int, int]] = {
     "pub": (65, 65),
     "hash": (32, 32),
     "sealed": (32, 512),
+    # file bytes a space item carries (``space.put`` data is at most 400,000 base64url characters): never a key, but
+    # random to the scanner all the same; listed only at answer paths (``auth.ANSWER_KEY_PATHS``)
+    "data": (0, 300_000),
 }
 
 #: file kind -> (path inside the ``{o, sig}`` document, key kind)

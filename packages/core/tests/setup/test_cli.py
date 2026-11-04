@@ -18,7 +18,6 @@ from orch.setup.protocol import SetupError
 from .conftest import PROFILE, make_env
 from .fakes import FakePorts
 from .helpers import call
-from .test_secrets import words_for
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +131,7 @@ def test_the_whole_command_over_the_socket(tmp):
             api = lambda m, r, b=None: call(sock, m, "/api/setup/" + r, b, token=tok)  # noqa: E731
             assert api("POST", "profile", {**PROFILE, "addons": ["dashboard", "quick"]})[0] == 200
             st, rev, _ = api("POST", "secrets/reveal", {})
-            assert api("POST", "secrets/confirm", {"words": words_for(rev)})[1] == {"ok": True}
+            assert api("POST", "secrets/confirm", {"acknowledged": True})[1] == {"ok": True}
             assert api("POST", "secrets/reveal", {})[0] in (409, 410)
             st, rv, h = api("POST", "review", {})
             ports.expect(wait_flow().review.plan)
@@ -193,8 +192,8 @@ def test_ctrl_c_before_the_run_starts_stops_between_steps(tmp):
     f.dispatch("POST", "profile", {}, {**PROFILE, "addons": ["dashboard"]})
     from .test_secrets import reveal
 
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     rv = f.dispatch("POST", "review", {}, {})[1]
     ports.expect(f.review.plan)
     f.cancel_run()
@@ -424,9 +423,65 @@ def test_open_workspace_goes_to_the_dashboard_service_with_a_login(tmp, tmp_path
     ictx.layout.ensure()
     save(ictx.layout, st)
     seen = []
+    ictx.health = lambda host, port, wait=0: True
     ictx.dashboard_entry = lambda: ["orch-dashboard"]
     ictx.mint_login = lambda argv, env: seen.append(argv) or "http://127.0.0.1:8151/#launch=abc&to=%2F"
     assert icli.workspace_login_url(ictx, "/w") == "http://127.0.0.1:8151/#launch=abc&to=%2F"
     assert seen == [["orch-dashboard"]]
     ictx.dashboard_entry = lambda: None
     assert icli.workspace_login_url(ictx, "/w") is None
+
+
+def test_open_workspace_waits_for_the_service_and_restarts_a_dead_one(tmp, tmp_path):
+    """r11-P01: the login link is minted only once the service answers; a service that never answers is started once
+    more; still nothing -> LoginUnavailable (setup's Finish turns it into a retryable 503), never a raw exception."""
+    from orch.install import cli as icli
+    from orch.install.state import load, save
+
+    ictx = icli.Ctx(env={"HOME": str(tmp_path)}, out=io.StringIO(), err=io.StringIO())
+    st = load(ictx.layout)
+    st["dashboard"] = {"port": 8151, "bind": "127.0.0.1", "url": "http://127.0.0.1:8151/", "service": "x"}
+    st["workspaces"] = [{"dir": "/w", "port": 8151}]
+    ictx.layout.ensure()
+    save(ictx.layout, st)
+    ictx.dashboard_entry = lambda: ["orch-dashboard"]
+    minted: list = []
+    ictx.mint_login = lambda argv, env: minted.append(1) or "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    up = {"n": 0}
+    ictx.health = lambda host, port, wait=0: up["n"] >= 1
+    started: list = []
+    real_start = icli.start_dashboard
+    icli_start = lambda ctx, bind, port: (started.append(port), up.__setitem__("n", 1))[0]  # noqa: E731
+    try:
+        icli.start_dashboard = icli_start
+        assert icli.workspace_login_url(ictx, "/w", wait=0.05) == "http://127.0.0.1:8151/#launch=abc&to=%2F"
+        assert started == [8151] and minted == [1]
+        ictx.health = lambda host, port, wait=0: False
+        started.clear()
+        with pytest.raises(icli.LoginUnavailable):
+            icli.workspace_login_url(ictx, "/w", wait=0.05)
+        assert started == [8151] and minted == [1]  # no link minted on a service that does not answer
+        ictx.health = lambda host, port, wait=0: True
+        ictx.mint_login = lambda argv, env: None
+        with pytest.raises(icli.LoginUnavailable):
+            icli.workspace_login_url(ictx, "/w", wait=0.05)
+        ictx.mint_login = lambda argv, env: (_ for _ in ()).throw(OSError("boom"))
+        with pytest.raises(icli.LoginUnavailable):
+            icli.workspace_login_url(ictx, "/w", wait=0.05)
+    finally:
+        icli.start_dashboard = real_start
+
+
+def test_the_setup_launch_link_may_load_the_page_from_setup_or_the_old_root_form():
+    from orch.setup import flow
+
+    code = "A" * 24
+    assert flow._LINK.fullmatch(f"http://127.0.0.1:8123/setup#launch={code}")  # run16 P06: served with the setup CSP
+    assert flow._LINK.fullmatch(f"http://127.0.0.1:8123/#launch={code}&to=%2Fsetup")  # an older dashboard
+    for bad in (
+        f"http://127.0.0.1:8123/other#launch={code}",
+        f"http://evil.example/setup#launch={code}",
+        f"http://127.0.0.1:8123/setup#launch={code}&to=%2F",
+        "http://127.0.0.1:8123/setup#launch=short",
+    ):
+        assert not flow._LINK.fullmatch(bad)

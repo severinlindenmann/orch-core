@@ -398,7 +398,7 @@ def test_an_unknown_schema_version_is_refused():
 def test_core_declares_its_addon_api():
     from orch.addons.manifest import ADDON_API, incompatibility
 
-    assert ADDON_API == "1.1"
+    assert ADDON_API == "1.2"
     assert incompatibility(load_manifest(raw(MANIFEST)), "2.0.0.dev0") is None
 
 

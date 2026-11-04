@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "update.interrupted",
+    "message": "an update was interrupted: run `orch update` to finish or roll back",
+    "hint": "orch update",
+    "fix": {
+      "argv": [
+        "orch",
+        "migrate",
+        "--check"
+      ]
+    },
+    "retryable": false
+  }
+}

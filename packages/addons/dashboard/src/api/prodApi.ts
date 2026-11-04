@@ -7,11 +7,10 @@ import { refreshFeatures } from './features'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
-import type { SignDefault, SignMethod } from './signing'
-import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { HandoffAction } from './handoff'
 import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
-import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
+import type { ClaudeTrust, QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
@@ -27,9 +26,13 @@ import {
   type TicketDocument,
   type TicketSummary,
   type TodayDocument,
+  type AddonActionResult,
+  type AddonPackage,
   type Workspace,
   type WorkspaceIdentity,
   type OrchEvent,
+  type Cosmetic,
+  type CosmeticBody,
 } from './types'
 
 interface ServerWorkspace {
@@ -67,6 +70,24 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, o
  */
 const MAX_PAGES = 25
 
+/**
+ * A workspace read the host refuses because the dashboard add-on is off or paused (409 `addon.disabled` / `addon.paused`):
+ * the workspace list we read was older than the host's state. The page does not retry the read or log it; whoever owns the
+ * query cache is told once, drops the workspace list, and the shell shows its "Getting your workspace ready" card.
+ */
+const notReadyListeners = new Set<() => void>()
+export function onWorkspaceNotReady(fn: () => void): () => void {
+  notReadyListeners.add(fn)
+  return () => void notReadyListeners.delete(fn)
+}
+let notReadyAt = 0
+function workspaceNotReady(): void {
+  const now = Date.now()
+  if (now - notReadyAt < 1000) return // a page's parallel reads all answer at once: one refresh is enough
+  notReadyAt = now
+  for (const fn of notReadyListeners) fn()
+}
+
 async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const token = getToken()
   const result = await createFetchTransport('', () => token).request(method, path, body, signal)
@@ -76,6 +97,7 @@ async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' =
   }
   if (result.status >= 400) {
     const body = result.json as ApiErrorBody | null
+    if (result.status === 409 && path.startsWith('/api/w/') && (body?.error?.code === 'addon.disabled' || body?.error?.code === 'addon.paused')) workspaceNotReady()
     throw new ApiError(
       result.status,
       body?.error ?? { code: 'host.unavailable', message: 'Host not available', retryable: result.status >= 500 },
@@ -136,6 +158,16 @@ async function listTickets(ws: string, p: ListTicketsParams = {}, route = 'ticke
   return narrow(rows, p)
 }
 
+/**
+ * Add-ons whose screens are declarative views the server serves (today the Wiki): on for the workspace while the server
+ * lists their feature. The package (`/api/addons`) carries the view; the grant is the server's own check, not a signed one.
+ */
+function viewAddons(features: string[]): Workspace['addons'] {
+  return features.includes('wiki')
+    ? { wiki: { enabled: true, status: 'active', installed: true, granted: null, version: '0.1.0', package_sha256: '', capabilities: [] } }
+    : {}
+}
+
 /** Workspaces in the UI's shape. What the shell never fills for a read-only host (gates, addons, counts) stays empty. */
 function workspace(s: ServerWorkspace): Workspace {
   return {
@@ -144,7 +176,8 @@ function workspace(s: ServerWorkspace): Workspace {
     name: s.name,
     members: s.members,
     gates: {} as Workspace['gates'],
-    addons: {},
+    addons: viewAddons(s.features),
+    features: [...s.features],
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
@@ -174,6 +207,11 @@ export async function logout() {
 /** The first read of every page load. It ends by itself after `SESSION_READ_MS` (an error the person can retry), and when the
  * query is cancelled (Try again): a request that can wait for good is how a reload ended on the boot skeleton. */
 export const SESSION_READ_MS = 20_000
+/** Right after setup the host can need a while to come up: a refused or unanswered first read is "still starting", not a failure.
+ * The Shell asks again (1 s, 2 s ... 5 s apart) for this long before it shows a plain failure screen. */
+export const SESSION_RETRY_WINDOW_MS = 60_000
+export const sessionRetryDelay = (attempt: number) => Math.min(5_000, 1_000 * (attempt + 1))
+export const isStarting = (e: unknown) => e instanceof ApiError && (e.status === 503 || e.code === 'host.unavailable')
 export const session = async (cancel?: AbortSignal) => {
   const stop = cancel ? AbortSignal.any([cancel, AbortSignal.timeout(SESSION_READ_MS)]) : AbortSignal.timeout(SESSION_READ_MS)
   try {
@@ -185,6 +223,21 @@ export const session = async (cancel?: AbortSignal) => {
 }
 
 const reads = {
+  /** The add-on packages with declarative views that are ON in a running workspace (asked per workspace; the Wiki). */
+  getAddons: async (): Promise<AddonPackage[]> => {
+    const rows = await call<ServerWorkspace[]>('/api/workspaces')
+    const lists = await Promise.all(rows.filter((r) => r.host_state === 'ok' && r.features.includes('addons')).map((r) => call<AddonPackage[]>(`${w(r.id)}/addons`)))
+    return [...new Map(lists.flat().map((p) => [p.name, p])).values()]
+  },
+  /**
+   * The one add-on action a served view can run: the Wiki's "Create the wiki folder" (its plain-click admin route). The
+   * server decides who may; an add-on action the server does not serve is refused plainly.
+   */
+  runAddonAction: async (ws: string, addon: string, action: string): Promise<AddonActionResult> => {
+    if (addon !== 'wiki' || action !== 'create') return unsupported('runAddonAction')
+    await call(`${w(ws)}/wiki/create`, 'POST', {})
+    return { ok: true, message: 'The wiki folder is ready.', changed: true }
+  },
   /** One person has a different id in each workspace: with `ws` this is that workspace's own entry (person, name, role). */
   getMe: async (ws?: string): Promise<Me> => {
     const all = await call<ServerMe[]>('/api/me')
@@ -247,6 +300,10 @@ const reads = {
 const records = {
   recordsCommit: (ws: string, push: boolean) => call<RecordsRun>(`${w(ws)}/records/commit`, 'POST', { push }),
   recordsAutoOff: (ws: string) => call<RecordsRun>(`${w(ws)}/records/auto-off`, 'POST'),
+  recordsAutoOn: (ws: string) => call<RecordsRun>(`${w(ws)}/records/auto-on`, 'POST', {}),
+  /** Whether Claude Code may open this workspace's folders without asking, and the plain grant (no signature). */
+  getClaudeTrust: (ws: string) => call<ClaudeTrust>(`${w(ws)}/claude-trust`),
+  grantClaudeTrust: (ws: string, allowParent: boolean) => call<{ on: true }>(`${w(ws)}/claude-trust`, 'POST', { allow_parent: allowParent }),
   /** #1198 C15: the admin clicks. The address is the one the review showed; the tool refuses if git now resolves to another. */
   recordsInit: (ws: string) => call<RecordsRun>(`${w(ws)}/records/init`, 'POST', {}),
   recordsMark: (ws: string, url: string | null) => call<RecordsRun>(`${w(ws)}/records/remote`, 'POST', url === null ? { on: false } : { on: true, url }),
@@ -255,7 +312,7 @@ const records = {
 
 /** Reads a page needs an answer to even when the host has nothing to say yet: an empty list, never a made-up one. */
 const empty = {
-  getAddons: async () => [],
+  getAddonState: async () => ({}),
   getWorkspaceAddons: async () => [],
   getAddonCatalog: async () => [],
   getAddonDecisions: async () => [],
@@ -271,16 +328,9 @@ const empty = {
   getLocalMandatesPreview: (): MandatesPreviewState => ({ preview: true, on: false, preflight: [], orchestrators: [], may: [], always_human: [], protected_paths: [], mandate: null }),
 }
 
-/**
- * The signed actions (M3): the server prepares a sign request and the person signs in a terminal. These three calls are
- * the whole write surface of the dashboard; none of them signs, and nothing here ever submits a signature.
- */
-const handoff = {
-  prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
-  /** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+/** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+const repos = {
   checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>(`${w(ws)}/repos/check`, 'POST', action),
-  getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
-  cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
 
 /**
@@ -296,24 +346,57 @@ const click = {
   getArtifactImage: (ws: string, key: string, name: string) =>
     call<{ image: ArtifactImage | null }>(`${w(ws)}/tickets/${encodeURIComponent(key)}/artifacts/${encodeURIComponent(name)}`),
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
-  signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>) =>
-    call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
+  signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>, delayS?: number) =>
+    call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(delayS ? { delay_s: delayS } : {}), ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
   stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   /** V3 C11: what the host says to check when the hub's channel signs (a read; nothing is prepared or signed here). */
   hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>(`${w(ws)}/hubsign`, 'POST', body),
+  /** FB15: an add-on grant prepared for the hub (nothing is signed here), and where it is now. */
+  prepareHubApproval: (ws: string, action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' | 'market_update' }>) => call<import('./hubsign').HubApproval>(`${w(ws)}/hub/approve/prepare`, 'POST', action),
+  getHubApproval: (ws: string, id: string) => call<import('./hubsign').HubApprovalState>(`${w(ws)}/hub/approve/${encodeURIComponent(id)}`),
   getHubStatus: (ws: string) => call<import('./hub').HubStatus>(`${w(ws)}/hub`),
   getHubShare: (ws: string) => call<import('./hub').HubShare>(`${w(ws)}/hub/share`),
+  getHubShared: (ws: string) => call<{ items: import('./hub').HubSharedTicket[] }>(`${w(ws)}/hub/shared`),
+  getSpaces: (ws: string) => call<{ spaces: import('./hub').HubSpace[]; note: string }>(`${w(ws)}/spaces`),
+  getSpaceItems: (ws: string, id: string) => call<import('./hub').HubSpaceItems>(`${w(ws)}/spaces/${encodeURIComponent(id)}`),
+  getHubAudience: (ws: string) => call<import('./hub').HubAudienceList>(`${w(ws)}/hub/share/audience`),
   getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
     call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
-  getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
+  /** Stop sharing (one ticket, or one rule with the plan the owner was shown): a plain owner click, no signature. */
+  revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>(`${w(ws)}/hub/share/revoke`, 'POST', { ref }),
+  removeHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
+    call<import('./hub').HubReduced>(`${w(ws)}/hub/share/rule-remove`, 'POST', { rule, expect }),
+  /** Share more (owner, full local session, a plan this session was shown): a plain click, no signature. */
+  addHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
+    call<import('./hub').HubAdded>(`${w(ws)}/hub/share/rule-add`, 'POST', { rule, expect }),
+  syncHubShare: (ws: string, expect: string) => call<import('./hub').HubAdded>(`${w(ws)}/hub/share/sync`, 'POST', { expect }),
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
+  /** M3 H-5: company skills and tools offered by the hub (the owner's Company tab). */
+  getOrgOffers: (ws: string) => call<import('./org').OrgOffers>(`${w(ws)}/org`),
+  getOrgSecrets: (ws: string) => call<import('./org').OrgSecrets>(`${w(ws)}/org/secrets`),
+  getOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+    call<import('./org').OrgShown>(`${w(ws)}/org/item?kind=${kind}&name=${encodeURIComponent(name)}`),
+  acceptOrgItem: (ws: string, kind: import('./org').OrgKind, name: string, digest: string) =>
+    call<{ kind: import('./org').OrgKind; name: string; status: import('./org').OrgStatus }>(`${w(ws)}/org/accept`, 'POST', { kind, name, digest }),
+  declineOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+    call<{ kind: import('./org').OrgKind; name: string; status: 'off' }>(`${w(ws)}/org/decline`, 'POST', { kind, name }),
+  syncOrg: (ws: string) => call<{ result: Record<string, string> }>(`${w(ws)}/org/sync`, 'POST', {}),
+  setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
+    call<{ server: string; tool: string; on: boolean }>(`${w(ws)}/org/tool`, 'POST', { server, tool, on, ...(on ? { pin } : {}) }),
+  setOrgTools: (ws: string, server: string, tools: { tool: string; pin: string }[]) =>
+    call<{ server: string; tools: string[]; on: boolean }>(`${w(ws)}/org/tools`, 'POST', { server, tools }),
+  /** R2 T4: remote access (loopback only): the view, a plain turn-off, a one-time device code, removing a device. */
+  getRemote: (ws: string) => call<import('./remote').RemoteView>(`${w(ws)}/remote`),
+  remoteOff: (ws: string) => call<{ changed: boolean }>(`${w(ws)}/remote/off`, 'POST', {}),
+  remoteCode: (ws: string) => call<import('./remote').RemoteCode>(`${w(ws)}/remote/code`, 'POST', {}),
+  endRemoteSession: (ws: string, streamId: string) => call<{ ended: boolean }>(`${w(ws)}/remote/sessions/${streamId}/end`, 'POST', {}),
+  removeRemoteDevice: (ws: string, id: string) => call<{ removed: boolean }>(`${w(ws)}/remote/devices/${encodeURIComponent(id)}/remove`, 'POST', {}),
+  refreshHub: (ws: string) => call<import('./hub').HubRefreshed>(`${w(ws)}/hub/refresh`, 'POST', {}),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
   // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers
   // 404 and the page then hides the controls.
-  getSignDefault: (ws: string) => call<SignDefault>(`${w(ws)}/me/sign_default`),
-  putSignDefault: (ws: string, body: { method: SignMethod; fallback?: SignMethod }) => call<SignDefault>(`${w(ws)}/me/sign_default`, 'PUT', body),
   phoneAvailable: (ws: string) => call<{ phones: number }>(`${w(ws)}/phone/available`),
   clickStatus: (ws: string) => call<ClickCard>(`${w(ws)}/click/status`),
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
@@ -328,7 +411,20 @@ const click = {
     call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records }
+/**
+ * D6: the workspace name and icon, unsigned and owner only (no hand-off). `if_current` is what the page showed; the host
+ * answers the new values, or 409 `cosmetic.conflict` when it is stale.
+ */
+const cosmetic = {
+  setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
+  /** HUB-WS-09: the owner's workspace profile (the host pushes it to a bound hub; `pushed` says whether it has). */
+  getHubNetwork: (ws: string) => call<import('./network').NetworkSettings>(`${w(ws)}/hub/network`),
+  putHubNetwork: (ws: string, body: import('./network').NetworkChange) => call<import('./network').NetworkSettings>(`${w(ws)}/hub/network`, 'PUT', body),
+  getHubProfile: (ws: string) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`),
+  putHubProfile: (ws: string, profile: import('./profile').ProfileFields) => call<import('./profile').WorkspaceProfile>(`${w(ws)}/hub/profile`, 'PUT', profile),
+}
+
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...repos, ...click, ...records, ...cosmetic }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

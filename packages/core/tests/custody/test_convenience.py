@@ -72,9 +72,8 @@ def test_the_file_store_refuses_loose_modes_links_and_symlinks(tmp_path):
         fs.get(WS, dev)
     os.unlink(tmp_path / "copy")
     (tmp_path / "person" / WS).chmod(0o755)
-    with pytest.raises(CustodyError, match="0700"):
-        fs.get(WS, dev)
-    (tmp_path / "person" / WS).chmod(0o700)
+    fs.get(WS, dev)  # B2: a loose directory of ours is tightened, not refused
+    assert (tmp_path / "person" / WS).stat().st_mode & 0o077 == 0
     # a symlinked devices directory is never followed
     real = tmp_path / "person" / WS / "devices"
     os.rename(real, tmp_path / "elsewhere")

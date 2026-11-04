@@ -13,6 +13,8 @@ class Node_ {
   focus() {} select() {}
   set textContent(v) { this._text = String(v); this.children = []; }
   get textContent() { return this.tag === "#text" ? this._text : this._text + this.children.map((c) => c.textContent).join(""); }
+  get tagName() { return this.tag.toUpperCase(); }
+  querySelectorAll() { return this.all().slice(1).filter(n => ["input", "select", "textarea", "button", "summary", "details"].includes(n.tag)); }
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = {
@@ -68,4 +70,51 @@ test("Connect a workspace mints one link and shows it", async (t) => {
   assert.equal(copy.textContent, "Copied ✓");
   t.mock.timers.tick(1);
   assert.equal(copy.textContent, "Copy link");
+});
+
+test("Workspaces cards use plain words (no Binding, Selective, bound)", async () => {
+  const b = { ...bodies,
+    users: { users: [{ user_id: "u1", name: "Anna Test" }] },
+    workspaces: { workspaces: [
+      { workspace_id: "w1", name: "Alpha", mode: "selective", status: "bound", online: true, owner_alias: "u1" },
+      { workspace_id: "w2", name: "Beta", mode: "full", status: "bound", online: false },
+      { workspace_id: "w3", name: "Gamma", mode: "selective", status: "bound", online: true, owner_alias: "u2" },
+    ] } };
+  const d = { self: "u1", say: (c) => c, api: async (m, path) => ({ status: 200, body: b[path.replace("/admin/", "").split("?")[0]] }) };
+  const [, , , panels] = adminView(d);
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  const t = panels.children[2].textContent;
+  assert.doesNotMatch(t, /Binding|Selective|bound|Mission Control|owner only/);
+  assert.match(t, /Shares only what you choose/);
+  assert.match(t, /Shares everything/);
+  assert.match(t, /Connected · online/);
+  assert.match(t, /Connected · offline/);
+  assert.match(t, /Personal · only you · Anna Test/);
+});
+
+test("Access grants overview says 'only you' just for the viewer's own personal workspace", async () => {
+  const b = { ...bodies, users: { users: [{ user_id: "u1", name: "Anna" }, { user_id: "u2", name: "Ben" }] },
+    groups: { groups: [{ name: "Design", members: ["u1"] }] },
+    workspaces: { workspaces: [
+      { workspace_id: "w1", name: "Mine", mode: "selective", status: "bound", owner_alias: "u1" },
+      { workspace_id: "w3", name: "Bens", mode: "selective", status: "bound", owner_alias: "u2" }] } };
+  const d = { self: "u1", say: (c) => c, api: async (m, path) => ({ status: 200, body: b[path.replace("/admin/", "").split("?")[0]] }) };
+  const [, , , panels] = adminView(d);
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  const t = panels.textContent;
+  assert.match(t, /Personal · only you/);
+  assert.match(t, /Personal · only the owner/);
+});
+
+test("People rows show the name, not the long id; only two same-named people get the id inside a closed fold (r10-P07)", async () => {
+  const hex = (c) => c.repeat(32);
+  const b = { ...bodies, users: { users: [{ user_id: hex("a"), name: "Anna" }, { user_id: hex("b"), name: "Ben" }, { user_id: hex("c"), name: "Ben" }] } };
+  const d = { self: hex("a"), say: (c) => c, api: async (m, path) => ({ status: 200, body: b[path.replace("/admin/", "").split("?")[0]] }) };
+  const [, , , panels] = adminView(d);
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  const t = panels.textContent;
+  assert.equal(t.includes(hex("a")), false);
+  assert.equal(t.includes(hex("b")), true);
+  assert.equal(t.includes(hex("c")), true);
+  assert.equal(panels.querySelectorAll("details.info").length >= 2, true);
 });

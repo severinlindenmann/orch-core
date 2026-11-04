@@ -345,6 +345,9 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from .term import TermListener
 
     state = _state(args.state, env)
+    from orch.update.guard import hold_state_root
+
+    _state_root = hold_state_root(state)  # refuses during an unfinished update; shared lock for the process lifetime
     run_dir = svc.run_dir_for(state, args.run, env)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     uid = os.getuid()

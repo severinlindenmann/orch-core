@@ -1,0 +1,1 @@
+err switch.refused this workspace cannot be opened from another computer through the hub · retry:false · next: open it on its own computer · fix: orch status

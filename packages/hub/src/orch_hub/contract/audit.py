@@ -37,6 +37,10 @@ def _text(x: Any) -> bool:
     return type(x) is str and 0 < len(x) <= 128 and x.isprintable()
 
 
+def _opt_ms(x: Any) -> bool:
+    return x is None or (type(x) is int and 1 <= x < 2**53)
+
+
 def _opt_hex16(x: Any) -> bool:
     return x is None or _hex16(x)
 
@@ -62,7 +66,8 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "actor_user_id": _hex16,
     },
     # a user joined or left a group; the acting admin
-    "membership": {"group": _text, "user_id": _hex16, "added": _bool, "actor_user_id": _hex16},
+    # ``ends_ms``: the time the membership ends (UTC ms, exclusive), or null = no end date (GA-07); always null on a removal
+    "membership": {"group": _text, "user_id": _hex16, "added": _bool, "ends_ms": _opt_ms, "actor_user_id": _hex16},
     # a space changed (create, add, remove, unbind, delete); the epoch it produced
     "space": {
         "space_id": _hex16,
@@ -73,6 +78,20 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
     },
     # D14 (§7.1): the hub-wide marketplace policy was replaced; hub-wide, so no scope tag. The version it produced and its hash.
     "market_policy": {"version": _int_min(1), "policy_hash": _b64u_n(32), "actor_user_id": _hex16},
+    # M4 (#1461, cond 23): an admin changed the hub's name/company ("general") or the addresses it advertises
+    # ("addresses"); hub-wide (no scope tag). It says which setting and who, never the value.
+    "hub_settings": {"change": _enum("general", "addresses"), "actor_user_id": _hex16},
+    # M4 S5 (#1462, cond 23): the hub backup key was set or replaced ("key_set"), a backup was made ("made") or a kept
+    # backup was handed out ("downloaded"); hub-wide. Who (None = the schedule or the hub terminal), never a key, word or file.
+    "hub_backup": {"change": _enum("key_set", "key_confirmed", "made", "downloaded"), "actor_user_id": _opt_hex16},
+    # M4 S6 (#1462, cond 23): the hub was restored from a backup (§17): when that backup was made, how long ago that was,
+    # and the op_seq the restore issued; hub-wide. Who (None = the hub terminal). Never a key, a word or a file name.
+    "hub_restore": {
+        "backup_made_ms": _int_min(0),
+        "gap_ms": _int_min(0),
+        "op_seq": _int_min(1),
+        "actor_user_id": _opt_hex16,
+    },
     # p4 (§10.2b): a selective workspace shared, replaced or revoked an item, or the hub purged its items at unbind or a
     # mode switch (scoped to that workspace). Per-change field rules in _share_rule.
     "share": {
@@ -130,7 +149,11 @@ def _share_rule(e: Mapping[str, Any]) -> bool:
     return item is None and ver is None and h is None and n is not None
 
 
-EVENT_RULES: dict[str, Any] = {"share": _share_rule}
+def _membership_rule(e: Mapping[str, Any]) -> bool:
+    return e["added"] or e["ends_ms"] is None  # a removal carries no end date
+
+
+EVENT_RULES: dict[str, Any] = {"share": _share_rule, "membership": _membership_rule}
 
 
 def check_event(typ: str, event: Any) -> dict[str, Any]:

@@ -1,0 +1,6 @@
+Move a follow-up's due time or event deadline.
+usage: orch follow-up reschedule ID --when WHEN [--dry-run]
+  ID  follow-up ID
+  --when WHEN  new time as an ISO UTC instant (required)
+  --dry-run  say what would happen, append nothing
+more: orch describe follow_up.reschedule

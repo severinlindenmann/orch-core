@@ -79,6 +79,7 @@ export const RUNNER_LINE = 'Agents may run commands on this computer as you when
 const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 
 export const agentsApi = {
+  startAfter: (ws: string, requestId: string) => call<{ run: Run }>('POST', `${w(ws)}/agents/start`, { after_request: requestId }),
   preview: (ws: string, args: AgentArgs) => call<AgentPreview>('POST', `${w(ws)}/agents/preview`, args),
   /** Exactly the preview's values plus its `spec`, with the dialog's one idem (a retry returns the same run). */
   start: (ws: string, args: AgentArgs, spec: string, idem: string) => call<{ run: Run }>('POST', `${w(ws)}/agents/start`, { ...args, spec, idem }),
@@ -95,7 +96,7 @@ export const agentsApi = {
   acknowledge: (ws: string, notice: 'start_agent' | 'login_shell' | 'grant') => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean; grant?: boolean } }>('POST', `${w(ws)}/me/risk_notices`, { notice }),
 }
 
-export const runnerQuery = (ws: string) => queryOptions({ queryKey: ['runner', ws], queryFn: () => agentsApi.runner(ws) })
+export const runnerQuery = (ws: string) => queryOptions({ queryKey: ['runner', ws], queryFn: () => agentsApi.runner(ws), staleTime: 60_000 })
 
 // -- approved texts (owner / orch-52 answers of 15 Oct 2026) ----------------------------------------------------------
 
@@ -160,3 +161,5 @@ export function cwdText(p: AgentPreview): string {
 
 /** The host's login-shell sentence (core launch.py LOGIN_NOTICE, pinned by a server test); the notice is acknowledged on its own. */
 export const LOGIN_NOTICE = 'the program is found and started through your login shell; your shell profile runs first and can change what runs'
+/** P16: the same disclosure in plain words, the muted line of the Start agent panel (the host's sentence above stays under Details). */
+export const LOGIN_PLAIN = 'Runs as you, with your usual terminal settings.'

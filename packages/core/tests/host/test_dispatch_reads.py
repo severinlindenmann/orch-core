@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import errno
 import json
+import time
 
 import pytest
 
@@ -19,9 +20,11 @@ from tests.host.test_dispatch_matrix import as_agent_class
 TITLE = "zebracorn"  # a word that appears nowhere but in the restricted ticket
 
 
-@pytest.fixture
-def world(tmp_path):
-    lab = Lab(tmp_path)
+@pytest.fixture(scope="module")
+def _world(tmp_path_factory):
+    """The host, its workspace and the baseline walk, built once for the module: every test here only reads. The
+    per-test state (the page snapshot store) is swapped by the autouse ``_fresh_snapshot_store``."""
+    lab = Lab(tmp_path_factory.mktemp("reads"))
     try:
         s = Served(lab)
     except OSError as exc:  # pragma: no cover
@@ -45,6 +48,26 @@ def world(tmp_path):
     finally:
         s.close()
         lab.close()
+
+
+@pytest.fixture
+def world(_world):
+    """The module's world with per-test state reset around it: the connections a test opened are closed (and the host
+    has released them), and the host's connection-rate bucket is refilled (it caps attempts per UID per second)."""
+    served = _world[0]
+    limits = served.h.host.limits
+    before = len(served.clients)
+    kept = sum(limits.connections.values())
+    limits.attempts.clear()
+    try:
+        yield _world
+    finally:
+        for c in served.clients[before:]:
+            c.close()
+        del served.clients[before:]
+        deadline = time.monotonic() + 5
+        while sum(limits.connections.values()) > kept and time.monotonic() < deadline:
+            time.sleep(0.005)
 
 
 #: every read, the person reads (doctor, instructions.sync, instructions.hook) included: no-person is refused those
@@ -107,10 +130,35 @@ def norm(res: dict, ref: str) -> str:
 def args_for(op: str, ref: str) -> dict:
     import orch.ops as ops
 
-    if op in {"whoami", "host.status", "hub.status", "share.rules", "share.preview"}:  # share.*: owner-only (C6)
+    if op in {
+        "whoami",
+        "host.status",
+        "hub.status",
+        "hub.directory",
+        "hub.shared",
+        "hub.network",
+        "remote.status",
+        "remote.pending",
+        "remote.sessions",
+        "remote.attach",
+        "remote.off",
+        "remote.code",
+        "remote.key_rotate",
+        "share.rules",
+        "share.preview",
+        "share.audience",
+    }:  # share.*: owner-only (C6)
+        return {}
+    if op == "remote.stream":  # R3: names a remote stream, never a ticket (no such stream: remote.no_stream)
+        return {"stream_id": "a" * 32}
+    if op == "org.show":  # M3 H-2: owner-only; names an offered item, never a ticket (standalone here: hub.not_joined)
+        return {"kind": "skill", "name": "invoices"}
+    if op == "org.secrets":  # #1434: owner-only, no arguments, names no ticket
         return {}
     if op == "hub.link":  # run-9: reads a connect link; nothing to do with tickets (the port refuses at once)
         return {"link": "http://127.0.0.1:1/c#h1." + "a" * 32 + ".x"}
+    if op == "hub.switch":  # H1: standalone here: hub.not_joined
+        return {"kind": "rail", "origin": "http://127.0.0.1:1"}
     if op == "hub.handoff":  # V3 C11: a person read that names a ticket (standalone here: hub.not_joined)
         return {"kind": "status", "ticket": ref}
     if op == "outcome.get":
@@ -158,6 +206,10 @@ def test_every_served_read_is_known():
 
 @pytest.mark.parametrize("op", READS)
 def test_no_person_learns_nothing_about_a_restricted_ticket(world, op):
+    if op in {"follow_up.show", "schedule.show"}:
+        pytest.skip("names a follow-up or schedule id, not a ticket, and is gated by the Schedules add-on")
+    if op == "remote.attach":
+        pytest.skip("names no ticket; it claims the workspace's one dashboard slot (a second call is remote.busy)")
     served, key, baseline = world
     c = served.client()
     hidden = c.req(op, args_for(op, key), session=SESSION)

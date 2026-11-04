@@ -1,9 +1,10 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { agentsApi, RUNNER_LINE } from '@/api/agents'
 import { ApiError } from '@/api/types'
+import * as gesture from './sign/trustedPress'
 import { RunnerSwitch } from './RunnerSwitch'
 
 const D1 = 'sha256:' + '1'.repeat(64)
@@ -13,6 +14,7 @@ const review = (on: boolean, digest = D1, lines?: string[], terminals = false) =
   view_digest: digest,
 })
 const mount = (on: boolean, initialTerminals = false) => render(<QueryClientProvider client={new QueryClient()}><RunnerSwitch ws="w1" on={on} initialTerminals={initialTerminals} /></QueryClientProvider>)
+beforeEach(() => { vi.spyOn(document, 'hasFocus').mockReturnValue(true); vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 it('shows core\'s review first and switches on only that review\'s digest', async () => {
@@ -23,6 +25,7 @@ it('shows core\'s review first and switches on only that review\'s digest', asyn
   await user.click(screen.getByTestId('runner-switch'))
   expect(await screen.findByText(RUNNER_LINE)).toBeInTheDocument()
   expect(sw).not.toHaveBeenCalled() // reading is not switching
+  await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled(), { timeout: 2000 })
   await user.click(screen.getByTestId('runner-switch-confirm'))
   await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: false, view_digest: D1 }))
   expect(rv).toHaveBeenCalledWith('w1', { on: true, terminals: false })
@@ -38,6 +41,7 @@ it('checking terminals reads the review again and sends the new digest', async (
   await user.click(screen.getByTestId('runner-switch-terminals'))
   await waitFor(() => expect(rv).toHaveBeenLastCalledWith('w1', { on: true, terminals: true }))
   await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled())
+  await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled(), { timeout: 2000 })
   await user.click(screen.getByTestId('runner-switch-confirm'))
   await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: true, view_digest: D2 }))
 })
@@ -69,6 +73,7 @@ it('turning it off is the same two steps without the terminals choice', async ()
   await user.click(screen.getByTestId('runner-switch'))
   await screen.findByText('Turn off dashboard execution for Demo.')
   expect(screen.queryByTestId('runner-switch-terminals')).toBeNull()
+  await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled(), { timeout: 2000 })
   await user.click(screen.getByTestId('runner-switch-confirm'))
   await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: false, terminals: false, view_digest: D1 }))
 })
@@ -82,6 +87,7 @@ it('initialTerminals: the box is ticked, the review is read with terminals, and 
   await screen.findByText(RUNNER_LINE)
   expect(screen.getByTestId('runner-switch-terminals')).toBeChecked()
   expect(rv).toHaveBeenCalledWith('w1', { on: true, terminals: true })
+  await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled(), { timeout: 2000 })
   await user.click(screen.getByTestId('runner-switch-confirm'))
   await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: true, view_digest: D2 }))
 })
@@ -99,6 +105,7 @@ it('the box change re-reads the review and Confirm stays disabled until the new 
   expect(screen.getByTestId('runner-switch-confirm')).toBeDisabled() // the old review is gone while the new one is read
   release(review(true, D2, undefined, true))
   await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled())
+  await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled(), { timeout: 2000 })
   await user.click(screen.getByTestId('runner-switch-confirm'))
   await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: true, view_digest: D2 }))
 })
@@ -122,4 +129,21 @@ it('a review for other terminals than asked is not shown', async () => {
   mount(true)
   await user.click(screen.getByTestId('runner-switch'))
   expect(await screen.findByTestId('runner-switch-error')).toHaveTextContent('Nothing changed')
+})
+
+it('Undo review does not switch on until a fresh trusted press after the dwell', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(agentsApi, 'runnerReview').mockResolvedValue(review(true))
+  const sw = vi.spyOn(agentsApi, 'runnerSwitch').mockResolvedValue({ enabled: true, terminals: false })
+  render(<QueryClientProvider client={new QueryClient()}><RunnerSwitch ws="w1" on initiallyOpen /></QueryClientProvider>)
+  await screen.findByText(RUNNER_LINE)
+  expect(screen.getByTestId('runner-switch-confirm')).toBeDisabled()
+  await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled(), { timeout: 2000 })
+  expect(sw).not.toHaveBeenCalled()
+  vi.mocked(gesture.trustedPress).mockReturnValue(false)
+  await user.click(screen.getByTestId('runner-switch-confirm'))
+  expect(sw).not.toHaveBeenCalled()
+  vi.mocked(gesture.trustedPress).mockReturnValue(true)
+  await user.click(screen.getByTestId('runner-switch-confirm'))
+  await waitFor(() => expect(sw).toHaveBeenCalledOnce())
 })

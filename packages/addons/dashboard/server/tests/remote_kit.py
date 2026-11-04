@@ -83,17 +83,17 @@ def ungated(gateway, auth, tmp_path, passkey_store):
     (static / "index.html").write_text("<html></html>")
     policy = dataclasses.replace(remote_policy(NAME), route_gate=False)
     app = create_app(PORT, gateway, auth, static, remote=policy, passkeys=passkey_store)
-    return TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    return TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE, "X-Orch-Click-Contract": "4"})
 
 
 @pytest.fixture
 def loop(app):
-    return TestClient(app, base_url=ORIGIN)
+    return TestClient(app, base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"})
 
 
 @pytest.fixture
 def front(app):
-    return TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    return TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE, "X-Orch-Click-Contract": "4"})
 
 
 @pytest.fixture

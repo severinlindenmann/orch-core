@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 import secrets as _secrets
+import socket
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+from orch import childenv
+
+from . import claude_folder
 from . import facts as facts_mod
 from . import review as review_mod
 from .protocol import AGENT_HOURS, METHODS, SetupError, validate_profile
 from .steps import STEP_LABELS, Creator, Run, Secrets
+from .tunnel import is_headless, tunnel_line
 
 __all__ = ["Env", "SetupFlow"]
 
@@ -23,6 +30,26 @@ def _builtin_manifest(name: str) -> bytes:
     from orch.addons import builtin
 
     return builtin.manifest_bytes(name)
+
+
+def _dashboard_tunnel(url: object, environ: Mapping[str, str]) -> str | None:
+    """Run18 P01: on a headless computer the dashboard port needs its own ssh -L; the ready line for it. Only the port
+    of a local http(s) address is used. ``environ`` is the setup process's own environment (``Env.env``, the one the
+    terminal hint reads), never ``os.environ``. Only the port
+    of a local http(s) address is used: the single-use login link (path, query, fragment) never reaches the line."""
+    if not isinstance(url, str) or not is_headless(environ):
+        return None
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or parts.hostname not in ("127.0.0.1", "localhost") or not port:
+        return None
+    try:
+        return tunnel_line(port, environ)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -49,6 +76,8 @@ class Env:
     read_facts: Callable[[Any], facts_mod.Facts] | None = None
     #: the real or a fake :class:`orch.setup.steps.Ports`
     ports: Callable[[], Any] | None = None
+    #: P14: make orch's own folders private once at the start (before any host call); production fills it in
+    privatize: Callable[[], None] | None = None
     #: where "Open the workspace" goes after Finish (the dashboard route of the workspace)
     workspace_url: Callable[[str], str] = lambda wid: "/"
     clock: Callable[[], float] = time.time
@@ -77,8 +106,11 @@ class SetupFlow:
         self.run: Run | None = None
         self.error: dict[str, Any] | None = None
         self._running = False
+        self._creator: Creator | None = None
         self._closed = False
         self.cancel_event = threading.Event()
+        #: a line for the person's terminal (the setup server sets it); the page never sees these words
+        self.on_note: Callable[[str], None] = lambda line: None
         self.thread: threading.Thread | None = None
 
     # ---------------------------------------------------------------------------------------------- server protocol
@@ -122,6 +154,7 @@ class SetupFlow:
                 config_dirs=self.e.config_dirs,
                 registered=self.e.registered,
             )
+            self._privatize_first()
             if mode == "finish":
                 self.entry = self.e.registered(str(real))
                 if self.e.read_facts is None:
@@ -130,6 +163,16 @@ class SetupFlow:
             self.root, self.dir, self.mode = real, str(real), mode
             self._drop_secrets()
             self.profile, self.review, self.phase, self.error = None, None, "profile", None
+
+    def _privatize_first(self) -> None:
+        """P14: make orch's OWN folders (state dir, XDG ancestors; never the project folder or its store, those wait for
+        the review and the run) private ONCE, before the first host call, for a new workspace and for Finish setup
+        alike (a 002 umask leaves ~/.config and ~/.local group-writable, which custody refuses). Best effort; the
+        strict custody check still refuses what stays loose."""
+        if self.e.privatize is None:
+            return
+        with contextlib.suppress(Exception):
+            self.e.privatize()
 
     def end(self, why: str) -> None:
         with self.lock:
@@ -153,12 +196,13 @@ class SetupFlow:
             ("GET", "state"): self._state,
             ("POST", "profile"): self._post_profile,
             ("POST", "secrets/reveal"): self._reveal,
-            ("POST", "secrets/confirm"): self._confirm,
+            ("POST", "secrets/confirm"): self._approve,
             ("POST", "review"): self._post_review,
             ("POST", "create"): self._create,
             ("GET", "progress"): self._progress,
             ("POST", "finish"): self._finish,
             ("POST", "cancel"): self._cancel,
+            ("POST", "retry"): self._retry,
         }
 
     def _state(self, _q: Any) -> dict[str, Any]:
@@ -168,6 +212,7 @@ class SetupFlow:
         relay = self.e.relay()
         assert self.root is not None or not self.dir
         from . import facts
+        from .osfacts import _platform
 
         sug = (
             facts.suggest(dict(self.e.env), Path(self.dir))
@@ -199,14 +244,26 @@ class SetupFlow:
             "mode": self.mode,
             "dir": self.dir,
             "dir_name": Path(self.dir).name if self.dir else "",
+            "host": socket.gethostname()[
+                :80
+            ],  # P43: names the computer being set up (over ssh it is not the one in front of you)
             "suggested": sug,
             "addons": [a.view() for a in self.addons.values()],
             "methods": list(METHODS),
+            "os": _platform(),  # the machine running setup: the page words things only for the OS they are true on
             "click_available": bool(click_ok),
             "click_reason": click_reason,
             "click_risk": CONVENIENCE_RISK,
             "agent_hours": list(AGENT_HOURS),
             "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
+            "claude": {
+                "available": bool(self.dir)
+                and self.mode == "new"
+                and claude_folder.offered(self.e.env, self.dir, allow_parent=True),
+                "why_not": (claude_folder.refusal(self.e.env, self.dir, allow_parent=True) or "") if self.dir else "",
+                # config above the folder: shown by path, trusted only on the explicit "trust anyway"
+                "parent_config": (claude_folder.parent_config(self.dir, self.e.env) or "") if self.dir else "",
+            },
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
             "missing_words": [facts.label(m, self.addons) for m in missing],
@@ -267,6 +324,13 @@ class SetupFlow:
         if p["git_init"] and (self.mode != "new" or not self.dir or facts_mod.git_state(Path(self.dir))["repo"]):
             raise SetupError("invalid.input", "git init is offered for a new workspace in a folder without git", 400,
                              field="git_init")  # fmt: skip
+        if p["trust_folder"] and (
+            self.mode != "new"
+            or not self.dir
+            or not claude_folder.offered(self.e.env, self.dir, allow_parent=bool(p["trust_parent"]))
+        ):
+            raise SetupError("invalid.input", "Claude Code trust is not offered for this folder", 400,
+                             field="trust_folder")  # fmt: skip
         prior = self.profile
         self.profile, self.review = p, None  # a new profile voids every earlier review_id
         if self.mode == "finish":
@@ -288,8 +352,22 @@ class SetupFlow:
         if self.mode == "finish":
             assert self.facts is not None
             missing = facts_mod.missing_items(self.facts, self.profile, self.addons)
+        from orch import layout as layout_mod
+        from orch import privdir
+
+        home = Path(self.e.env.get("HOME") or Path.home())
+        shown = [
+            privdir.shown(p, home)
+            for p in privdir.setup_paths(Path(self.dir), layout_mod.store_of(self.dir), self.e.state_dir, home)
+        ]
         plan = review_mod.plan(
-            self.profile, self.dir, self.addons, self.facts, manifest_bytes=self.e.manifest_bytes, missing=missing
+            self.profile,
+            self.dir,
+            self.addons,
+            self.facts,
+            manifest_bytes=self.e.manifest_bytes,
+            missing=missing,
+            private_paths=shown,
         )
         rid = "rv_" + _secrets.token_hex(8)
         self.review = _Review(rid, plan)
@@ -334,6 +412,7 @@ class SetupFlow:
             cancelled=self.cancel_event,
             manifest_bytes=self.e.manifest_bytes,
         )
+        self._creator = creator
         self.phase = "confirming" if plan.tty_confirm else "running"
         self._running = True
         self.thread = threading.Thread(target=self._work, args=(creator,), name="orch-setup-run")
@@ -350,6 +429,8 @@ class SetupFlow:
 
     def _step_ids(self, plan: review_mod.Plan) -> list[str]:
         ids = [] if self.mode == "finish" else ["keys", "genesis", "register"]
+        if any(f["id"] == "perms" for f in plan.flags):
+            ids.insert(0, "perms")
         if any(f["id"] == "git" for f in plan.flags):
             ids.append("git")
         if any(f["id"] == "runner" for f in plan.flags):
@@ -361,11 +442,24 @@ class SetupFlow:
             ids += ["custody", "flags"]
         if any(f["id"] == "records" for f in plan.flags):
             ids.append("records")
+        if any(f["id"] == "trust" for f in plan.flags):
+            ids.append("trust")
         return ids
 
-    def _work(self, creator: Creator) -> None:
+    def _retry(self, _body: Any) -> dict[str, Any]:
+        creator = self._creator
+        if self.phase != "failed" or creator is None or self._running or self.run is None:
+            raise SetupError("setup.phase", "there is nothing to try again", 409)
+        if self.run.error is None or self.run.error.get("code") not in ("background.blocked", "steps.failed"):
+            raise SetupError("setup.phase", "there is nothing to try again", 409)
+        self.phase, self._running = "running", True
+        self.thread = threading.Thread(target=self._work, args=(creator, True), name="orch-setup-retry")
+        self.thread.start()
+        return {"run_id": self.run.id}
+
+    def _work(self, creator: Creator, again: bool = False) -> None:
         try:
-            creator.execute()
+            creator.retry() if again else creator.execute()
         finally:
             with self.lock:
                 self._running = False
@@ -385,15 +479,38 @@ class SetupFlow:
         return out
 
     def _finish(self, _body: Any) -> dict[str, Any]:
-        if not (self.ready or self.complete) or self.phase == "cancelled":
+        finishable = (
+            self.run is not None
+            and self.run.error is not None
+            and self.run.error.get("finishable")
+            and self.run.workspace is not None
+        )
+        if not (self.ready or self.complete or finishable) or self.phase == "cancelled":
             raise SetupError("setup.phase", "setup is not finished", 409)
         if self.mode == "new" and (self.run is None or self.run.workspace is None):
             raise SetupError("setup.phase", "setup is not finished", 409)
         wid = ((self.run.workspace if self.run is not None else None) or {}).get("id") or (self.entry or {}).get(
             "workspace_id", ""
         )
+        # The link first, the end of the session after it: a dashboard that did not open leaves this page working, so
+        # "Try again" reaches this setup once more (r11-P01). The cause goes to the terminal, never to the page.
+        try:
+            url = self.e.workspace_url(wid)
+        except Exception as e:  # noqa: BLE001 - any failure here is the same retryable answer
+            why = e.message if isinstance(e, SetupError) else (str(e) or type(e).__name__)
+            self.on_note(f"the dashboard did not open yet: {why[:200]}; the page offers Try again")
+            if self.run is not None and any(code.startswith("service.") for code in self.run.reason_codes.values()):
+                # The flow does not own the installed release/interpreter needed for a foreground command.
+                self.on_note("start orch in the background later with: orch setup")
+            raise SetupError(
+                "setup.dashboard_unavailable", "the dashboard did not open yet; try again", 503, retry=True
+            ) from None
         self._closed = True
-        return {"url": self.e.workspace_url(wid), "workspace_id": str(wid)}
+        out: dict[str, Any] = {"url": url, "workspace_id": str(wid)}
+        tunnel = _dashboard_tunnel(url, self.e.env)
+        if tunnel:
+            out["tunnel"] = tunnel
+        return out
 
     def cancel_run(self) -> None:
         """Ctrl-C on the setup terminal: the run stops between steps (a conversion in flight is undone)."""
@@ -407,18 +524,15 @@ class SetupFlow:
             self.secrets = Secrets(show_passphrase=self.profile["method"] == "terminal")
         return self.secrets.reveal()
 
-    def _confirm(self, body: Any) -> dict[str, Any]:
+    def _approve(self, body: Any) -> dict[str, Any]:
+        if self.phase != "secrets":
+            raise SetupError("setup.phase", "the recovery words are acknowledged right after they are shown", 409)
         if self.secrets is None:
             raise SetupError("secrets.not_shown", "show the secrets first", 409)
         if not isinstance(body, dict):
-            raise SetupError("invalid.input", "words", 400, field="words")
-        out = self.secrets.confirm(body.get("words"))
-        if out.get("ok"):
-            self.phase = "review"
-        elif out["attempts_left"] <= 0:
-            # the session dies; a new `orch setup` draws NEW secrets
-            self.error = {"code": "secrets.exhausted", "message": "too many wrong words; start the setup again"}
-            self.phase = "cancelled"
+            raise SetupError("invalid.input", "acknowledged", 400, field="acknowledged")
+        out = self.secrets.confirm(body.get("acknowledged"))
+        self.phase = "review"
         return out
 
     def _drop_secrets(self) -> None:
@@ -450,7 +564,7 @@ def default_env(environ: Mapping[str, str]) -> Env:
     uid = os.getuid()
 
     def entries() -> list[dict[str, Any]]:
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
 
         try:
             return _own_workspaces(state, uid, None)
@@ -512,12 +626,18 @@ def default_env(environ: Mapping[str, str]) -> Env:
         reserved=reserved,
         read_facts=read_facts,
         ports=lambda: steps.RealPorts(environ, state, uid),
+        privatize=lambda: steps.RealPorts(environ, state, uid).privatize_orch(),
     )
 
 
-_LINK = re.compile(r"http://127\.0\.0\.1:\d{1,5}/#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup")
+_LINK = re.compile(
+    r"http://127\.0\.0\.1:\d{1,5}/(?:setup#launch=[A-Za-z0-9_-]{20,100}|#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup)"
+)
 USAGE = (
-    "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS]\n"
+    "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS] [--port-base N]\n"
+    "       orch setup --server --role hub|edge [--domain BASE] [--hub-vpn-only | --hub-name NAME]\n"
+    "                                                 [--trust-hub ID (edge only)]\n"
+    "                                                 (a server, no workspace)\n"
     "  (run it in the folder you want to make a workspace; it asks what this computer should be, then opens the page)\n"
 )
 
@@ -542,7 +662,7 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], 
         try:
             res = subprocess.run(
                 [*cmd, "open", "/setup", "--emit-url-fd", str(write_fd), *(["--no-browser"] if no_browser else [])],
-                env=dict(environ),
+                env=childenv.sanitize(environ, absolute_pythonpath=True),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=60,
@@ -575,8 +695,16 @@ def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], 
     from orch.ops import workspace_init as wi
 
     lead = "If no browser opened, use this link" if browser_opened else "Open this link in your browser"
+    hint = ""
+    if is_headless(
+        environ
+    ):  # no browser here: the person reaches the link through an ssh tunnel from their own computer
+        port = int(line.split("://127.0.0.1:", 1)[1].split("/", 1)[0])
+        hint = (
+            f"On your own computer, first run:\n  {tunnel_line(port, environ)}\nthen open this link in its browser.\n"
+        )
     try:
-        wi.TERMINAL.show(f"{lead} (single use, 5 minutes): {line}\n")
+        wi.TERMINAL.show(hint + f"{lead} (single use, 5 minutes): {line}\n")
     except (NoPrompt, OSError):
         err.write("orch setup: cannot show the link here; run orch setup in your own terminal\n")
         return True if browser_opened else False
@@ -608,12 +736,21 @@ def main(
     from .server import SetupServer
     from .steps import set_no_core_dumps
 
-    no_browser, role_arg, address_arg = False, None, None
+    if "--server" in argv:  # a server role for this OS user: no workspace, no browser (docs/pilot-server.md)
+        if "ORCH_GRANT" in env or env.get("ORCH_SESSION"):
+            err.write("orch setup: setting up a server is a person's job; an agent never does it\n")
+            return 3
+        from orch.install import cli as icli
+
+        return icli.main(["server", *[a for a in argv if a != "--server"]], env=env, out=out, err=err, ctx=install_ctx)
+    no_browser, role_arg, address_arg, port_base = False, None, None, None
     rest = list(argv)
     while rest:
         flag = rest.pop(0)
         if flag == "--no-browser":
             no_browser = True
+        elif flag == "--port-base" and rest and rest[0].isdigit():
+            port_base = int(rest.pop(0))
         elif (
             flag in ("--role", "--address") and rest and (flag != "--role" or rest[0] in ("workspace", "full", "pick"))
         ):
@@ -630,6 +767,11 @@ def main(
     if not wi.TERMINAL.available():
         err.write("orch setup: needs your own terminal (/dev/tty)\n")
         return 3
+    from orch.prune.check import older_install
+
+    if (found := older_install(env, mark=True)) is not None:  # an older install's identity must not meet a new setup
+        err.write(f"orch setup: {found}\n")
+        return 3
     set_no_core_dumps()
     ictx = install_ctx or _install_ctx(env, out, err, ask=role_arg is None)
     if ictx is not None and (role_arg is not None or ictx.interactive) and not _server_installed(ictx):
@@ -637,6 +779,7 @@ def main(
         from orch.install.parts import InstallError
 
         role, server_parts = icli.choose_role(ictx, role_arg)
+        ictx.port_base = port_base
         try:
             icli.full_server(ictx, server_parts, address=address_arg)
         except InstallError as e:
@@ -650,7 +793,8 @@ def main(
 
         folder = cwd if cwd is not None else os.path.realpath(os.getcwd())
         # the page's own origin (the setup server) stops with this command: send "Open your workspace" to the running
-        # dashboard service instead, with a fresh login; the page's relative "/" stays the fallback
+        # dashboard service instead, with a fresh login (LoginUnavailable: Finish answers "try again"); a machine
+        # without a dashboard service keeps the page's own dashboard (relative "/")
         denv.workspace_url = lambda wid: icli.workspace_login_url(ictx, folder) or "/"
     try:
         (ensure_host or _ensure_host)(env, err)
@@ -661,6 +805,7 @@ def main(
     # launch-code file need a directory only this user can enter.
     sock_dir = run_dir if run_dir is not None else denv.state_dir / "setup"
     flow = SetupFlow(denv)
+    flow.on_note = lambda line: err.write(f"orch setup: {line}\n")
     server = SetupServer(
         Path(sock_dir) / "setup.sock",
         flow,

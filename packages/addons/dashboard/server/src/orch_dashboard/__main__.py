@@ -5,7 +5,6 @@ import asyncio
 import errno
 import fcntl
 import functools
-import getpass
 import hashlib
 import hmac
 import html
@@ -28,7 +27,9 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import uvicorn
+from orch import childenv
 
+from .adapters.setup import connect_setup
 from .app import create_app
 from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .front import Front, PeerChecked
@@ -41,6 +42,9 @@ from .policy import REMOTE, remote_policy
 GRACE = 3
 #: seconds `restart` waits for the old server to free its control socket
 RESTART_WAIT = 10.0
+# A stop while a setup page is bound keeps the loopback page up until the setup ends (r11-P01), at most this long.
+SETUP_HOLD = 180.0
+SETUP_POLL = 0.5
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 # Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
 # covers the gap between the server's monotonic timer and the wall clock both sides read.
@@ -76,8 +80,7 @@ class AgentRefused(RuntimeError):
 
 def refuse_agent(environ=None):
     """Refuse (#542 item 1) when ORCH_GRANT or ORCH_SESSION is set and non-empty: the same code, exit and message
-    as core's ``orch dashboard`` (and ``orch sign``'s ``human_only``). A speed bump in tier A (same UID), not a
-    boundary."""
+    as core's ``orch dashboard``. A speed bump in tier A (same UID), not a boundary."""
     environ = os.environ if environ is None else environ
     if any(environ.get(name) for name in AGENT_ENV):
         raise AgentRefused()
@@ -378,23 +381,12 @@ class FrontServer(uvicorn.Server):
 
 
 def tunnel_line(port, environ=None, user=None, host=None):
-    """The command to run on the person's own computer: ``ssh -L <port>:127.0.0.1:<port> <user>@<host>``. The host is
-    the address this very SSH session reached us on when there is one, else this machine's name."""
-    environ = os.environ if environ is None else environ
-    if host is None:
-        parts = (environ.get("SSH_CONNECTION") or "").split()
-        host = parts[2] if len(parts) == 4 else ""
-        if not _plain(host):
-            host = socket.getfqdn() or socket.gethostname()
-    user = user or getpass.getuser()
-    if not (_plain(host) and _plain(user)):
-        raise RuntimeError("cannot name this machine or user for an ssh command; build the tunnel line yourself")
-    return f"ssh -o ExitOnForwardFailure=yes -L {port}:127.0.0.1:{port} {user}@{host}"
+    """The command to run on the person's own computer, the same one core prints (orch.setup.tunnel):
+    ``ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> USER@SERVER``. A name that fails the
+    closed patterns (or is unknown) shows as the ``USER`` / ``SERVER`` placeholder, never as part of the command."""
+    from orch.setup.tunnel import tunnel_line as core_tunnel_line
 
-
-def _plain(value):
-    # no leading "-": ssh would read a user or host like "-oFoo" as an option
-    return bool(value) and not value.startswith("-") and all(c.isalnum() or c in "-_.:" for c in value)
+    return core_tunnel_line(port, os.environ if environ is None else environ, user=user, server=host)
 
 
 def bind_listener(wanted):
@@ -412,7 +404,12 @@ def bind_listener(wanted):
 
 def serve(lock_held=False, port=None, listen=None):
     refuse_agent()
-    run_dir(state_dir())
+    run_dir(state_dir())  # refuses a bad run directory before anything is created
+    from orch.update.guard import hold_state_root
+
+    # An unfinished update refuses; the shared format lock is held while serving. A machine with no state folder yet
+    # has no data to protect (the host stamps it when it first starts), so the dashboard starts without the check.
+    _state_root = hold_state_root(state_dir()) if state_dir().is_dir() else None
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
         if not lock_held:
@@ -447,7 +444,7 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
     sweep_redirects(directory)
     if redirects != directory:
         sweep_redirects(redirects)
-    auth = Auth(directory=redirects)
+    auth = Auth(directory=redirects, trust_file=state_dir() / "dashboard-trusted-browsers.json")
     # A wrong remote.json (or a front socket that cannot be opened) switches remote access off and says why
     # (`remote.not_configured` in /api/session); the loopback dashboard keeps serving: the person at the machine must
     # be able to see and fix it.
@@ -504,6 +501,7 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
             remote=remote[0] if remote else None,
             remote_problem=remote_problem,
             alt_hosts=(network,) if network else (),
+            remote_streams=True,
         )
     except BaseException:
         listener.close()
@@ -571,17 +569,45 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
                         conn.sendall(encode({"release": release}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
-                        server.should_exit = True
-                        if net_server is not None:
-                            net_server.should_exit = True
-                        if front_server is not None:
-                            front_server.should_exit = True
                         # Free the control socket now, not after the shutdown: until then a launcher would connect
                         # to a server that no longer answers (and time out) instead of starting a new one.
                         retire()
+                        if setup_bound():
+                            # r11-P01: setup's Finish starts the dashboard service, which stops this server while it
+                            # still serves the setup page (and that very request): only the loopback server keeps
+                            # serving, until setup ends; the network and front listeners stop now (r11-P01b).
+                            exit_remote()
+                            threading.Thread(target=exit_after_setup, daemon=True).start()
+                        else:
+                            exit_now()
                         break
                 except Exception:
                     pass  # never log the launch payload
+
+    setup_sock = state_dir() / "setup" / "setup.sock"
+
+    def setup_bound():
+        """A setup page is bound here and its setup process still answers on its socket (a real connect: a stale
+        file, a socket nobody listens on or a slow one count as gone). Fail closed: any doubt ends the hold."""
+        return auth.has_setup() and setup_alive(setup_sock)
+
+    def exit_remote():
+        if net_server is not None:
+            net_server.should_exit = True
+        if front_server is not None:
+            front_server.should_exit = True
+
+    def exit_now():
+        server.should_exit = True
+        exit_remote()
+
+    def exit_after_setup():
+        deadline = time.monotonic() + SETUP_HOLD
+        try:
+            while not server.should_exit and setup_bound() and time.monotonic() < deadline:
+                time.sleep(SETUP_POLL)
+        finally:  # whatever goes wrong in the check, the hold ends
+            exit_now()
 
     def retire():
         """Close the control socket and remove its path if it is still ours (a new server may have bound it). Once."""
@@ -634,6 +660,16 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
             net_thread.join(timeout=GRACE + 2)
         if net_listener is not None:
             net_listener.close()
+
+
+def setup_alive(path, timeout=0.5):
+    """The setup process listens on ``path``, with the same checks as the setup proxy (``connect_setup``: a 0600 socket
+    of this user in a private folder, peer is this user), closed at once. Anything else or any error -> False."""
+    try:
+        connect_setup(path, timeout).close()
+        return True
+    except Exception:
+        return False
 
 
 def safe_path(value):
@@ -753,7 +789,8 @@ def control_or_start(directory, command, kind=None):
     if launch is None:
         stale_socket(ctl)
         child = subprocess.Popen(
-            [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
+            [sys.executable, "-P", "-m", "orch_dashboard", "serve", "--launcher-lock"],
+            env=childenv.sanitize(os.environ, absolute_pythonpath=True),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -802,12 +839,17 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
             if attempt == 19:
                 raise
             time.sleep(0.05)
-    fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
-    url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
+    # The setup page is loaded from /setup itself (not from / with a client-side hop), so the document is served with
+    # the setup CSP and its probe of the dashboard port is allowed (run16 P06). Other kinds keep `/#launch=..&to=..`.
+    if kind == "setup":
+        base, fragment = "/setup", urllib.parse.urlencode({"launch": launch["code"]})
+    else:
+        base, fragment = "/", urllib.parse.urlencode({"launch": launch["code"], "to": path})
+    url = f"http://127.0.0.1:{launch['port']}{base}#{fragment}"
     if network:
         if not launch.get("network"):
             raise RuntimeError("this dashboard has no network address (it was started without --listen)")
-        url = f"http://{launch['network']}/#{fragment}"
+        url = f"http://{launch['network']}{base}#{fragment}"
     if print_url:
         left = math.ceil(float(launch["expires_at"]) - time.time())  # what the server really granted
         print(

@@ -16,7 +16,7 @@ jobs:
     name: publish changes
     uses: ./.github/workflows/_changes.yml
     with:
-      pattern: '^(packages/publish/|packages/relay/src/orch_relay/proto/|contracts/|\.github/workflows/(publish|_changes)\.yml$)'
+      pattern: '^(packages/publish/|packages/relay/src/orch_relay/proto/|contracts/|scripts/formats\.py$|packages/core/src/orch/migrate/|\.github/workflows/(publish|_changes)\.yml$)'
   tests:
     name: publish tests
     needs: changes

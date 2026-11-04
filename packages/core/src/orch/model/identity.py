@@ -10,6 +10,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from orch.hubroles import role_at
+
 from .codes import Code, Refusal
 from .types import WsCore
 
@@ -94,8 +96,13 @@ def _snapshot(ws: WsCore) -> Any:
 
 
 def _snapshot_role(ws: WsCore, user_id: str) -> str | None:
+    """The mapped role of a hub user in the pinned snapshot AT THE TIME OF THE EVENT being judged (``ws.at_ms``, from
+    the event's `at`; never the wall clock): the same ``role_at`` the hub client uses, so an end date in ``ends_ms``
+    ends the role here too (GA-07)."""
     snap = _snapshot(ws)
-    role = ((snap or {}).get("o", {}).get("roles", {}) or {}).get(user_id)
+    if not snap:
+        return None
+    role = role_at(snap["o"], user_id, ws.at_ms)
     return HUB_ROLE.get(role) if type(role) is str else None
 
 

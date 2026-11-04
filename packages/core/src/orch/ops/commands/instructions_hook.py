@@ -1,9 +1,11 @@
 """orch instructions hook: the text a harness hook injects at session start and before compaction"""
 
+import json
+import re
 from typing import Any
 
 from orch.ops import decisions, views
-from orch.ops._dsl import STR, B, E, obj, operation
+from orch.ops._dsl import FILE, STR, B, E, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Workspace, flat, short
@@ -60,6 +62,110 @@ def _marker(ctx: Context, ws: Any, event: str) -> Result:
     return _silent(event)
 
 
+_ITEM = re.compile(r"[a-z][a-z_]{0,30}")
+#: W33: how often the Stop hook sends an agent back to orch wait while a complete gate waits for the person
+GATE_WAIT_BLOCKS = 3
+
+
+def _bump_stops(ctx: Context, ws: Any, key: str) -> int:
+    """W33: count this session's stops at ``key`` (``<ticket>:<gate>``) in ``<sessions dir>/<session>.stops.json``
+    (the hook's only write, a display-free counter). Returns the new count; a file it cannot read or write counts as
+    over the bound (never block on our own failure)."""
+    from orch.instructions import marker_path
+    from orch.ops.runtime import records_dir
+
+    layout = ws.layout
+    if layout is None or not ctx.session:
+        return GATE_WAIT_BLOCKS + 2
+    files = ctx.caps.files
+    path = marker_path(records_dir(layout), ctx.session).with_name(
+        marker_path(records_dir(layout), ctx.session).name.replace(".waiting.json", ".stops.json")
+    )
+    try:
+        if files.lexists(path) and path.is_symlink():
+            return GATE_WAIT_BLOCKS + 2  # Opus W33: never write through a planted link
+        counts = json.loads(files.read_text(path)) if files.lexists(path) else {}
+        if not isinstance(counts, dict):
+            counts = {}
+        n = max(0, int(counts.get(key, 0))) + 1  # Opus W33: a planted negative count cannot buy more blocks
+        counts = {k: v for k, v in counts.items() if isinstance(v, int)} | {key: n}
+        files.mkdir(path.parent, parents=True)
+        files.write_text(path, json.dumps(counts, sort_keys=True))
+        return n
+    except (OSError, ValueError, TypeError):
+        return GATE_WAIT_BLOCKS + 2
+
+
+def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
+    """The Stop hook (run-7 P01 option B): the agent may not end its turn while the gate of its claimed ticket lacks a
+    section, an acceptance criterion or a task. Read-only; blocks at most once per stop (``stop_hook_active``);
+    silent on anything it cannot prove (no input, no workspace pin, no claim, a blocking question open, any error).
+    The reason is built from fixed words, the ticket key and the command that fills the first gap: no ticket text."""
+    src = args.get("input")
+    if not src or not ctx.session:
+        return _silent("stop")
+    if not (ctx.hosted or _pinned(ws, ctx)):
+        return _silent("stop")
+    try:
+        c = Call.of(ctx, "instructions.hook")
+        doc = json.loads(c.read_file_capped(src, 1 << 16))
+        if not isinstance(doc, dict) or type(doc.get("stop_hook_active")) is not bool:
+            return _silent("stop")  # a shape we do not know: let the agent stop
+        for v in c.mine():
+            if any(not q.answered and q.blocking for q in v.questions):
+                continue  # it waits for the person, on purpose
+            gates = views.open_gates(v)
+            if not gates:
+                continue
+            gate, gaps = gates[0], []
+            for g in gates:
+                gaps = [(m, cmd) for m, cmd in views.gap_commands(v, g) if _ITEM.fullmatch(m)]
+                if gaps:
+                    gate = g
+                    break
+            if not gaps:
+                if any(views.gate_missing(v, g) for g in gates):
+                    continue  # it lacks only what has no one-line command (an artifact): let the agent stop
+                # W33: a complete gate waits for the person: keep the agent in orch wait, also when the harness says
+                # it already blocked, at most GATE_WAIT_BLOCKS times per gate; then it may stop with one plain line.
+                n = _bump_stops(ctx, ws, f"{v.key}:{gate}")
+                if n > GATE_WAIT_BLOCKS + 1:
+                    return _silent("stop")
+                if n == GATE_WAIT_BLOCKS + 1:
+                    note = (
+                        f"orch: the {gate} gate of {v.key} waits for the person's approval and the agent stopped"
+                        " waiting. Approve it in the dashboard, then press Continue building."
+                    )
+                    return Result(data={"event": "stop", "head": "", "raw": json.dumps({"systemMessage": note})})
+                # run-9 J04: every open gate is complete and waits for the person. Ending the turn here leaves an
+                # idle session that never builds: the agent waits in this session and builds once it is approved.
+                reason = (
+                    f"The {gate} gate of {v.key} is ready and waits for the person's approval. Do not end your turn:"
+                    " run orch wait (again after a timeout). Once it is approved, build the ticket in this session:"
+                    " orch task next."
+                )
+                raw = json.dumps({"decision": "block", "reason": reason})
+                return Result(data={"event": "stop", "head": "", "raw": raw})
+            names = ", ".join(m.replace("_", " ") for m, _ in gaps)
+            # W33: the same bounded rule as a complete gate (its own count), then one plain line, then silent
+            n = _bump_stops(ctx, ws, f"{v.key}:{gate}:gaps")
+            if n > GATE_WAIT_BLOCKS + 1:
+                return _silent("stop")
+            if n == GATE_WAIT_BLOCKS + 1:
+                note = f"orch: the {gate} gate of {v.key} still lacks: {names}, and the agent stopped. Open the ticket."
+                return Result(data={"event": "stop", "head": "", "raw": json.dumps({"systemMessage": note})})
+            reason = (
+                f"The {gate} gate of {v.key} still lacks: {names}. Fill it in ({gaps[0][1]}; then the rest),"
+                " then run orch wait. If you need the person's input, ask with orch ask: the person sees only the"
+                " dashboard, never this terminal."
+            )
+            raw = json.dumps({"decision": "block", "reason": reason})
+            return Result(data={"event": "stop", "head": "", "raw": raw})
+    except (OrchError, ValueError, RecursionError):
+        pass  # never block on our own failure
+    return _silent("stop")
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.instructions import pre_compact_lines, session_start_lines, stale_findings
     from orch.ops.commands import status
@@ -70,6 +176,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         return _silent(event)
     if event == "waiting":
         return _marker(ctx, ws, event)
+    if event == "stop":
+        return _stop(ctx, ws, args)
     _marker(ctx, ws, event)  # session-start and pre-compact: the agent is working again, the hint goes
     # A hook never pins a genesis (no trust on first use from a hook that runs in every cloned repository): it reads
     # only a workspace this machine has pinned, on purpose, by `orch status` or `orch setup`.
@@ -119,11 +227,17 @@ OP = operation(
     "Admin",
     "The text a harness hook injects at session start or before compaction: at most six lines.",
     who="read",
-    props={"event": E("which hook", "session-start", "pre-compact", "waiting", **{"x-metavar": "EVENT"})},
+    props={
+        "event": E("which hook", "session-start", "pre-compact", "waiting", "stop", **{"x-metavar": "EVENT"}),
+        "input": FILE,
+    },
     required=("event",),
     positional=("event",),
     pre=(),
     text="ok {head}\nnext: {next}",
-    data=obj({"event": STR, "head": STR, "silent": B("print nothing")}, optional=("silent",)),
+    data=obj(
+        {"event": STR, "head": STR, "silent": B("print nothing"), "raw": STR},
+        optional=("silent", "raw"),
+    ),
     handler=handle,
 )

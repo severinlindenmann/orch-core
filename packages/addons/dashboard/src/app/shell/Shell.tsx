@@ -16,6 +16,8 @@ import { CommandPalette } from './palette'
 import { ShellUiProvider } from './ShellUi'
 import { useShortcuts } from './shortcuts'
 import { ShellToaster } from './ShellToaster'
+import { NeedsYouNotifier } from './NeedsYouNotifier'
+import { CompanyRail } from './CompanyRail'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { MandateBanner } from '../mandates/MandateBanner'
@@ -82,6 +84,7 @@ export function Shell() {
             Skip to content
           </a>
           <div className="flex h-full min-w-0">
+            <CompanyRail />
             <Sidebar />
             <div className="relative flex min-w-0 flex-1 flex-col">
               <NavProgress />
@@ -115,6 +118,7 @@ export function Shell() {
           <NewTicketHost />
           <HelpSheet />
           <ShellToaster />
+          <NeedsYouNotifier />
         </TooltipProvider>
       </ShellUiProvider>
     </WorkspaceProvider>

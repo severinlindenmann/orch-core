@@ -4,9 +4,10 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
+import { CLICK_RISK, clickProblem, contractViewOk, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { trackHold } from './holdToasts'
 import { fmtClock } from '@/lib/time'
 
 export type ClickPhase =
@@ -17,7 +18,9 @@ export type ClickPhase =
   /** The View is on screen: the person may sign (after the arming time) or cancel. */
   | 'ready'
   | 'signing'
-  /** The outcome of a sign is unknown: the host settles it by itself. Nothing is offered but waiting (no cancel, no second sign). */
+  /** Unsigned in the signer; only the global Undo toast can cancel it. */
+  | 'held'
+  /** The outcome of a sign is unknown: wait for settlement, never retry. */
   | 'settling'
   | 'done'
   | 'cancelled'
@@ -29,9 +32,14 @@ export interface ClickRun {
   phase: ClickPhase
   prepared: ClickPrepared | null
   view: ClickViewAnswer | null
+  /**
+   * C3: the View is the first one read for a request this hook prepared (`start`, `again`: callers start only on a
+   * trusted press) and is of contract 4. Only such a View may run the one-press arm; a re-read (`review`) never does.
+   */
+  fresh: boolean
   problem: ClickProblem | null
   signed: ClickSigned | null
-  start: (action: ClickAction, retryFloor?: number) => Promise<void>
+  start: (action: ClickAction, retryFloor?: number, pressed?: boolean) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   /** `revealKey`: a shown-secret grant only (the page key its review was made for). */
@@ -42,7 +50,9 @@ export interface ClickRun {
    * the retry counter advances (an explicit new attempt); with none prepared yet, the same intent is repeated so a lost
    * prepare answer returns the same request.
    */
-  again: (action: ClickAction) => Promise<void>
+  again: (action: ClickAction, opts?: { pressed?: boolean; repeatOf?: boolean }) => Promise<void>
+  /** Shown in the review after an explicit "Create another": it makes another thing like one already signed (display only). */
+  repeatNote: boolean
   /** Back to the start (the request must already be settled or cancelled). */
   reset: (keepKey?: boolean) => void
   /** The person switched workspace with a request open: it was cancelled. */
@@ -55,6 +65,9 @@ export interface ClickRun {
   error: unknown
 }
 
+/** A cancel that failed: the request stays open until it expires, so it is never shown as cancelled. */
+export const CANCEL_FAILED = 'Could not cancel. It will expire by itself.'
+
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
 
 /** The `onSettled` arguments of the hand-off dialog, for a signed click request (callers read `key` of a signed `new`). */
@@ -64,8 +77,14 @@ export function settledAs(prepared: ClickPrepared, signed: ClickSigned): { state
   return { state, request }
 }
 
-export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void): ClickRun {
+/** `minLeadS`: the host's minimum scheduling lead when the page knows it (the schedules list), for a "too soon" refusal.
+ *  `opts.refetchOnDone` (default true): read the pages behind the dialog again after a signature. */
+export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void, minLeadS?: number, opts: { refetchOnDone?: boolean } = {}): ClickRun {
   const qc = useQueryClient()
+  const refetching = useRef(opts.refetchOnDone !== false)
+  refetching.current = opts.refetchOnDone !== false
+  const leadNow = useRef(minLeadS)
+  leadNow.current = minLeadS
   const [phase, setPhaseState] = useState<ClickPhase>('idle')
   const [prepared, setPrepared] = useState<ClickPrepared | null>(null)
   const [view, setView] = useState<ClickViewAnswer | null>(null)
@@ -75,8 +94,15 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const [leftUnsettled, setLeftUnsettled] = useState(false)
   const [settleNote, setSettleNote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [fresh, setFresh] = useState(false)
+  const [repeatNote, setRepeatNote] = useState(false)
   const live = useRef({ phase: 'idle' as ClickPhase, prepared: null as ClickPrepared | null, ws: undefined as string | undefined })
   const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
+  const sequenceStart = useRef(false)
+  // The digest of the review the person last pressed Sign for, and the one-shot arming gate of `again`: a new review may
+  // arm itself only when a press was asked for AND its digest is byte-identical to the pressed one.
+  const pressedDigest = useRef<string | null>(null)
+  const armGate = useRef<{ digest: string | null } | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -88,12 +114,17 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     live.current.phase = p
     setPhaseState(p)
   }, [])
-  const refetch = useCallback(() => {
+  const refetch = useCallback((success = false) => {
+    // `refetchOnDone: false`: the step is only the first half of something (a hub join waits for the hub to confirm), and
+    // the pages behind the dialog are refused until then. Only the success path skips; a refusal, cancel, expiry or
+    // unknown outcome reads as before. The caller reads the pages once, when the whole thing is done.
+    if (success && !refetching.current) return
     for (const k of refetchKeys) void qc.invalidateQueries({ queryKey: [k] })
   }, [qc])
   const fail = useCallback(
     (e: unknown, keep: ClickPhase = 'failed') => {
-      const p = clickProblem(e)
+      const p = clickProblem(e, leadNow.current)
+      if (sequenceStart.current && e instanceof ApiError && e.reason === 'resumable') p.next = 'retry'
       setError(e)
       setProblem(p)
       // A refusal to sign that can simply be tried again leaves the View where it is; the request stays open.
@@ -103,12 +134,14 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const read = useCallback(
-    async (where: string, id: string) => {
+    async (where: string, id: string, first = false, gate: { digest: string | null } | null = null) => {
       setPhase('viewing')
       const got = await api.viewClick(where, id)
-      if (!mounted.current) return
+      if (!mounted.current || live.current.phase === 'cancelled' || live.current.prepared?.request_id !== id) return
       // Fail closed: the owner-mandated risk line must be exactly what the card says, or nothing is shown.
       if (got.view.risk !== CLICK_RISK) throw new ApiError(409, { code: 'human.click_refused', message: 'The review lacks the risk line.', retryable: false, reason: 'check_failed' })
+      // C3: only a contract-4 View (headline and risk lines) of a request prepared here may run the one-press arm.
+      setFresh(first && contractViewOk(got.view) && (!gate || (gate.digest !== null && gate.digest === got.view_digest)))
       setView(got)
       setProblem(null)
       setPhase('ready')
@@ -117,7 +150,12 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const start = useCallback(
-    async (action: ClickAction, retryFloor = 0) => {
+    /** `pressed`: a real press started this (default). An auto-prepare without one (run-9 J04: the start review
+     * opens on the host's View) passes `false`, so the one-press arm (`fresh`) is never set without a press. */
+    async (action: ClickAction, retryFloor = 0, pressed = true) => {
+      sequenceStart.current = action.action === 'new_sequence' && !!action.launch
+      const gate = armGate.current
+      armGate.current = null
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
       setProblem(null)
@@ -141,7 +179,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         live.current.prepared = got
         live.current.ws = ws
         setPrepared(got)
-        await read(ws, got.request_id)
+        await read(ws, got.request_id, pressed, gate)
       } catch (e) {
         if (!mounted.current) return
         // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the
@@ -174,13 +212,24 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       const { prepared: open, ws: where } = live.current
       if (!open || !where || !view || busy.current || live.current.phase !== 'ready') return
       busy.current = true
+      pressedDigest.current = view.view_digest
       setPhase('signing')
       try {
-        const got = await (sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
+        const delay = view.view.hold_allowed ? 10 : undefined // only a held action carries the delay; every other call keeps its old shape
+        const got = await (delay ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed, delay) : sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
+        if (got.state === 'held' && got.deadline_ms) {
+          trackHold(where, open.request_id, got.deadline_ms / 1000, () => {
+            refetch(true)
+            const as = settledAs(open, { state: 'submitted', duplicate: false })
+            settled.current?.('done', as.state, as.request)
+          })
+          if (mounted.current) setPhase('held')
+          return
+        }
         if (!mounted.current) return
         setSigned(got)
         setPhase('done')
-        refetch()
+        refetch(true)
         const as = settledAs(open, got)
         settled.current?.('done', as.state, as.request)
       } catch (e) {
@@ -218,7 +267,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
           stopped = true
           setSigned({ state: 'submitted', duplicate: false })
           setPhase('done')
-          refetch()
+          refetch(true)
           const as = settledAs(prepared, { state: 'submitted', duplicate: false })
           settled.current?.('done', as.state, as.request)
         } else if (got.state === 'cancelled' || got.state === 'expired') {
@@ -262,11 +311,18 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
 
   const cancel = useCallback(async () => {
     const { prepared: open, ws: where, phase: last } = live.current
-    if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle' || last === 'settling') return // never cancel while a signature may be in flight
+    if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle' || last === 'settling' || last === 'held') return // never cancel while a signature may be in flight
+    setPhase('cancelled') // Tombstone immediately, before the cancellation round trip.
     try {
       await api.cancelClick(where, open.request_id)
     } catch {
-      /* the signer and the host expire it anyway */
+      // The request is still open (the signer and the host expire it): never say "cancelled" for it.
+      if (mounted.current) {
+        setProblem({ title: CANCEL_FAILED, body: '', next: 'unavailable' }) // one plain line, no Try again
+
+        setPhase('failed')
+      }
+      return
     }
     if (mounted.current) {
       setPhase('cancelled')
@@ -277,7 +333,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   useEffect(() => {
     const { prepared: open, ws: where, phase: last } = live.current
     if (!open || !where || where === ws || last === 'done' || last === 'cancelled' || last === 'idle') return
-    if (last === 'settling') {
+    if (last === 'settling' || last === 'held') {
       // Its outcome is unknown: nothing is cancelled and nothing is claimed. The server keeps it unsettled.
       setLeftUnsettled(true)
       return
@@ -291,11 +347,15 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     // Not keeping the attempt is an explicit "Do it again" / "Start again": the next prepare is another intent.
     if (!keepKey && attempt.current) attempt.current = { ...attempt.current, retry: attempt.current.retry + 1 }
     live.current.prepared = null
+    pressedDigest.current = null
+    armGate.current = null
     setSwitched(false)
     setLeftUnsettled(false)
     setSettleNote(null)
     setPrepared(null)
     setView(null)
+    setFresh(false)
+    setRepeatNote(false)
     setProblem(null)
     setError(null)
     setSigned(null)
@@ -303,8 +363,14 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   }, [setPhase])
 
   const again = useCallback(
-    async (action: ClickAction) => {
+    async (action: ClickAction, opts: { pressed?: boolean; repeatOf?: boolean } = {}) => {
+      const pressedBefore = pressedDigest.current
       const open = live.current.prepared
+      if (open && error instanceof ApiError && error.reason === 'resumable') {
+        setProblem(null)
+        await review()
+        return
+      }
       if (open && live.current.phase !== 'done' && live.current.phase !== 'settling') {
         await cancel() // the old request must not keep its quota slot
         reset()
@@ -313,9 +379,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       } else {
         reset()
       }
-      await start(action)
+      if (opts.repeatOf) setRepeatNote(true)
+      armGate.current = { digest: (opts.pressed ?? true) ? pressedBefore : null } // the one place that decides arming for every caller
+      await start(action, 0, opts.pressed ?? true)
     },
-    [cancel, reset, start],
+    [cancel, reset, start, error, review],
   )
 
   // Leaving the screen with a request open cancels it. Deferred one tick so React StrictMode's simulated unmount does not.
@@ -332,5 +400,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { retry: attempt.current?.retry ?? 0, phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
+  return { retry: attempt.current?.retry ?? 0, phase, prepared, view, fresh, problem, signed, repeatNote, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
 }

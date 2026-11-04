@@ -22,9 +22,6 @@ public enum Vectors {
     /// `contracts/origin_http.json`: the shared plain-http origin rule.
     public static var originHTTP: Data { try! Data(contentsOf: contracts.appendingPathComponent("origin_http.json")) }
 
-    /// The H12d reader_decl group of the relay vectors (suite 2, trimmed; a bundled resource of this target).
-    public static var readerDecl: Data { try! Data(contentsOf: Bundle.module.resourceURL!.appendingPathComponent("reader_decl_vectors.json")) }
-
     /// F1 vectors from `contracts/core/f1/`, by file name without extension. `reader_kat_1` ships inside core's package.
     public static func f1(_ name: String) -> Data {
         let u = name == "reader_kat_1"

@@ -16,6 +16,7 @@ def test_serve_args_and_instance(tmp_path, monkeypatch):
         "port": 8102,
         "workers": 1,
         "proxy_headers": False,
+        "server_header": False,  # no Server header (#1796)
     }
     assert app.state.instance == "int"
 

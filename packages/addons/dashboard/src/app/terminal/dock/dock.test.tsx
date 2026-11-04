@@ -41,7 +41,7 @@ describe('terminal dock: open, collapse, resize, side', () => {
     expect((await bar()).closest('aside')).toHaveStyle({ height: '32px' })
     expect(await bar()).not.toHaveTextContent('Ctrl+`')
     expect(await bar()).toHaveAttribute('title', expect.stringContaining('Ctrl+`'))
-    expect(await bar()).toHaveTextContent(/Terminals · (none open|\d+ open)/)
+    expect(await bar()).toHaveTextContent(/Command window · (none open|\d+ open)/)
     fireEvent.keyDown(window, { key: '`', code: 'Backquote', ctrlKey: true })
     const d = await dock()
     await waitFor(() => expect(document.activeElement).toHaveAttribute('data-session-strip'), T)

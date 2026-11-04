@@ -48,15 +48,17 @@ export function checkOf(a: Pick<Artifact, 'kind' | 'task' | 'added_by' | 'added_
   return typeof exit !== 'number' ? null : exit === 0 ? 'passed' : 'failed'
 }
 
-/** What the card calls a recorded check: "Check of T1". Every other file keeps its real name. */
-export function cardTitle(a: Pick<Artifact, 'name' | 'task'>, check: CheckResult | null | undefined): string {
-  return check && a.task ? `Check of ${a.task}` : a.name
+/** Receipts and task logs describe a check, not a delivered file. */
+export const isAgentCheck = (a: Pick<Artifact, 'kind'> & { task?: string }): boolean => a.kind === 'receipt' || (a.kind === 'log' && !!a.task)
+export function cardTitle(a: Pick<Artifact, 'name' | 'kind'> & { task?: string }, _check?: CheckResult | null): string {
+  return isAgentCheck(a) ? "The agent's check" : a.name
 }
 
 export const CHECK_QUIET = 'The check ran and printed nothing. That is normal when it passes.'
 
 /** The type word that is always written on the badge (colour is only a second cue). */
-export function typeBadge(a: Pick<Artifact, 'name' | 'kind'>, check?: CheckResult | null): { label: string; tone: string } {
+export function typeBadge(a: Pick<Artifact, 'name' | 'kind'> & { task?: string }, check?: CheckResult | null): { label: string; tone: string } {
+  if (isAgentCheck(a)) return { label: '', tone: '' }
   if (check) return { label: 'CHECK', tone: check === 'passed' ? 'text-success' : 'text-danger' }
   const e = ext(a.name)
   const by: Record<string, [string, string]> = {
@@ -69,8 +71,9 @@ export function typeBadge(a: Pick<Artifact, 'name' | 'kind'>, check?: CheckResul
   return hit ? { label: hit[0], tone: hit[1] } : { label: e ? e.toUpperCase().slice(0, 5) : a.kind.toUpperCase().slice(0, 5), tone: 'text-text-muted' }
 }
 
-export function TypeBadge({ a, check }: { a: Pick<Artifact, 'name' | 'kind'>; check?: CheckResult | null }) {
+export function TypeBadge({ a, check }: { a: Pick<Artifact, 'name' | 'kind'> & { task?: string }; check?: CheckResult | null }) {
   const b = typeBadge(a, check)
+  if (!b.label) return null
   return <span data-testid="type-badge" className={cn('rounded border border-border bg-surface-2 px-1.5 py-px font-mono text-[10px] font-medium', b.tone)}>{b.label}</span>
 }
 

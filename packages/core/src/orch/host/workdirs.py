@@ -1,10 +1,12 @@
-"""Ticket work folders (design r3 part C): ``workdir.get`` and ``workdir.delete``.
+"""Ticket work folders (design r3 part C): ``workdir.get``, ``workdir.read`` and ``workdir.delete``.
 
 A ticket without a codebase works in ``<project>/.orch-work/<KEY>/`` (:mod:`orch.host.agents` decides; the launch makes
 the folder). Its files are the person's: they stay after the ticket closes, until the person deletes them.
 
 * ``workdir.get {ticket}`` (column P): ``{codebase, exists, files, bytes, truncated, folder}``; ``folder`` is the path
   below the project folder (never the full path). A ticket with a codebase answers ``codebase: true`` and nothing else.
+* ``workdir.read {ticket, name}``: one currently listed regular file, capped at 256 KiB, for the same people who
+  may list files. Returns a content kind, digest and text/base64, or only size and ``too_big``.
 * ``workdir.delete {ticket}`` (column P, idem, **no log event**, but a host-written ``workdir.delete`` line in
   ``audit-security.jsonl``): deletes exactly ``<project>/.orch-work/<KEY>`` and
   what is in it, through descriptors and without following a link (:func:`orch.layout.delete_workdir`). Who: a
@@ -27,7 +29,7 @@ if TYPE_CHECKING:
 
 __all__ = ["WORKDIR_OPS", "WRITE_OPS", "may_manage_workdir", "serve"]
 
-WORKDIR_OPS: dict[str, int] = {"workdir.get": 1, "workdir.delete": 1}
+WORKDIR_OPS: dict[str, int] = {"workdir.get": 1, "workdir.read": 1, "workdir.delete": 1}
 WRITE_OPS = frozenset({"workdir.delete"})
 CAPS = ["workdir/1"]
 _SCHEMA = {
@@ -40,6 +42,22 @@ _SCHEMA = {
     "additionalProperties": False,
 }
 _VALIDATOR = Draft202012Validator(_SCHEMA)
+
+
+def _spoofing(ch: str) -> bool:
+    """A character that is not plain text to show before a verdict: control characters (C0 except tab/CR/LF, DEL,
+    C1) and the bidi / zero-width marks that can make a file read differently from what it holds."""
+    o = ord(ch)
+    if ch in "\t\r\n":
+        return False
+    return (
+        o < 32
+        or 0x7F <= o <= 0x9F
+        or o in (0x061C, 0x180E, 0x2028, 0x2029, 0xFEFF)
+        or 0x200B <= o <= 0x200F
+        or 0x202A <= o <= 0x202E
+        or 0x2060 <= o <= 0x2069
+    )
 
 
 def may_manage_workdir(viewer: Viewer, view: Any) -> bool:
@@ -58,7 +76,22 @@ def serve(call: Call) -> dict[str, Any]:
 
     op = call.frame["op"]
     args = dict(call.frame["args"])
-    if next(iter(_VALIDATOR.iter_errors(args)), None) is not None:
+    validator = (
+        _VALIDATOR
+        if op != "workdir.read"
+        else Draft202012Validator(
+            {
+                "type": "object",
+                "properties": {
+                    "ticket": _SCHEMA["properties"]["ticket"],
+                    "name": {"type": "string", "minLength": 1, "maxLength": 100},
+                },
+                "required": ["ticket", "name"],
+                "additionalProperties": False,
+            }
+        )
+    )
+    if next(iter(validator.iter_errors(args)), None) is not None:
         raise HostError("invalid.input", f"{op}: args are not valid")
     if call.frame.get("files"):
         raise HostError("blob.invalid", f"{op} takes no files")
@@ -75,6 +108,45 @@ def serve(call: Call) -> dict[str, Any]:
     store.refresh()
     view = viewer.ticket(store, args["ticket"])
     layout = store.layout
+    if op == "workdir.read":
+        import base64
+        import hashlib
+
+        from orch.layout import WorkdirTooBig, workdir_read
+
+        name = args["name"]
+        if has_codebase(store, view) or not may_manage_workdir(viewer, view):
+            raise HostError("op.not_allowed", "this work file is not available")
+        if "/" in name or "\\" in name or ".." in name or name not in {x["name"] for x in _items(layout, view.key)[0]}:
+            raise HostError("invalid.input", "not a listed work file")
+        try:
+            data = workdir_read(layout, view.key, name, 256 * 1024)
+        except WorkdirTooBig as exc:
+            return ok_result({"name": name, "too_big": True, "bytes": exc.size})
+        except (LayoutError, OSError):
+            raise HostError("invalid.input", "the work file cannot be read") from None
+        kind = "other"
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            kind = "png"
+        elif data.startswith(b"\xff\xd8\xff"):
+            kind = "jpeg"
+        elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            kind = "webp"
+        # #1878 review: bytes leave the host only in a form the page shows: an image as base64, text as text; any
+        # other file answers with its name, size and digest only (never raw bytes of a key, dump or archive)
+        content: dict[str, str] = {}
+        if kind != "other":
+            content = {"base64": base64.b64encode(data).decode("ascii")}
+        else:
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                text = None
+            if text is not None and not any(_spoofing(ch) for ch in text):
+                kind, content = "text", {"text": text}
+        return ok_result(
+            {"name": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "kind": kind, **content}
+        )
     if op == "workdir.get":
         if has_codebase(store, view):
             return ok_result({"codebase": True, "exists": False})

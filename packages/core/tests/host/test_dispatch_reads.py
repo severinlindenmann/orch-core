@@ -181,6 +181,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"offset": 0, "b64": "", "last": False, "size": 1, "upload_key": "a_01J9ZP0000000000000000000B"}
     if op == "blob.drop":
         return {"blob": "b_" + "A" * 26}
+    if op == "workdir.read":
+        return {"ticket": ref, "name": "hello.txt"}
     if op == "workdir.get":  # r3 part C: names a ticket by `ticket`
         return {"ticket": ref}
     if op in RECORDS_ARGS:  # H11e: the records ops name no ticket

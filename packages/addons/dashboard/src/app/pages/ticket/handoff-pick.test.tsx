@@ -19,19 +19,21 @@ const view = (ticket: TicketDocument, action: HumanAction | null) => <QueryClien
 
 it('a pick on ticket A does not carry to ticket B, nor past a close', () => {
   const r = render(view(t('A-1'), { kind: 'verdict' }))
-  expect(screen.getByTestId('confirm')).toHaveTextContent('Pass')
+  expect(screen.getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true)
   fireEvent.click(screen.getByRole('radio', { name: /Send back/ }))
   expect(screen.getByTestId('confirm')).toHaveTextContent('Send back')
   r.rerender(view(t('B-1'), { kind: 'verdict' }))
-  expect(screen.getByTestId('confirm')).toHaveTextContent('Pass')
+  expect(screen.getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true)
   fireEvent.click(screen.getByRole('radio', { name: /Send back/ }))
   r.rerender(view(t('B-1'), null))
   r.rerender(view(t('B-1'), { kind: 'verdict' }))
-  expect(screen.getByTestId('confirm')).toHaveTextContent('Pass')
+  expect(screen.getAllByRole('radio').every((r) => !(r as HTMLInputElement).checked)).toBe(true)
 })
 
 it('W11: after Pass the toast says the ticket is done and where it went; Send back says so', () => {
   render(view(t('A-1'), { kind: 'verdict' }))
+  // P26: nothing is preselected; Pass is the person's deliberate click
+  fireEvent.click(screen.getByRole('radio', { name: /Pass/ }))
   expect(screen.getByTestId('done-toast')).toHaveTextContent('A-1 is done. You find it on Today under Recently.')
   fireEvent.click(screen.getByRole('radio', { name: /Send back/ }))
   expect(screen.getByTestId('done-toast')).toHaveTextContent('A-1 was sent back for changes.')

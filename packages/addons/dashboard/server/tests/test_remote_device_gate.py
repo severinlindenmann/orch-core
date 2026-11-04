@@ -455,7 +455,8 @@ READ_OPS = {
     "activity.list", "workspace.show", "run.sources", "run.transcript", "run.list", "run.link", "share.preview",
     "share.rules", "share.audience", "hub.shared", "space.list",
     "remote.pending", "remote.status", "remote.sessions", "host.list",
-    "worktree.list", "worktree.diff", "workdir.get", "whoami", "outcome.get", "org.show", "org.secrets", "org.offers",
+    "worktree.list", "worktree.diff", "workdir.get", "workdir.read",
+    "whoami", "outcome.get", "org.show", "org.secrets", "org.offers",
     "reader.list",
     "quick.list", "grant.list", "follow_up.list", "delegation.list", "publish.list", "phone.status", "needs", "status",
 }  # fmt: skip

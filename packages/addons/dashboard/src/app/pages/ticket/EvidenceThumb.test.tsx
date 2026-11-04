@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import type { ArtifactContent } from '@/api/artifactText'
 import type { Artifact } from '@/api/types'
-import { EvidenceThumb, typeBadge } from './EvidenceThumb'
+import { EvidenceThumb, typeBadge, cardTitle, checkOf } from './EvidenceThumb'
 
 const SHA = 'a'.repeat(64)
 const art = (name: string, over: Partial<Artifact> = {}): Artifact => ({ name, kind: 'other', bytes: 100, sha256: SHA, added_by: 'agent', at: '2026-10-23T10:00:00Z', ...over }) as Artifact
@@ -53,4 +53,17 @@ it('every type has a text label on its badge', () => {
   expect(typeBadge(art('a.json')).label).toBe('JSON')
   expect(typeBadge(art('a.py')).label).toBe('PY')
   expect(typeBadge(art('noext')).label).toBe('OTHER')
+})
+
+
+it('receipts and task logs have a neutral title and no type badge; only host attestation yields passed', () => {
+  for (const kind of ['receipt', 'log'] as const) {
+    const a = art('T1-receipt.log', { kind, task: 'T1', added_by_kind: 'agent' })
+    expect(cardTitle(a)).toBe("The agent's check")
+    expect(typeBadge(a).label).toBe('')
+    expect(checkOf(a, [{ id: 'T1', receipt: { exit: 0, ms: 1, attested_by: 'host' } }])).toBeNull()
+  }
+  const host = art('T1-receipt.log', { kind: 'receipt', task: 'T1', added_by_kind: 'host' })
+  expect(checkOf(host, [{ id: 'T1', receipt: { exit: 0, ms: 1, attested_by: 'host' } }])).toBe('passed')
+  expect(checkOf(host, [{ id: 'T1', receipt: { exit: 0, ms: 1, attested_by: 'agent' } }])).toBeNull()
 })

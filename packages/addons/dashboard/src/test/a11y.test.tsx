@@ -100,7 +100,7 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
     ['Overview', /Tariff tables live in a shared drive/],
     ['Acceptance', /Acceptance criteria/],
     ['Questions', /Should .valid_from. in the seeds be a DATE/],
-    ['Results', /tariff-export\.log/],
+    ['Results', /tariff-source-diff\.csv/],
     ['History', /Timeline/],
   ]
   it.each(tabs)('ticket DEMO-0043, %s tab', async (tab, marker) => {

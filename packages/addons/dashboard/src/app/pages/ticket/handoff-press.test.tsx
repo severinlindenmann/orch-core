@@ -30,16 +30,16 @@ it('approve without a press (menu item, palette) never depends on the ambient fl
   expect(last().autoStart).toBe(false)
 })
 
-// P10: Pass is preselected only when every requirement is checked, and a preselected verdict is never started by itself.
+// P26: every verdict requires an explicit choice, regardless of the agent check.
 type Prop = { autoStart?: boolean; action?: { action: string; outcome?: string } | null; hint?: string | null; confirmLabel?: string }
 const withAc = (states: ('proven' | 'unproven')[]) =>
   ({ ...ticket, acceptance_state: states.map((state, i) => ({ id: `AC${i + 1}`, text: `Req ${i + 1}`, state, evidence: [{ kind: 'task', ref: 'T1' }] })), tasks_state: [], artifacts: [], branch: {} }) as unknown as TicketDocument
 const showT = (t: TicketDocument) => <QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'verdict' }} ws="w" onClose={() => {}} /></QueryClientProvider>
-it('verdict: Pass is preselected when every requirement is checked, and nothing starts on its own', () => {
+it('verdict: nothing is preselected even when every requirement is checked, and nothing starts on its own', () => {
   render(showT(withAc(['proven'])))
   const p = last() as Prop
-  expect(p.action).toMatchObject({ action: 'verdict', outcome: 'pass' })
-  expect(p.confirmLabel).toBe('Pass')
+  expect(p.action).toBeNull()
+  expect(p.hint).toBe('Pick Pass or Send back to continue')
   expect(p.autoStart).toBeUndefined() // the person still presses; the dialog arms only on that press
 })
 it('verdict: nothing is preselected when a requirement is not checked; the hint says what to do', () => {
@@ -81,16 +81,16 @@ it('a failed prepare of another action does not block the combined card', async 
   expect(bothIsBlocked('T-1')).toBe(false)
 })
 
-// R14 P04: the dialog is mounted before it opens; Pass is derived when the verdict opens, and a pick of the person wins.
-it('verdict: mounted closed, then opened on a fully proven ticket -> Pass is preselected, nothing started', () => {
+// The dialog starts unselected even when mounted before opening.
+it('verdict: mounted closed, then opened on a fully proven ticket -> nothing is preselected or started', () => {
   const t = withAc(['proven'])
   const view = (action: HumanAction | null) => <QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={action} ws="w" onClose={() => {}} /></QueryClientProvider>
   const r = render(view(null))
   expect(seen.props.length).toBe(0)
   r.rerender(view({ kind: 'verdict' }))
   const p = last() as Prop
-  expect(p.action).toMatchObject({ action: 'verdict', outcome: 'pass' })
-  expect(p.confirmLabel).toBe('Pass')
+  expect(p.action).toBeNull()
+  expect(p.hint).toBe('Pick Pass or Send back to continue')
   expect(p.autoStart).toBeUndefined()
 })
 it('verdict: mounted closed, then opened with an unproven requirement -> nothing preselected', () => {

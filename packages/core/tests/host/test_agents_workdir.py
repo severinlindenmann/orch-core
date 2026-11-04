@@ -172,3 +172,85 @@ def test_workdir_get_lists_plain_files_only_when_asked(ready, tmp_path):  # noqa
         (folder / f"f{i:02}.txt").write_text("z")
     got = ok(c.call("workdir.get", {"ticket": key, "list": True}))["data"]
     assert len(got["items"]) == 20 and got["items_truncated"] is True
+
+
+def test_workdir_read_serves_only_listed_regular_files(ready, tmp_path):  # noqa: F811
+    import hashlib
+
+    from tests.host.dispatch_helpers import err
+
+    c = ready.conn()
+    _, key = ready.ticket()
+    folder = Path(ready.lab.root) / ".orch-work" / key
+    folder.mkdir(parents=True)
+    (folder / "hello.txt").write_text("hello from orch")
+    got = ok(c.call("workdir.read", {"ticket": key, "name": "hello.txt"}))["data"]
+    assert got == {
+        "name": "hello.txt",
+        "bytes": 15,
+        "kind": "text",
+        "text": "hello from orch",
+        "sha256": hashlib.sha256(b"hello from orch").hexdigest(),
+    }
+    (folder / "bad!.txt").write_text("unlisted")
+    (folder / "link.txt").symlink_to(folder / "hello.txt")
+    (folder / "sub").mkdir()
+    for name in ("bad!.txt", "link.txt", "sub", "../hello.txt", "sub/file.txt", "absent.txt", "a..txt"):
+        assert err(c.call("workdir.read", {"ticket": key, "name": name})) == "invalid.input"
+    (folder / "big.txt").write_bytes(b"x" * (256 * 1024 + 1))
+    assert ok(c.call("workdir.read", {"ticket": key, "name": "big.txt"}))["data"] == {
+        "name": "big.txt",
+        "too_big": True,
+        "bytes": 256 * 1024 + 1,
+    }
+    # An otherwise valid file beyond the listing's 20-entry limit cannot be read.
+    for i in range(25):
+        (folder / f"a{i:02}.txt").write_text("x")
+    assert err(c.call("workdir.read", {"ticket": key, "name": "hello.txt"})) == "invalid.input"
+
+
+def test_workdir_read_refuses_a_symlinked_work_folder(ready, tmp_path):  # noqa: F811
+    from tests.host.dispatch_helpers import err
+
+    c = ready.conn()
+    _, key = ready.ticket()
+    (tmp_path / "hello.txt").write_text("outside")
+    parent = Path(ready.lab.root) / ".orch-work"
+    parent.mkdir()
+    (parent / key).symlink_to(tmp_path)
+    assert err(c.call("workdir.read", {"ticket": key, "name": "hello.txt"})) == "invalid.input"
+
+
+def test_workdir_read_review_fixes(ready):  # noqa: F811
+    """#1878 Opus review: an agent (grant) cannot read; non-text, non-image files leave no bytes; bidi/zero-width or
+    C1 text is not shown as text; a FIFO is refused without being opened."""
+    import os
+
+    from tests.host.dispatch_helpers import err
+
+    c = ready.conn()
+    _, key = ready.ticket()
+    folder = Path(ready.lab.root) / ".orch-work" / key
+    folder.mkdir(parents=True)
+    (folder / "hello.txt").write_text("hello from orch")
+    assert err(c.call("workdir.read", {"ticket": key, "name": "hello.txt"}, grant=ready.grant, session="s")) == (
+        "op.not_allowed"
+    )
+    (folder / "blob.bin").write_bytes(b"\x00\x01secret-key-material\xff")
+    got = ok(c.call("workdir.read", {"ticket": key, "name": "blob.bin"}))["data"]
+    assert got["kind"] == "other" and "base64" not in got and "text" not in got and got["bytes"] == 22
+    spoofs = (
+        "pay \u202eraw\u202c here",
+        "zero\u200bwidth",
+        "c1\x85line",
+        "del\x7f",
+        "bom\ufeff",
+        "ls\u2028x",
+        "wj\u2060x",
+    )
+    for i, spoof in enumerate((*spoofs, "alm\u061cx")):
+        (folder / f"s{i}.txt").write_text(spoof)
+        got = ok(c.call("workdir.read", {"ticket": key, "name": f"s{i}.txt"}))["data"]
+        assert got["kind"] == "other" and "text" not in got, spoof
+    os.mkfifo(folder / "pipe.txt")
+    assert err(c.call("workdir.read", {"ticket": key, "name": "pipe.txt"})) == "invalid.input"

@@ -41,7 +41,7 @@ def url(stub, path):
 
 def test_the_workdir_ops_are_ours_under_cap_workdir_1():
     assert "workdir/1" in hostlink.CAPS
-    for op in ("workdir.get", "workdir.delete"):
+    for op in ("workdir.get", "workdir.read", "workdir.delete"):
         assert hostlink.OPS[op] == 1 and op in hostlink.WORKDIR_OPS
 
 
@@ -104,3 +104,11 @@ def test_delete_is_a_write_with_the_browsers_idem(client, token, stub, host):
 def test_the_delete_body_is_closed(client, token, stub, host, body):
     assert client.post(url(stub, "/workdir/delete"), json=body, headers=hdr(token)).status_code == 400
     assert host.calls == []
+
+
+def test_read_is_a_read_only_host_call(client, token, stub, host):
+    host.answers["workdir.read"] = {"name": "hello.txt", "bytes": 15, "kind": "text", "text": "hello from orch"}
+    res = client.get(url(stub, "/tickets/DEMO-1/workdir/read?name=hello.txt"), headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == host.answers["workdir.read"]
+    assert host.calls[-1] == ("workdir.read", {"ticket": "DEMO-1", "name": "hello.txt"}, False, None)

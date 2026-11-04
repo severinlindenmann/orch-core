@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response
 from pydantic import BaseModel, ConfigDict
 
 from . import reads
@@ -63,6 +63,13 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         if not link.supports("workdir.get", "workdir/1"):
             return {"available": False, "exists": False, "codebase": False}
         return {"available": True, **view(link.call("workdir.get", {"ticket": key, "list": True}))}
+
+    @app.get("/api/w/{ws}/tickets/{key}/workdir/read")
+    def read(key: reads.Key, name: str, response: Response, ws: str = Depends(reads.workspace)):
+        # a work file's contents: never cached, never sniffed (#1878 review)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return gateway.enabled(ws).call("workdir.read", {"ticket": key, "name": name})
 
     @app.post("/api/w/{ws}/workdir/delete")
     def delete(body: DeleteBody, ws: str = Depends(reads.workspace)):

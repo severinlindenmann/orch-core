@@ -20,7 +20,7 @@ export function WorkFolder({ ticket }: { ticket: TicketDocument }) {
   const role = useRole()
   const qc = useQueryClient()
   const served = isRealHost() && !!ws
-  const q = useQuery({ ...workdirQueries.ofTicket(ws ?? '', ticket.key), enabled: served })
+  const q = useQuery({ ...workdirQueries.ofTicket(ws ?? '', ticket.key, ticket.head?.seq), enabled: served })
   if (!served || !ws || !q.data?.available || q.data.codebase || !q.data.exists) return null
   const f = q.data
   return (

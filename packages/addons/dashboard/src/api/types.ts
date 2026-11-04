@@ -270,6 +270,7 @@ export type Via = 'cli' | 'dashboard' | 'phone' | 'factory_charter'
 export type Presence = 'touchid' | 'passkey' | 'password' | 'convenience' | (string & {})
 
 export interface Artifact {
+  workFolder?: string
   name: string
   kind:
     | 'screenshot'

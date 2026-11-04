@@ -297,6 +297,13 @@ function MarketWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unfetched, ws])
   const entries = markets.flatMap((m) => m.addons.map((a) => ({ m, a })))
+  // W26: the cards the filters leave; an empty result says so instead of a blank grid
+  const shown = entries.filter(
+    ({ m, a }) =>
+      (!source || source === m.url) &&
+      (!permission || a.capabilities.includes(permission)) &&
+      `${a.id} ${a.from_marketplace.summary}`.toLowerCase().includes(search.toLowerCase()),
+  )
   const active = tab === 'installed' ? installed : list
   return (
     <div className="@container min-w-0 w-full max-w-5xl space-y-4 break-words">
@@ -346,14 +353,13 @@ function MarketWorkspace() {
               </div>
               {!markets.length && <p>No marketplaces added yet</p>}
               {unfetched && !message && <p role="status">Reading the official marketplace…</p>}
+              {entries.length > 0 && !shown.length && (
+                <p role="status" data-testid="market-no-match" className="text-sm text-text-muted">
+                  {search.trim() ? `No add-on matches “${search.trim()}”.` : 'No add-on matches these filters.'} Add-ons that are already on are under Installed.
+                </p>
+              )}
               <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))] gap-3">
-                {entries
-                  .filter(
-                    ({ m, a }) =>
-                      (!source || source === m.url) &&
-                      (!permission || a.capabilities.includes(permission)) &&
-                      `${a.id} ${a.from_marketplace.summary}`.toLowerCase().includes(search.toLowerCase()),
-                  )
+                {shown
                   .map(({ m, a }) => (
                     <article key={`${m.url}/${a.id}`} className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4" aria-label={a.id}>
                       <div className="flex items-center gap-3">

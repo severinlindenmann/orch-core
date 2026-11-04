@@ -842,6 +842,12 @@ def test_run18_the_plain_name_command_window_is_only_for_the_real_builtin_packag
         "add-on": "terminals"
     }  # the signed value is visible
     assert "Turn off Terminals" not in flat(off)
+    # W07: turning off shows what changes, like turning on does
+    assert off["summary"]["title"] == "Turn off Command window"
+    assert off["summary"]["lines"] == [
+        "Command window stops working in this workspace until you turn it on again.",
+        "Its settings and saved data stay on this computer.",
+    ]
     other = build(
         {
             "op": "addon.disable",

@@ -263,7 +263,8 @@ claude
 ```
 
 orch's session-start hook gives the new Claude Code session its own `ORCH_SESSION` (through Claude Code's
-`CLAUDE_ENV_FILE`), so you do not set one. Start a new Claude Code session for each ticket: a session holds one claim. Then tell Claude: *"File a ticket to add a hello page,
+`CLAUDE_ENV_FILE`), so you do not set one. (It does this only when Claude Code's config folder is not behind a symlink;
+otherwise set `ORCH_SESSION` yourself, as `s_` plus a ULID.) Start a new Claude Code session for each ticket: a session holds one claim. Then tell Claude: *"File a ticket to add a hello page,
 write the requirements and a plan, and wait for my approval."*
 
 **What you should see:** Claude runs `orch status`, files a ticket, fills its sections and stops at the gate.

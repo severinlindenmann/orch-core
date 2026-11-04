@@ -490,6 +490,19 @@ def main(
             if op.name in ("help", "describe"):
                 ctx = dataclasses.replace(ctx, addons_on=_addons_on(env, workspace, ctx))
             target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
+            if (
+                target is None
+                and op.name not in ("help", "describe")  # import.v1 too: it would open the store directly
+                and ("ORCH_TICKET" in env or "ORCH_WORKDIR" in env)  # the host's launch markers, even when empty
+            ):
+                # W00: started by the orch host, so never a silent fallback to direct mode (an empty view of a fresh
+                # store and a new genesis pin); nothing is opened before this refusal. A correctness guard against a
+                # silent wrong view, NOT a security boundary: an agent controls its own environment.
+                raise OrchError(
+                    "host.unavailable",
+                    "cannot reach the orch host: " + hostclient.direct_reason(env, workspace),
+                    hint="the agent was started by the orch host but cannot reach it; stop it and start it again",
+                )
             if target is not None:
                 hosted = True
                 hostclient.forget_host()

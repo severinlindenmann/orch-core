@@ -352,7 +352,7 @@ def media(data: bytes) -> dict | None:
 
     if data.startswith(b"\x89PNG\r\n\x1a\n") or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
         try:
-            kind = "png" if imagecheck.check(data) == "image/png" else "webp"
+            kind = "png" if imagecheck.check(data, display=True) == "image/png" else "webp"
         except imagecheck.ImageRefused:
             return None
     elif data.startswith(b"\xff\xd8\xff"):

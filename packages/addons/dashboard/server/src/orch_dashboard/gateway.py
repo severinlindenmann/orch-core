@@ -537,6 +537,20 @@ class Gateway:
     def call(self, ws, op, args=None):
         return self.enabled(ws).call(op, args)
 
+    def call_own(self, ws, op, args=None, **kw):
+        """One call on a host connection of its own, for an op that waits on the network (the hub, the publish server).
+
+        The workspace's shared link answers one call at a time and holds its lock until the answer comes, so a slow
+        network op on it would make every other read of the workspace wait, and its 30 s socket timeout would close the
+        link under them (W34: while the hub was cut, /today and the ticket page answered 503). Workspace reads must not
+        depend on the hub."""
+        self.enabled(ws)
+        link = self.new_link(ws)
+        try:
+            return link.call(op, args, **kw)
+        finally:
+            link.close()
+
     def close(self):
         self.click.close()
         for link in [self.control, *self.links.values()]:

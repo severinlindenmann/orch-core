@@ -142,11 +142,13 @@ function loginView(err, opts = {}) {
       if (r.status !== 200) return loginView(say(r.body.error === "malformed" ? "bad_credentials" : r.body.error), opts); // run-11 #11: a sign-in failure is never "could not be read safely"
       await afterLogin();
     },
-  }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("p", { class: "small muted", text: "Use the code shown for orch in the code app on your phone." }), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
+  }, h("h1", { text: opts.title ?? (workspace ? "Sign in to the hub." : "Sign in to your hub") }),
+    ...[opts.ok ? banner("ok", "Restored", opts.ok) : null, opts.why || workspace ? h("p", { class: "muted", text: opts.why ?? "You came from " + (workspace?.name ? renderText(workspace.name) + "." : "your workspace.") }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" })].filter(Boolean),
+    field("Your name", id), field("Password", pw), field("6-digit code", code), h("p", { class: "small muted", text: "Use the code shown for orch in the code app on your phone." }), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   if (workspace) form.append(h("a", { href: "#", text: "Back to my workspace", onclick: (ev) => { ev.preventDefault(); backToWorkspace(workspace, { assign: (u) => location.assign(u), back: () => history.back(), canBack: () => history.length > 1, login: () => loginView(null, { ...opts, workspace }) }); } }));
   const prefill = namePrefill(opts.prefill); // P02: arriving from the person's own workspace; a name only, never an id
   if (prefill) id.value = prefill;
-  show(h("h1", { text: opts.title ?? (workspace ? "Sign in to the hub." : "Sign in to your hub") }), opts.ok ? banner("ok", "Restored", opts.ok) : null, opts.why ? h("p", { class: "muted", text: opts.why }) : null, err ? banner("bad", "Not signed in", err) : null, h("div", { id: "company-slot" }), form);
+  show(form);
   if (prefill) pw.focus?.();
   void api("GET", "/oidc/options").then((o) => { // company login (HUB-PE-04): a button only when the admin turned it on
     const btn = o.status === 200 ? companyButton(o.body, async () => { const r = await beginCompany(api, "signin"); if (!r.ok) loginView(COMPANY_WHY[r.error] ?? say(r.error)); }) : null;
@@ -410,7 +412,7 @@ async function reauthView() {
   const name = namePrefill(state.user?.name), back = globalThis.location?.hash ?? null; // QA b1852: the name, never the id
   const admin = /^#\/admin/.test(back ?? "");
   await api("DELETE", "/session"); clearSession(); returnHash = back;
-  loginView(null, { prefill: name, title: admin ? "Sign in to open Admin" : "Sign in to open this page", why: "You came from your workspace. Confirm it is you, then you go straight " + (admin ? "to Admin." : "back to this page.") });
+  loginView(null, { prefill: name, title: admin ? "Sign in to open Admin" : "Sign in to open this page", why: "You came from " + (ticketWorkspace?.name ? renderText(ticketWorkspace.name) + "." : "your workspace.") + " Confirm it is you, then you go straight " + (admin ? "to Admin." : "back to this page.") });
 }
 
 // P17: an admin whose session came from a workspace keeps "Connect a workspace" in reach. The click explains why one real
@@ -501,6 +503,7 @@ async function handoffs() {
   } finally { finishLoading(); }
 }
 
+let workspacesShared = null;
 async function workspaces(joined = [], known = null) {
   const finishLoading = loading();
   pageLoading("workspaces");
@@ -564,6 +567,7 @@ async function workspaces(joined = [], known = null) {
         },
       };
       const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
+      workspacesShared = JSON.stringify(sharedRes.status === 200 ? sharedRes.body.items ?? [] : []);
       shell("workspaces", workspacesView({ shared: sharedRes.status === 200 ? sharedRes.body.items ?? [] : [], workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, restored, hub, actions, joined, self: state.user.user_id,
         canConnect: !!state.user.is_admin, needsSignIn: !!state.user.needs_sign_in }));
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
@@ -1286,6 +1290,18 @@ async function pollLive() {
       reconcileRows(frame.querySelector(".rail"), railView());
       railSnapshot = JSON.stringify(state.rail);
     }
+    // Workspaces uses the same live share feed as Home. Redraw only on a successful change,
+    // keeping the Connect form intact during ordinary polls and while a dialog is open.
+    if (frame?.isConnected && parseRoute(location.hash).kind === "workspaces" && !document.querySelector('[role="dialog"]')) {
+      const revision = viewRevision;
+      const sharedNow = await api("GET", "/me/shared");
+      if (user !== state.user) return;
+      if (revision === viewRevision && parseRoute(location.hash).kind === "workspaces" && sharedNow.status === 200 && Array.isArray(sharedNow.body.items)
+          && JSON.stringify(sharedNow.body.items) !== workspacesShared) {
+        await workspaces();
+        return;
+      }
+    }
     // P04: the hub Home's Shared tickets card follows the same list; a change (or an ended share) redraws Home once
     if (frame?.isConnected && parseRoute(location.hash).kind === "home" && homeData?.user_id === user.user_id) {
       const sharedNow = await api("GET", "/me/shared");
@@ -1321,9 +1337,14 @@ setInterval(() => {
   if (offline) updateOffline();
   if (shouldPoll({ now: Date.now(), due: nextPoll, visible: document.visibilityState === "visible", active: !!state.user || offline, busy: polling })) void pollLive();
 }, 1000);
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && (state.user || offline)) void pollLive();
-});
+let lastResumePoll = -Infinity;
+function resumeLive() {
+  if (document.visibilityState !== "visible" || !(state.user || offline) || polling || Date.now() - lastResumePoll < 5000) return;
+  lastResumePoll = Date.now();
+  return pollLive();
+}
+document.addEventListener("visibilitychange", resumeLive);
+window.addEventListener("focus", resumeLive);
 
 function openShortcuts() {
   dialog(h("h1", { text: "Keyboard shortcuts" }), factsList([

@@ -10,7 +10,8 @@ describe('Settings > Hub > Network (R6)', () => {
   it('says "directly" first, keeps the form behind Details, and never shows the password again', async () => {
     setHubScenario('standalone')
     const { user } = renderApp('/w/DEMO/settings/hub')
-    expect(await screen.findByTestId('network-state')).toHaveTextContent('reaches the hub directly')
+    await user.click(await screen.findByTestId('hub-standalone-details'))
+    expect(await screen.findByTestId('network-state')).toHaveTextContent('This computer can reach a hub directly.')
     expect(screen.queryByTestId('network-proxy')).toBeNull()
     await user.click(screen.getByTestId('network-details'))
     const put = vi.spyOn(api, 'putHubNetwork')

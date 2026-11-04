@@ -94,11 +94,14 @@ def run(args: argparse.Namespace, out=None) -> int:
         log = None
         shares = None
         try:
-            if args.group == "users" and args.cmd == "remove":
-                from ..shares import ShareStore
+            if args.group == "users" and args.cmd == "remove" and (state / "shares.db").exists():
+                try:  # B08: a nicety; a shares.db that cannot be opened never blocks the removal
+                    from ..shares import ShareStore
 
-                shares = ShareStore(str(state / "shares.db"))
-                acc.forget_reader = shares.forget_reader
+                    shares = ShareStore(str(state / "shares.db"))
+                    acc.forget_reader = shares.forget_reader
+                except Exception:  # noqa: BLE001
+                    shares = None
             if args.group in ("users", "groups", "grants"):  # D4: grant and membership changes go into the audit chain
                 from ..audit import open_log
 

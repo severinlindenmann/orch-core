@@ -113,7 +113,9 @@ class ShareStore:
                 "INSERT INTO share_log(ws, item_id, change, digest, ts_ms) VALUES (?,?,?,?,?)",
                 (ws, item_id, change, digest, now_ms),
             )
-        self._notices(ended, allow_live=True)  # readers the new version drops; best effort, after the change committed
+        self._notices(
+            ended, version=(item_version, digest)
+        )  # readers this version drops; best effort, after the commit
         return change
 
     def revoke(
@@ -200,7 +202,9 @@ class ShareStore:
     def _write_ended(self, rows: Iterable[tuple[str, str, str, str, str, str, int]]) -> None:
         self._db.executemany("INSERT OR REPLACE INTO share_ended VALUES (?,?,?,?,?,?,?)", rows)
 
-    def _notices(self, rows: Iterable[tuple[str, str, str, str, str, str, int]], *, allow_live: bool = False) -> None:
+    def _notices(
+        self, rows: Iterable[tuple[str, str, str, str, str, str, int]], *, version: tuple[int, str] | None = None
+    ) -> None:
         """B08 notices in their own transaction, after the item change: a failure loses notices, never the change."""
         rows = list(rows)
         if not rows:
@@ -210,12 +214,22 @@ class ShareStore:
                 self._db.execute("BEGIN IMMEDIATE")
                 # Revoke/purge notices may arrive after a re-share cleared the old notices.
                 # Replacement notices deliberately describe readers dropped from a live item.
-                if not allow_live:
+                if version is None:  # revoke/purge: a row whose item is live again (a re-share won the race) is stale
                     rows = [
                         row
                         for row in rows
                         if not self._db.execute(
                             "SELECT 1 FROM share_item WHERE ws=? AND item_id=? AND revoked=0", row[1:3]
+                        ).fetchone()
+                    ]
+                else:  # a replace: only while the version that dropped these readers is still the current one
+                    rows = [
+                        row
+                        for row in rows
+                        if self._db.execute(
+                            "SELECT 1 FROM share_item WHERE ws=? AND item_id=? AND revoked=0 AND item_version=? "
+                            "AND digest=?",
+                            (*row[1:3], *version),
                         ).fetchone()
                     ]
                 self._write_ended(rows)

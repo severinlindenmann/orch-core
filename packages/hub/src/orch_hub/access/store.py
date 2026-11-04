@@ -144,7 +144,7 @@ class Access:
         #: for a change that did not happen, never the reverse.
         self.observer: Callable[[dict], None] | None = None
         # Clear private reader state on removal, disable, and enable (including repeated disable).
-        # Runs under the access transaction before the lifecycle change becomes visible.
+        # Best effort and not atomic with the change (another database): a failure is logged, never raised.
         self.forget_reader: Callable[[str], None] | None = None
         try:
             self._db = open_private_db(path, check_same_thread=False, isolation_level=None)
@@ -257,7 +257,7 @@ class Access:
         return self.is_active(user_id) and not self.must_recover(user_id)
 
     def _forget(self, user_id: str) -> None:
-        """B08: drop the person's withdrawal notices. A nicety: a failure never blocks the disable or removal."""
+        """B08: drop the person's withdrawal notices (remove, disable, enable). A failure never blocks the change."""
         if self.forget_reader is None:
             return
         try:

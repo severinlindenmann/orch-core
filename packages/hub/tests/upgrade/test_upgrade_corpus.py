@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from orch_hub.access.store import Access
+from orch_hub.backup.hubop import DATA_FORMAT
 from orch_hub.dataformat import open_data
 from orch_hub.keys.store import HubKeys
 
@@ -35,11 +36,17 @@ def stage(src: Path, dst: Path) -> Path:
 
 
 @pytest.mark.parametrize("corpus", CASES)
-def test_the_corpus_opens_with_head(corpus: Path, tmp_path: Path) -> None:
+def test_the_corpus_opens_with_head(corpus: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "core" / "src"))
+    from orch.migrate import apply, read_format
+
     path = stage(corpus, tmp_path / "hub")
-    # Once a hub migration step exists, run `orch migrate` through core before opening.
     assert json.loads((path / "format.json").read_text())["format"] == 1
-    handle = open_data(path, "hub", 1, env={})
+    assert apply(path, "hub") == ["share-ended"]
+    assert read_format(path, "hub") == DATA_FORMAT == 2
+    assert apply(path, "hub") == []
+    assert not (path / "shares.db").exists()  # this frozen corpus predates shares
+    handle = open_data(path, "hub", DATA_FORMAT, env={})
     try:
         keys = HubKeys.open(path)
         assert keys is not None
@@ -56,13 +63,13 @@ def test_a_newer_format_is_refused(corpus: Path, tmp_path: Path) -> None:
     path = stage(corpus, tmp_path / "hub")
     marker = path / "format.json"
     doc = json.loads(marker.read_text())
-    doc["format"] = 2
+    doc["format"] = DATA_FORMAT + 1
     marker.write_text(json.dumps(doc) + "\n")
 
     handle = None
     try:
         with pytest.raises(Exception) as exc:
-            handle = open_data(path, "hub", 1, env={})
+            handle = open_data(path, "hub", DATA_FORMAT, env={})
         assert exc.value.code == "format.newer"
     finally:
         if handle is not None:

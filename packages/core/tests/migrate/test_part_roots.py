@@ -54,8 +54,8 @@ def install(ctx, out, err, part):
 # ------------------------------------------------------------------------------------------------- the kinds
 
 
-def test_current_has_the_five_kinds_at_the_baseline():
-    assert CURRENT == {"host": 1, "workspace": 1, "hub": 1, "relay": 1, "publish": 1}
+def test_current_has_the_five_kinds():
+    assert CURRENT == {"host": 1, "workspace": 1, "hub": 2, "relay": 1, "publish": 1}
     assert KINDS == ("host", "workspace", "hub", "relay", "publish")
     DEFAULT.check()
 
@@ -80,12 +80,13 @@ def test_install_writes_format_json_for_each_part(tmp_path, part):
     ctx, out, err, _ = make(tmp_path)
     assert install(ctx, out, err, part) == 0, err.getvalue()
     data = ctx.layout.data(part)
-    assert json.loads((data / "format.json").read_text()) == {"orch": part, "format": 1}
+    assert json.loads((data / "format.json").read_text()) == {"orch": part, "format": CURRENT[part]}
     assert read_format(data, part) == CURRENT[part]
 
 
 @pytest.mark.parametrize("part", PARTS)
-def test_install_adopts_an_existing_dir_without_format_json(tmp_path, part):
+def test_install_adopts_an_existing_dir_without_format_json(tmp_path, part, monkeypatch):
+    monkeypatch.setitem(CURRENT, part, 1)
     ctx, out, err, _ = make(tmp_path)
     data = ctx.layout.data(part)
     data.mkdir(parents=True)
@@ -114,10 +115,10 @@ def test_install_refuses_a_newer_format(tmp_path, part):
     ctx, out, err, _ = make(tmp_path)
     data = ctx.layout.data(part)
     data.mkdir(parents=True)
-    write_format(data, part, 2)
+    write_format(data, part, CURRENT[part] + 1)
     assert install(ctx, out, err, part) == 1
-    assert "made by a newer orch (format 2): update orch" in err.getvalue()
-    assert read_format(data, part) == 2
+    assert f"made by a newer orch (format {CURRENT[part] + 1}): update orch" in err.getvalue()
+    assert read_format(data, part) == CURRENT[part] + 1
     assert not ctx.runner.started and not ctx.runner.stopped  # nothing was stopped or started
     assert part not in load(ctx.layout)["parts"]
 
@@ -254,7 +255,7 @@ def test_a_failed_update_puts_a_part_root_back(w):
 # ------------------------------------------------------------------------------------------------- orch migrate
 
 
-def test_migrate_with_part_roots_at_format_1_is_a_no_op(tmp_path):
+def test_migrate_with_part_roots_at_current_format_is_a_no_op(tmp_path):
     env = {"HOME": str(tmp_path / "home"), "ORCH_STATE_DIR": str(tmp_path / "state")}
     init_root(Path(env["ORCH_STATE_DIR"]), "host")
     lay = Layout(env)
@@ -267,9 +268,12 @@ def test_migrate_with_part_roots_at_format_1_is_a_no_op(tmp_path):
         doc = json.loads(out.getvalue())
         assert doc["ok"] and doc["skipped"] == []
         assert [r["kind"] for r in doc["roots"]] == ["host", *PARTS]
-        assert all(r["steps"] == [] and r["at"] == r["target"] == 1 and "backup" not in r for r in doc["roots"])
+        assert all(
+            r["steps"] == [] and r["at"] == r["target"] == CURRENT[r["kind"]] and "backup" not in r
+            for r in doc["roots"]
+        )
     assert not bk.backups_dir(env).exists()
-    assert all(read_format(lay.data(p), p) == 1 for p in PARTS)
+    assert all(read_format(lay.data(p), p) == CURRENT[p] for p in PARTS)
 
 
 def test_migrate_ignores_a_part_that_is_not_installed(tmp_path):
@@ -291,7 +295,8 @@ def real_updater(world: World):
     return type(world.updater())(world.env, seams, world.out)
 
 
-def test_an_unmarked_part_dir_is_no_root_and_the_update_goes_through(w):
+def test_an_unmarked_part_dir_is_no_root_and_the_update_goes_through(w, monkeypatch):
+    monkeypatch.setitem(CURRENT, "hub", 1)  # baseline-only adoption
     data = Layout(w.env).data("hub")  # the world made it: hub.db, no format.json
     installed(w, "hub")
     assert not (data / "format.json").exists()
@@ -305,7 +310,8 @@ def test_an_unmarked_part_dir_is_no_root_and_the_update_goes_through(w):
     assert not list(bk.backups_dir(w.env).glob("*-hub-*"))
 
 
-def test_migrate_notes_an_unmarked_part_dir_and_the_old_version_still_fits(tmp_path):
+def test_migrate_notes_an_unmarked_part_dir_and_the_old_version_still_fits(tmp_path, monkeypatch):
+    monkeypatch.setitem(CURRENT, "hub", 1)  # baseline-only adoption
     from orch.update.engine import Updater
 
     env = {"HOME": str(tmp_path / "home"), "ORCH_STATE_DIR": str(tmp_path / "state")}
@@ -495,6 +501,7 @@ class Died(BaseException):
 
 
 def test_a_crash_between_the_hubs_key_init_and_its_marker_is_picked_up_by_the_next_install(tmp_path, monkeypatch):
+    monkeypatch.setitem(CURRENT, "hub", 1)
     ctx, out, err, calls = make(tmp_path)
     data = ctx.layout.data("hub")
     inner = ctx.run
@@ -652,6 +659,7 @@ def test_a_marker_refusal_after_the_stop_puts_the_old_part_back(tmp_path, monkey
 
 @pytest.mark.parametrize("part", PARTS)
 def test_a_lock_that_stays_held_leaves_the_old_part_stopped_and_says_so(tmp_path, monkeypatch, part):
+    monkeypatch.setitem(CURRENT, part, 1)  # exercise baseline-only adoption under a lock
     monkeypatch.setattr(icli, "MARKER_WAIT", 0.0)
     ctx, out, err, calls = make(tmp_path)
     assert install(ctx, out, err, part) == 0, err.getvalue()
@@ -720,7 +728,7 @@ def test_the_lock_is_held_for_the_whole_install_and_let_go_of_after_it(tmp_path)
 
     ctx.run, ctx.health = run, health
     assert install(ctx, out, err, "hub") == 0, err.getvalue()
-    assert read_format(ctx.layout.data("hub"), "hub") == 1
+    assert read_format(ctx.layout.data("hub"), "hub") == CURRENT["hub"]
     assert seen and set(seen.values()) == {"migrate.running"}, seen
     assert {"uv tool", "keys", "ready"} <= set(seen)
     os.close(update_lock_of(ctx))  # released again
@@ -976,7 +984,8 @@ def test_a_host_step_that_leaves_the_parts_alone_goes_through(host_root):
 
 def test_the_parts_snapshot_is_for_the_host_only(tmp_path):
     root = tmp_path / "hub"
-    init_root(root, "hub")
+    root.mkdir()
+    write_format(root, "hub", 1)
 
     def touch(ctx):  # a part root has no install/parts of its own to guard: nothing special happens
         (root / "install" / "parts").mkdir(parents=True)

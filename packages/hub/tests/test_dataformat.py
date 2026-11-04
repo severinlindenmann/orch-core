@@ -34,7 +34,7 @@ EXCLUSIVE = fcntl.LOCK_EX | fcntl.LOCK_NB
 @pytest.fixture
 def data(tmp_path):
     d = tmp_path / "data"
-    write_format(d)
+    write_format(d, fmt=1)
     return d
 
 
@@ -102,7 +102,7 @@ def test_a_lock_file_is_not_made_by_somebody_who_does_not_own_the_folder(data, m
 
 def test_adopt_moves_the_lock_to_the_descriptor_and_gives_the_old_one_up(data, tmp_path):
     other = tmp_path / "other"
-    write_format(other)
+    write_format(other, fmt=1)
     with open_data(data, "hub", 1, {}) as h:
         h.adopt(DF.lock_shared(other))
         assert lock_is_shared(other) and not lock_is_shared(data)
@@ -239,7 +239,7 @@ def test_a_pending_restore_refuses_before_anything_else(tmp_path):
     with pytest.raises(DataFormatError) as e:  # the folder itself is gone, as in the middle of a restore
         open_data(d, "hub", 1, {})
     assert e.value.code == "update.interrupted" and "your data is in 'hub.aside'" in str(e.value)
-    write_format(d)
+    write_format(d, fmt=1)
     assert code(d) == "update.interrupted"
     (side / "record.json").write_text("garbage")  # an unreadable record still refuses
     with pytest.raises(DataFormatError) as e:
@@ -310,11 +310,12 @@ def test_the_journal_is_looked_at_again_under_the_lock(data, monkeypatch):
 
 
 def test_hold_state_keeps_the_handle_and_gives_up_the_old_one(data, tmp_path):
+    write_format(data)
     other = tmp_path / "other"
     write_format(other)
     try:
         h = hubop.hold_state(data)
-        assert lock_is_shared(data) and h.format == hubop.DATA_FORMAT == 1 and hubop.DATA_KIND == "hub"
+        assert lock_is_shared(data) and h.format == hubop.DATA_FORMAT == 2 and hubop.DATA_KIND == "hub"
         hubop.hold_state(other)  # a second serve in this process (a test): the first is released
         assert not lock_is_shared(data) and lock_is_shared(other)
     finally:
@@ -338,7 +339,8 @@ def test_serve_refuses_a_state_without_format_json_before_any_database(tmp_path)
 
 def test_serve_refuses_older_data_and_the_command_says_to_run_orch_update(tmp_path, capsys, monkeypatch):
     state = tmp_path / "hub"
-    HubKeys.init(state)  # format 1 on disk
+    HubKeys.init(state)
+    write_format(state, fmt=1)  # older data on disk
     monkeypatch.setattr(hubop, "DATA_FORMAT", 2)  # this code is newer than the data
     rc = cli.main(["serve", "--state", str(state), "--listen", "127.0.0.1:0", "--publish-url", "http://x:1"])
     assert rc == 1
@@ -449,7 +451,7 @@ def test_every_state_command_refuses_under_an_exclusive_lock_an_old_format_and_a
     assert cli.main(cmd) == 1
     assert "run `orch update`" in capsys.readouterr().err
     monkeypatch.delenv("ORCH_UPDATE_JOURNAL")
-    monkeypatch.setattr(hubop, "DATA_FORMAT", 2)  # the code is newer than the data
+    monkeypatch.setattr(hubop, "DATA_FORMAT", 3)  # the code is newer than the data
     assert cli.main(cmd) == 1
     assert "run `orch update`" in capsys.readouterr().err
     assert {k: v for k, v in tree(state).items() if k != "format.lock"} == {

@@ -20,6 +20,7 @@ import secrets
 import sqlite3
 import stat
 from collections.abc import Callable, Iterable
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -51,7 +52,7 @@ __all__ = [
 ]
 
 #: the format number the code writes and reads, per root kind (baseline 1 at the 2.0.0 cut)
-CURRENT: dict[str, int] = {"host": 1, "workspace": 1, "hub": 1, "relay": 1, "publish": 1}
+CURRENT: dict[str, int] = {"host": 1, "workspace": 1, "hub": 2, "relay": 1, "publish": 1}
 KINDS = tuple(CURRENT)
 #: the root kinds that are the data dir of an installed part
 PART_KINDS = ("hub", "relay", "publish")
@@ -281,8 +282,7 @@ class Registry:
         return [s for s in self.steps if s.kind == kind and s.from_n >= at]
 
 
-#: the steps this build ships (none: format 1 is the baseline). Step modules (one per kind) are imported just above
-#: ``DEFAULT`` and call :func:`register`; ``DEFAULT`` is built, so contiguity checked, at import.
+#: The steps this build ships; DEFAULT checks contiguity at import.
 STEPS: list[Step] = []
 
 
@@ -290,5 +290,37 @@ def register(step: Step) -> Step:
     STEPS.append(step)
     return step
 
+
+def _hub_share_ended(ctx: StepContext) -> None:
+    path = ctx.path("shares.db")
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+    def create(conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS share_ended (
+                reader TEXT NOT NULL, ws TEXT NOT NULL, item_id TEXT NOT NULL, key TEXT NOT NULL,
+                title TEXT NOT NULL, by_user TEXT NOT NULL, at_ms INTEGER NOT NULL,
+                PRIMARY KEY(reader, ws, item_id)
+            )
+        """)
+
+    # shares.db has no schema-version counter; preserve it independently of format.json.
+    ctx.sqlite("shares.db", create, user_version=user_version)
+
+
+def _verify_hub_share_ended(root: Path) -> None:
+    path = root / "shares.db"
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
+        found = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='share_ended'").fetchone()
+    if not found:
+        raise OrchError("migrate.step_failed", "shares.db has no share_ended table")
+
+
+register(Step("hub", 1, 2, "share-ended", _hub_share_ended, _verify_hub_share_ended, writes=("shares.db",)))
 
 DEFAULT = Registry(STEPS)

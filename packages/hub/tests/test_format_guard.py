@@ -65,9 +65,9 @@ def test_update_refuses_a_changed_format_that_was_not_bumped(monkeypatch, tmp_pa
 
 
 def test_a_bumped_format_without_a_step_fails(monkeypatch, capsys):
-    edit(monkeypatch, STEPS, '"hub": 1', '"hub": 2')
+    edit(monkeypatch, STEPS, '"hub": 2', '"hub": 3')
     (problem,) = formats.check(KIND)
-    assert "no migration step hub 1→2 is registered" in problem
+    assert "no migration step hub 2→3 is registered" in problem
     assert formats.main(["--check", KIND]) == 1
     assert "no migration step" in capsys.readouterr().err
 
@@ -78,7 +78,7 @@ def test_a_bumped_format_with_its_step_asks_for_the_contract_update(monkeypatch)
     def read(rel):
         text = real(rel)
         if rel == STEPS:
-            text = text.replace('"hub": 1', '"hub": 2') + '\nregister(Step("hub", 1, 2, "x", f))\n'
+            text = text.replace('"hub": 2', '"hub": 3') + '\nregister(Step("hub", 2, 3, "x", f))\n'
         return text
 
     monkeypatch.setattr(formats, "read_source", read)

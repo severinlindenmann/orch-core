@@ -81,7 +81,7 @@ def hold_serve_lock(state: Path) -> int:
 
 
 DATA_KIND = "hub"
-DATA_FORMAT = 1  # the format of the hub state dir this code reads and writes (format.json "format")
+DATA_FORMAT = 2  # the format of the hub state dir this code reads and writes (format.json "format")
 _DATA: list[Handle] = []  # the handle of the serving process: the shared format lock lives as long as it is referenced
 
 

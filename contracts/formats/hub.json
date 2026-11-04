@@ -1,6 +1,6 @@
 {
-  "fingerprint": "08494beb97b405d8d8f64dafeb3a66604fdf1eac31eff6b2cc4ad34db57659e1",
-  "format": 1,
+  "fingerprint": "c8b13acb9ff4c921f95a2fd440101ae49f4e251b80ecf8a56b48f4a4edebda0c",
+  "format": 2,
   "kind": "hub",
   "sources": [
     "packages/hub/src/orch_hub/access/cli.py",

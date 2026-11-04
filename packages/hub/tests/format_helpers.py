@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 KIND = "hub"
-FORMAT = 1
+FORMAT = 2
 
 
 def write_format(state, kind: str = KIND, fmt: int = FORMAT, *, raw: bytes | None = None) -> Path:

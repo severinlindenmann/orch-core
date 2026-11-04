@@ -1,0 +1,285 @@
+# ruff: noqa: F811
+"""B08: durable, private withdrawal notices contain only key and title."""
+
+import sqlite3
+
+import pytest
+from conftest import NOW
+from shares_helpers import IT1, OWNER, audit_records, shub  # noqa: F401
+from test_shares_audience import BEN, CARL, access, ticket_body
+from webapi_helpers import WS_SEL, Web
+
+from orch_hub.activity import ActivityLog
+from orch_hub.backup import guard
+from orch_hub.contract import vectorgen as G
+from orch_hub.contract import vectorgen_p4 as V4
+from orch_hub.contract.phase4 import render_text
+from orch_hub.shares import ShareStore
+
+AUD = {"users": sorted([BEN, OWNER]), "groups": ["team-a"]}
+
+
+def test_revoke_persists_only_metadata_for_users_and_current_team_minus_owner(shub, tmp_path):
+    acc = access()
+    path = str(tmp_path / "shares.db")
+    h = shub(access=acc, store_path=path)
+    c = h.join()
+    content = {**V4.TICKET_CONTENT, "description": "PRIVATE DESCRIPTION"}
+    c.request("share_put", ticket_body(content=content, audience=AUD))
+    before = len(audit_records(h))
+    c.request("share_revoke", {"item_id": IT1})
+    assert len(audit_records(h)) == before + 1  # existing revoke only, no notice event
+    assert h.share_store.ended_for(OWNER) == []
+    for reader in (BEN, CARL):
+        assert h.share_store.ended_for(reader) == [
+            {
+                "workspace_id": G.WS_A,
+                "item_id": IT1,
+                "key": content["key"],
+                "title": content["title"],
+                "by": "Anna",
+                "at_ms": NOW,
+            }
+        ]
+    db = sqlite3.connect(path)
+    assert [r[1] for r in db.execute("PRAGMA table_info(share_ended)")] == [
+        "reader",
+        "ws",
+        "item_id",
+        "key",
+        "title",
+        "by_user",
+        "at_ms",
+    ]
+    assert "PRIVATE DESCRIPTION" not in repr(db.execute("SELECT * FROM share_ended").fetchall())
+    db.close()
+    reopened = ShareStore(path)
+    assert reopened.ended_for(BEN) == h.share_store.ended_for(BEN)
+    reopened.dismiss(BEN, G.WS_A, IT1)
+    assert not reopened.ended_for(BEN) and reopened.ended_for(CARL)
+    reopened.close()
+    acc.close()
+
+
+def test_replace_reshare_and_timer_retention(shub):
+    acc = access()
+    h = shub(access=acc)
+    c = h.join()
+    c.request("share_put", ticket_body(audience=AUD))
+    c.request("share_put", ticket_body(version=2, audience={"users": [], "groups": ["team-a"]}))
+    assert h.share_store.ended_for(BEN) and not h.share_store.ended_for(CARL)
+    c.request("share_put", ticket_body(version=3, audience=AUD))
+    assert not h.share_store.ended_for(BEN)
+    c.request("share_revoke", {"item_id": IT1})
+    h.svc._now = lambda: NOW + 30 * 86400000
+    h.svc.retry_pending()
+    assert h.share_store.ended_for(BEN)
+    h.svc._now = lambda: NOW + 30 * 86400000 + 1
+    h.svc.retry_pending()
+    assert not h.share_store.ended_for(BEN)
+    acc.close()
+
+
+def test_unbind_notices(shub):
+    acc = access()
+    h = shub(access=acc)
+    c = h.join()
+    c.request("share_put", ticket_body(audience=AUD))
+    c.request("binding_put", {"object": G.unbound(seq=1)})
+    assert h.share_store.ended_for(BEN)[0]["by"] == "Anna"
+    acc.close()
+
+
+def test_a_notice_that_cannot_be_written_never_holds_up_the_withdrawal():
+    store = ShareStore()
+    store.put("w", "i", b"sealed", 1, "hash", 0)
+    store._db.execute("CREATE TRIGGER fail_notice BEFORE INSERT ON share_ended BEGIN SELECT RAISE(ABORT, 'fail'); END")
+    assert store.revoke("w", "i", 1, ended=[("b", "w", "i", "key", "title", "Ann", 1)])
+    assert store.get("w", "i") is None  # the item is gone even though the notice failed
+    assert not store.ended_for("b")
+
+
+def test_purge_with_no_pin_deletes_and_writes_no_notice(shub):
+    acc = access()
+    h = shub(access=acc)
+    c = h.join()
+    c.request("share_put", ticket_body(audience=AUD))
+
+    def gone(ws):
+        from orch_hub.contract.hub import Refused
+
+        raise Refused("unknown_workspace")
+
+    h.svc._wsk = gone  # the workspace pin is gone
+    h.svc.purge(G.WS_A)
+    assert h.share_store.items(G.WS_A) == []
+    assert not h.share_store.ended_for(BEN)
+    acc.close()
+
+
+def test_a_disabled_reader_gets_no_notice(shub):
+    acc = access()
+    acc.set_disabled(BEN, True, actor=OWNER)
+    h = shub(access=acc)
+    c = h.join()
+    c.request("share_put", ticket_body(audience=AUD))
+    c.request("share_revoke", {"item_id": IT1})
+    assert not h.share_store.ended_for(BEN)
+    assert h.share_store.ended_for(CARL)
+    acc.close()
+
+
+def test_api_is_private_dismiss_is_scoped_and_csrf_protected(tmp_path):
+    w = Web(tmp_path)
+    try:
+        activity = w.api.d.activity = ActivityLog(":memory:")
+        ben = w.env.user("ben")
+        store = w.shares.store
+        with store._db:
+            now = int(w.api.d.now_ms())
+            store._write_ended([(u, WS_SEL, IT1, "PW-1", "<b>Invoice</b>", "ann", now) for u in (ben, w.ann)])
+        bt, at = w.login(ben), w.login(w.ann)
+        route = "/me/shared/ended/dismiss"
+        payload = {"workspace_id": WS_SEL, "item_id": IT1}
+        assert w.call("POST", route, payload)[0] == 401
+        assert w.call("POST", route, payload, token=bt, csrf=False)[0] == 403
+        admin_token = w.login(w.admin)
+        before = [w.call("GET", r, token=admin_token)[1] for r in ("/admin/activity", "/admin/audit")]
+        assert w.call("POST", route, payload, token=at)[0] == 200
+        assert w.call("GET", "/me/shared", token=at)[1]["ended"] == []
+        row = w.call("GET", "/me/shared", token=bt)[1]["ended"][0]
+        assert row["item_id"] == IT1 and row["title"] == render_text("<b>Invoice</b>")
+        assert w.call("POST", route, payload, token=bt)[0] == 200
+        assert w.call("GET", "/me/shared", token=bt)[1]["ended"] == []
+        after = [w.call("GET", r, token=admin_token)[1] for r in ("/admin/activity", "/admin/audit")]
+        assert after == before
+        activity.close()
+    finally:
+        w.close()
+
+
+def test_api_newest_first_max_twenty(tmp_path):
+    w = Web(tmp_path)
+    try:
+        with w.shares.store._db:
+            now = int(w.api.d.now_ms())
+            rows = [(w.ann, WS_SEL, f"{i:032x}", "PW-1", "Invoice", "ben", now - 100 + i) for i in range(25)]
+            rows.append(
+                (w.ann, WS_SEL, "f" * 32, "PW-9", "Old", "ben", now - 31 * 86_400_000)
+            )  # past 30 days: not served
+            w.shares.store._write_ended(rows)
+        ended = w.call("GET", "/me/shared", token=w.login(w.ann))[1]["ended"]
+        assert [r["at_ms"] for r in ended] == [now - 100 + i for i in range(24, 4, -1)]
+    finally:
+        w.close()
+
+
+def test_restore_notices_take_live_only_and_fresh_restore_clears_backup(tmp_path):
+    new, live = tmp_path / "new", tmp_path / "live"
+    for directory, reader in ((new, "old"), (live, "live")):
+        directory.mkdir()
+        store = ShareStore(str(directory / "shares.db"))
+        with store._db:
+            store._write_ended([(reader, "ws", "it", "key", "title", "Ann", 1)])
+        store.close()
+    guard.share_ended(new, live)
+    store = ShareStore(str(new / "shares.db"))
+    assert not store.ended_for("old") and store.ended_for("live")
+    store.close()
+    guard.share_ended(new, None)
+    store = ShareStore(str(new / "shares.db"))
+    assert not store.ended_for("old") and not store.ended_for("live")
+    store.close()
+
+
+@pytest.mark.parametrize("operation", ["revoke", "purge"])
+def test_reshare_between_withdrawal_and_notices(operation, monkeypatch):
+    store = ShareStore()
+    try:
+        store.put("w", "i", b"old", 1, "hash", 0)
+        store.put("w", "other", b"other", 1, "hash", 0)
+        notices = store._notices
+
+        def reshare_then_notice(rows, **kwargs):
+            # Deterministically interleave a put after the withdrawal commits.
+            monkeypatch.setattr(store, "_notices", notices)
+            store.put("w", "i", b"new", 2, "new-hash", 2, readers={"b"})
+            notices(rows, **kwargs)
+
+        monkeypatch.setattr(store, "_notices", reshare_then_notice)
+        rows = [("b", "w", "i", "key", "title", "Ann", 1)]
+        if operation == "revoke":
+            assert store.revoke("w", "i", 1, ended=rows)
+        else:
+            rows.append(("b", "w", "other", "other-key", "Other", "Ann", 1))
+            assert store.purge("w", 1, ended=rows) == 2
+        assert store.get("w", "i")[0] == b"new"
+        assert [r["item_id"] for r in store.ended_for("b")] == ([] if operation == "revoke" else ["other"])
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("operation", ["disable", "enable", "remove"])
+def test_access_lifecycle_clears_notices_for_all_callers(shub, operation):
+    acc = access()
+    h = shub(access=acc)  # the real ShareService installs the Access lifecycle hook
+    try:
+        if operation == "enable":
+            acc.set_disabled(BEN, True)
+        rows = [(u, "w", "i", "key", "title", "Ann", NOW) for u in (BEN, CARL)]
+        h.share_store._notices(rows)  # includes a late write during the disable window
+        if operation == "remove":
+            acc.remove_user(BEN)
+        else:
+            assert acc.set_disabled(BEN, operation == "disable")
+        assert h.share_store.ended_for(BEN) == []
+        assert h.share_store.ended_for(CARL)
+        if operation == "disable":
+            h.share_store._notices(rows)
+            assert not acc.set_disabled(BEN, True)  # retries also finish cleanup
+            assert h.share_store.ended_for(BEN) == []
+    finally:
+        acc.close()
+
+
+def test_web_enable_clears_notices_written_while_disabled(tmp_path):
+    from orch_hub.invites import Invites
+    from orch_hub.shares import ShareService
+
+    w = Web(tmp_path)
+    invites = Invites(now_ms=w.clock)
+    try:
+        # Web uses FakeShares; install the real service to exercise lifecycle registration.
+        w.api.d.shares = ShareService(w.shares.store, w.reg, hub_id=G.HUB_ID, hxk=None, dev_mode=True, access=w.env.acc)
+        w.api.d.user_invites = invites
+        token = w.login(w.admin)
+        rows = [(w.ann, WS_SEL, IT1, "key", "title", "Ben", w.clock())]
+        w.shares.store._notices(rows)
+        assert w.call("POST", f"/admin/users/{w.ann}/disable", token=token)[0] == 200
+        assert not w.shares.store.ended_for(w.ann)
+        w.shares.store._notices(rows)
+        assert w.shares.store.ended_for(w.ann)
+        assert w.call("POST", f"/admin/users/{w.ann}/enable", token=token)[0] == 200
+        assert w.env.acc.is_active(w.ann)
+        assert not w.shares.store.ended_for(w.ann)
+    finally:
+        invites.close()
+        w.close()
+
+
+def test_cli_user_remove_clears_persisted_notices(tmp_path, capsys):
+    from test_access_cli import run
+
+    from orch_hub.keys import HubKeys
+
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    reader = run(state, capsys, "users", "add", "Ben")["user_id"]
+    store = ShareStore(str(state / "shares.db"))
+    try:
+        store._notices([(reader, "w", "i", "key", "title", "Ann", NOW)])
+        assert store.ended_for(reader)
+        run(state, capsys, "users", "remove", reader)
+        assert store.ended_for(reader) == []
+    finally:
+        store.close()

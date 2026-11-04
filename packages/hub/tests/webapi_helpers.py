@@ -84,6 +84,9 @@ class FakeRegistry:
 
 class FakeShares:
     def __init__(self) -> None:
+        from orch_hub.shares import ShareStore
+
+        self.store = ShareStore()
         self.items: dict[tuple[str, str], list[dict]] = {}
 
     def list_shared(self, user_id, workspace_id):
@@ -193,6 +196,7 @@ class Web:
         self.changes.close()
         self.connections.close()
         self.seals.close()
+        self.shares.store.close()
         self.env.close()
 
     def call(

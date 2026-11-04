@@ -704,7 +704,7 @@ def test_the_server_command_opens_the_state_by_the_format_rule(w, tmp_path, monk
     f = tmp_path / "x.orchbak"
     f.write_bytes(data)
     before = _tree(w.state)
-    write_format(w.state, fmt=2)  # newer than this code
+    write_format(w.state, fmt=3)  # newer than this code
     assert _cli(w, f, words=words) == 1
     assert "newer orch" in capsys.readouterr().err
     assert {k: v for k, v in _tree(w.state).items() if k != "format.json"} == {
@@ -739,11 +739,11 @@ def test_the_backup_records_its_data_format_and_a_restore_writes_that_format(w, 
     files = {f["path"]: f for f in B.read_header(data, dev_mode=True, live=None)[1]["files"]}
     assert "format.json" in files  # sealed and hashed like every other file
     _restore(w, data, words, actor=w.admin)
-    assert _format_of(w.state) == {"orch": "hub", "format": 1}
+    assert _format_of(w.state) == {"orch": "hub", "format": 2}
     assert (w.state / "format.json").stat().st_mode & 0o777 == 0o600
     fresh = tmp_path / "srv" / "data"
     RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
-    assert _format_of(fresh) == {"orch": "hub", "format": 1}
+    assert _format_of(fresh) == {"orch": "hub", "format": 2}
     assert (fresh / "format.json").stat().st_mode & 0o777 == 0o600
 
 
@@ -753,6 +753,7 @@ def test_an_older_backup_opens_as_format_older_after_an_update_and_a_restore(w, 
     from orch_hub.backup.hubop import open_state
     from orch_hub.dataformat import DataFormatError
 
+    write_format(w.state, fmt=1)
     words, data = _backup(w)  # taken at format 1
     _newer_code(monkeypatch)  # `orch update`: the code and the live data are at format 2 now
     write_format(w.state, fmt=2)
@@ -777,9 +778,9 @@ def test_an_older_backup_opens_as_format_older_after_an_update_and_a_restore(w, 
 def test_a_backup_of_a_newer_format_is_refused_before_anything_is_written(w, tmp_path):
     from format_helpers import write_format
 
-    write_format(w.state, fmt=2)  # a newer orch made this state (its backup says so)
+    write_format(w.state, fmt=3)  # a newer orch made this state (its backup says so)
     words, data = _backup(w)
-    write_format(w.state)  # the live hub is at format 1
+    write_format(w.state)  # the live hub is at format 2
     before = _tree(w.state)
     with pytest.raises(RS.RestoreError) as e:
         _restore(w, data, words, actor=w.admin)
@@ -932,6 +933,7 @@ def test_a_running_hub_is_not_restored_in_place_from_an_older_backup(w, monkeypa
 
     from orch_hub.backup.hubop import hold_state, release_state
 
+    write_format(w.state, fmt=1)
     words, data = _backup(w)  # format 1
     _newer_code(monkeypatch)  # `orch update`: the code and the live data are at format 2
     write_format(w.state, fmt=2)
@@ -1800,3 +1802,28 @@ def test_a_fresh_server_gets_company_login_from_the_backup_but_switched_off(w, t
         st.close()
     for f in ("oidc.json", "oidc.secret", "oidc.key", "oidc.db"):
         assert (fresh / f).stat().st_mode & 0o177 == 0, f
+
+
+def test_b08_restore_keeps_live_notices_and_fresh_restore_never_revives_them(w, tmp_path):
+    from orch_hub.shares import ShareStore
+
+    path = str(w.state / "shares.db")
+    store = ShareStore(path)
+    with store._db:
+        store._write_ended([(w.ann, WS, "old", "PW-1", "Old title", "Ben", 1)])
+    store.close()
+    words, data = _backup(w)
+    store = ShareStore(path)
+    store.dismiss(w.ann, WS, "old")
+    with store._db:
+        store._write_ended([(w.ann, WS, "live", "PW-2", "Live title", "Ben", 2)])
+    store.close()
+    _restore(w, data, words)
+    store = ShareStore(path)
+    assert [r["item_id"] for r in store.ended_for(w.ann)] == ["live"]
+    store.close()
+    fresh = tmp_path / "fresh-b08"
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=w.clock)
+    store = ShareStore(str(fresh / "shares.db"))
+    assert store.ended_for(w.ann) == []
+    store.close()

@@ -92,7 +92,16 @@ def run(args: argparse.Namespace, out=None) -> int:
         require_state_owner(state)
         acc = Access(str(state / ACCESS_FILE))
         log = None
+        shares = None
         try:
+            if args.group == "users" and args.cmd == "remove" and (state / "shares.db").exists():
+                try:  # B08: a nicety; a shares.db that cannot be opened never blocks the removal
+                    from ..shares import ShareStore
+
+                    shares = ShareStore(str(state / "shares.db"))
+                    acc.forget_reader = shares.forget_reader
+                except Exception:  # noqa: BLE001
+                    shares = None
             if args.group in ("users", "groups", "grants"):  # D4: grant and membership changes go into the audit chain
                 from ..audit import open_log
 
@@ -101,6 +110,8 @@ def run(args: argparse.Namespace, out=None) -> int:
             res = _dispatch(args, state, acc)
         finally:
             acc.close()
+            if shares is not None:
+                shares.close()
             if log is not None:
                 log.store.close()
     except (AccessError, KeysError, ChannelError) as e:

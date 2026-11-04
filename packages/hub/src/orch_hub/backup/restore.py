@@ -534,6 +534,7 @@ def _restore(
         _write_meta(new, meta)
         admins, removed = _merge_people(new, state if in_place else None, now)
         G.never_widen(new, state if in_place else None)  # one rule for every table: never widen, never revive
+        G.share_ended(new, state if in_place else None)
         G.credentials(new, state if in_place else None)
         G.oidc_off(new, in_place)
         recovery = G.recovery_links(new, admins, now_ms) if not in_place else {}

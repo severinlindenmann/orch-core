@@ -20,12 +20,13 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from typing import Any
 
 from ..contract.canon import unb64u
 from ..contract.hub import Refused
 from .open import check_put, open_shared_item
-from .store import ShareStore
+from .store import ENDED_KEEP_MS, ShareStore
 
 _log = logging.getLogger("orch_hub.shares")
 
@@ -50,6 +51,8 @@ class ShareService:
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._on_change = on_change
         self._access = access  # the hub's Access (P02): resolves a signed audience; None: owner alias only
+        if access is not None:
+            access.forget_reader = store.forget_reader
         self._pending: set[str] = (
             set()
         )  # workspaces whose purge failed (audit down): retried at the next sync/reconcile
@@ -137,7 +140,10 @@ class ShareService:
                     "item_hash": r["hash"],
                 }
             )
-            self.store.put(ws, item_id, unb64u(body["sealed"]), version, r["hash"], self._now())
+            now = self._now()
+            readers = self._readers(ws, r["item"])
+            ended = self._ended_rows(ws, now, item_id, readers)
+            self.store.put(ws, item_id, unb64u(body["sealed"]), version, r["hash"], now, ended=ended, readers=readers)
         return {}
 
     def revoke(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -156,7 +162,8 @@ class ShareService:
                     "item_hash": None,
                 }
             )
-            self.store.revoke(ws, item_id, self._now())
+            now = self._now()
+            self.store.revoke(ws, item_id, now, ended=self._ended_rows(ws, now, item_id))
         return {}
 
     def purge(self, ws: str) -> None:
@@ -177,7 +184,8 @@ class ShareService:
                     "count": n,
                 }
             )
-            self.store.purge(ws, self._now())
+            now = self._now()
+            self.store.purge(ws, now, ended=self._ended_rows(ws, now))
 
     def sync(self, ws: str) -> None:
         """Items belong to a live bound workspace (selective or full) only: any other state deletes them. The caller holds
@@ -204,9 +212,57 @@ class ShareService:
 
     def retry_pending(self) -> None:
         """Timer tick (D9-1): retry the purge of every workspace still pending, so stale items do not outlive the sink."""
+        self.store.prune(self._now() - ENDED_KEEP_MS)
         with self._reg.lock:
             for ws in sorted(self._pending | self.store.pending()):
                 self.sync(ws)
+
+    def _readers(self, ws: str, item: dict[str, Any]) -> set[str]:
+        """B08: exactly the people who could read this item now (``audience_reads``: active users only), minus the owner.
+        Never raises: a lookup error yields nobody."""
+        aud = item.get("audience")
+        if self._access is None or type(aud) is not dict or item.get("item_kind") != "ticket":
+            return set()
+        try:
+            candidates = set(aud["users"])
+            for group in aud["groups"]:
+                candidates.update(self._access.members(group))
+            owner = self._reg.owner_alias(ws)
+        except Exception:  # noqa: BLE001 - a notice is a nicety: never block the change it follows
+            return set()
+        return {u for u in candidates if u != owner and self.audience_reads(u, item)}
+
+    def _ended_rows(
+        self, ws: str, now: int, item_id: str | None = None, readers: AbstractSet[str] = frozenset()
+    ) -> list[tuple]:
+        """B08 notices for a withdrawal. Best effort: a workspace whose pin is gone, an item that no longer opens or any
+        other failure yields no notices (logged as a count only) and never stops the revoke or purge it goes with."""
+        rows: list[dict[str, Any]] = []
+        try:
+            rows = self.store.items(ws)
+            if item_id is not None:
+                rows = [r for r in rows if r["item_id"] == item_id]
+            if not rows:
+                return []
+            owner = self._reg.owner_alias(ws)
+            people = {u["user_id"]: u["name"] for u in self._access.users()} if self._access else {}
+            by = people.get(owner) or "The owner"
+            opened = self._open_all(ws, rows)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("withdrawal notices skipped for %d item(s) (%s)", len(rows), type(e).__name__)
+            return []
+        ended = []
+        for row in opened:
+            try:
+                item = row["item"]
+                content = item.get("content") or {}
+                key = content.get("key") if type(content.get("key")) is str else ""
+                title = content.get("title") if type(content.get("title")) is str else ""
+                for reader in sorted(self._readers(ws, item) - readers):
+                    ended.append((reader, ws, row["item_id"], key, title or key or "a ticket", by, now))
+            except Exception:  # noqa: BLE001
+                _log.warning("a withdrawal notice was skipped")
+        return ended
 
     # --- read API (D13: the hub web view and the phone) -----------------------------------------------------------
 

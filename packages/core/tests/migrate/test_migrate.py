@@ -161,9 +161,9 @@ def test_open_is_refused_while_migrate_holds_the_lock(root, env):
 # ------------------------------------------------------------------------------------------------- registry
 
 
-def test_the_shipped_registry_is_contiguous_and_at_the_baseline():
+def test_the_shipped_registry_is_contiguous():
     DEFAULT.check()
-    assert DEFAULT.current == {"host": 1, "workspace": 1, "hub": 1, "relay": 1, "publish": 1}
+    assert DEFAULT.current == {"host": 1, "workspace": 1, "hub": 2, "relay": 1, "publish": 1}
 
 
 @pytest.mark.parametrize(

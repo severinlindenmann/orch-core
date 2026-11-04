@@ -39,10 +39,10 @@ def test_a_granted_person_sees_who_shared_it_and_the_owner_sees_with_whom(w):
 
 def test_everyone_else_gets_nothing_not_even_an_error(w):
     carl = w.env.user("carl")
-    assert get(w, carl, "?workspace_id=" + WS_SEL)[:2] == (200, {"items": []})
-    assert get(w, w.admin)[:2] == (200, {"items": []})  # a hub admin has no part by role
-    assert get(w, w.ben, "?workspace_id=" + WS)[:2] == (200, {"items": []})  # a full-mode workspace
-    assert get(w, w.ben, "?workspace_id=" + "ee" * 16)[:2] == (200, {"items": []})  # unknown
+    assert get(w, carl, "?workspace_id=" + WS_SEL)[:2] == (200, {"items": [], "ended": []})
+    assert get(w, w.admin)[:2] == (200, {"items": [], "ended": []})  # a hub admin has no part by role
+    assert get(w, w.ben, "?workspace_id=" + WS)[:2] == (200, {"items": [], "ended": []})  # a full-mode workspace
+    assert get(w, w.ben, "?workspace_id=" + "ee" * 16)[:2] == (200, {"items": [], "ended": []})  # unknown
 
 
 def test_a_full_mode_workspace_lists_its_shared_tickets_to_the_named_reader_only(w):
@@ -51,8 +51,11 @@ def test_a_full_mode_workspace_lists_its_shared_tickets_to_the_named_reader_only
     w.shares.items[(w.ben, WS)] = [item]
     s, o, _ = get(w, w.ben, "?workspace_id=" + WS)
     assert s == 200 and [(i["title"], i["mode"]) for i in o["items"]] == [("Full-mode ticket", "full")]
-    assert get(w, w.admin, "?workspace_id=" + WS)[:2] == (200, {"items": []})  # a hub admin has no part by role
-    assert get(w, w.env.user("carl"), "?workspace_id=" + WS)[:2] == (200, {"items": []})
+    assert get(w, w.admin, "?workspace_id=" + WS)[:2] == (
+        200,
+        {"items": [], "ended": []},
+    )  # a hub admin has no part by role
+    assert get(w, w.env.user("carl"), "?workspace_id=" + WS)[:2] == (200, {"items": [], "ended": []})
 
 
 def test_malformed_workspace_and_no_session(w):
@@ -77,4 +80,4 @@ def test_p03_description_and_status_reach_the_reader_only_when_the_content_carri
     item["content"]["status"] = "open"
     row = get(w, w.ben)[1]["items"][0]
     assert row["status"] == "open" and "CSV" in row["description"]
-    assert get(w, w.admin)[1] == {"items": []}  # nothing widened
+    assert get(w, w.admin)[1] == {"items": [], "ended": []}  # nothing widened

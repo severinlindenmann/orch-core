@@ -76,6 +76,14 @@ def test_an_agent_or_a_session_is_refused_before_anything(offline, argv, env):
     assert code == 3 and out.startswith("error op.not_allowed")
 
 
+def test_w29_an_agent_rotating_keys_is_told_about_keys_not_hubs(offline):
+    code, out = run(["rotate"], {"ORCH_SESSION": "s.1"})
+    assert code == 3 and out.startswith("error op.not_allowed")
+    assert "rotates the workspace key" in out and "hub" not in out.splitlines()[0]
+    code, out = run(["leave"], {"ORCH_SESSION": "s.1"})
+    assert "joins or leaves a hub" in out
+
+
 def test_the_refusal_in_json(offline):
     code, out = run(["leave"], {"ORCH_GRANT": "gr_x"}, as_json=True)
     assert code == 3 and json.loads(out)["code"] == "op.not_allowed"

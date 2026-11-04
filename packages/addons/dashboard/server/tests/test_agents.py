@@ -365,3 +365,19 @@ def test_start_after_request_discards_browser_launch_values(client, token, stub,
     )
     assert res.status_code == 200, res.text
     assert host.calls == [("agent.start", {"after_request": request}, True, "a_" + request[3:])]
+
+
+def test_run_adapter_passes_the_stop_reason_of_a_run_that_did_not_start():
+    from orch_dashboard.adapters import runs
+
+    row = {
+        "run": "r_" + "0" * 26,
+        "stop_cause": "program_not_found",
+        "stop_message": "The agent program could not be started: claude was not found.",
+        "stop_hint": "Ask the person who set up this computer to check the installation.",
+        "exit": None,
+    }
+    out = runs.run(row)
+    assert out["stop_cause"] == "program_not_found" and out["stop_message"].endswith("was not found.")
+    assert out["stop_hint"].startswith("Ask the person")
+    assert "stop_cause" not in runs.run({"run": row["run"], "stop_cause": "x‮"})

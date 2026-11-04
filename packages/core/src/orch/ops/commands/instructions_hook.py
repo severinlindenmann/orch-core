@@ -111,7 +111,6 @@ def _stop(ctx: Context, ws: Any, args: dict[str, Any]) -> Result:
         doc = json.loads(c.read_file_capped(src, 1 << 16))
         if not isinstance(doc, dict) or type(doc.get("stop_hook_active")) is not bool:
             return _silent("stop")  # a shape we do not know: let the agent stop
-        active = doc["stop_hook_active"]
         for v in c.mine():
             if any(not q.answered and q.blocking for q in v.questions):
                 continue  # it waits for the person, on purpose

@@ -2182,9 +2182,9 @@ test('P13: Review names the project folder, keeps the full path behind Details, 
   await toReview(api)
   const folder = screen.getByTestId('review-folder')
   expect(folder).toHaveTextContent('Project folder: orch-run2-a')
-  expect(folder).toHaveTextContent('Existing files stay untouched.')
+  expect(folder).toHaveTextContent('Your existing files stay as they are; setup only adds orch’s settings and a few lines to AGENTS.md, CLAUDE.md and .gitignore.')
   expect(folder).toHaveTextContent('Agents work in separate work copies.')
-  expect(folder).toHaveTextContent('Setup also creates orch’s settings.')
+  expect(folder).not.toHaveTextContent('untouched')
   expect(folder).not.toHaveTextContent('/demo/')
   const fold = document.querySelector('.review-technical') as HTMLElement
   expect(within(fold).getByTestId('review-folder-path')).toHaveTextContent('Full project folder path: /demo/orch-run2-a')

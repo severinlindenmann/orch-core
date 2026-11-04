@@ -1371,7 +1371,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <div className="review-folder" data-testid="review-folder">
                   <p>Project folder: <strong><Inline>{review.workspace.dir.split('/').filter(Boolean).pop() || state.dir_name || 'your project folder'}</Inline></strong></p>
                   <p>
-                    Existing files stay untouched.{review.items.some((i) => i.id === 'addon:worktrees') ? ' Agents work in separate work copies.' : ''} Setup also creates orch’s settings.
+                    Your existing files stay as they are; setup only adds orch’s settings and a few lines to AGENTS.md, CLAUDE.md and .gitignore.{review.items.some((i) => i.id === 'addon:worktrees') ? ' Agents work in separate work copies.' : ''}
                   </p>
                 </div>
               )}

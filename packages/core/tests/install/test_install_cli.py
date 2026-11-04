@@ -97,7 +97,11 @@ def make(home, **kw):
     return ctx, out, err, calls
 
 
-def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home):
+def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home, monkeypatch):
+    from orch.ops import workspace_init as wi
+
+    shown = []
+    monkeypatch.setattr(wi.TERMINAL, "show", shown.append)
     ctx, out, err, calls = make(home)
     rc = cli.main(
         ["hub", "--address", "100.64.1.2", "--publish-url", "http://100.64.1.2:8102"],
@@ -108,8 +112,11 @@ def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home
     )
     assert rc == 0, err.getvalue()
     text = out.getvalue()
-    assert "http://100.64.1.2:8100/#setup=TOKEN" in text and "100.64.1.2:8105" in text
-    assert (ctx.layout.data("hub") / "setup-token").read_text() == "TOKEN\n"
+    assert "#setup=" not in text + err.getvalue()
+    assert "http://100.64.1.2:8100/#setup=TOKEN" in "".join(shown)
+    assert "100.64.1.2:8105" in text
+    assert "setup_token" not in load(ctx.layout)["parts"]["hub"]
+    assert json.loads((ctx.layout.data("hub") / "setup-token").read_text())["token"] == "TOKEN"
     install = next(c for c in calls if c[:3] == ["uv", "tool", "install"])
     assert (
         install[-1] == "git+https://github.com/severinlindenmann/orch-core@" + "a" * 40 + "#subdirectory=packages/hub"
@@ -119,7 +126,9 @@ def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home
     assert argv[argv.index("--web-listen") + 1] == "100.64.1.2:8100"
     assert "--dev-shared-machine" not in argv  # only with --dev
     assert any(c[1] == "keys" and "init" in c and "--real" in c for c in calls)  # no --dev: a real hub
-    assert "--bind-all" in argv and "127.0.0.1:8100/#setup=TOKEN" in text  # every interface; loopback line printed
+    assert "--bind-all" in argv and "127.0.0.1:8100/#setup=TOKEN" in "".join(
+        shown
+    )  # every interface; loopback line printed
     st = load(ctx.layout)
     assert st["parts"]["hub"]["port"] == 8100 and st["parts"]["hub"]["version"] == "0.1.0"
     assert str(home) in str(ctx.layout.root)  # state under the temp HOME, never the real config
@@ -602,3 +611,70 @@ def test_the_real_orch_hub_card_is_accepted(tmp_path, capsys):
 def test_run_stdout_drops_stderr():
     rc, out = cli._run_stdout(["sh", "-c", "echo noise >&2; echo '{}'"])
     assert (rc, out) == (0, "{}\n")
+
+
+def test_new_admin_code_and_no_terminal(home, monkeypatch):
+    import sqlite3
+
+    from orch.custody import NoPrompt
+    from orch.ops import workspace_init as wi
+
+    def unavailable(text):
+        raise NoPrompt("no terminal")
+
+    monkeypatch.setattr(wi.TERMINAL, "show", unavailable)
+    ctx, out, err, calls = make(home)
+
+    def run(args):
+        return cli.main(args, env=ctx.env, out=out, err=err, ctx=ctx)
+
+    assert run(["hub", "--address", "127.0.0.1"]) == 0
+    f = ctx.layout.data("hub") / "setup-token"
+    ctx.token = lambda: "NEW"
+    original = f.read_text()
+    assert run(["hub", "--address", "127.0.0.1"]) == 0
+    assert f.read_text() == original  # reruns reuse the file, never install state
+    f.write_text("expired plain text")
+    assert run(["hub", "--address", "127.0.0.1"]) == 0
+    assert json.loads(f.read_text())["token"] == "NEW"
+    ctx.token = lambda: "RENEWED"
+    before = len(calls)
+    assert run(["hub", "--new-admin-code"]) == 0
+    assert len(calls) == before
+    assert json.loads(f.read_text())["token"] == "RENEWED"
+    assert f.stat().st_mode & 0o777 == 0o600
+    assert "#setup=" not in out.getvalue() + err.getvalue()
+    assert (
+        "the first-admin link is shown only on a terminal: run `orch install hub --new-admin-code` "
+        "on this server in a terminal" in out.getvalue()
+    )
+    with sqlite3.connect(ctx.layout.data("hub") / "access.db") as db:
+        db.execute("CREATE TABLE members (grp TEXT, user_id TEXT)")
+        db.execute("INSERT INTO members VALUES ('hub-admin', 'admin')")
+    old = f.read_text()
+    assert run(["server", "--role", "hub", "--new-admin-code"]) == 1
+    assert "already has an admin" in err.getvalue()
+    assert f.read_text() == old
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_health_first_admin(home, expired):
+    from orch.install import ops
+
+    f = home / "setup-token"
+    f.write_text(json.dumps({"token": "SECRET", "issued_ms": 1 if expired else 100000000}))
+    report = ops.run_health(
+        {"setup_token_file": str(f)},
+        http=lambda _: None,
+        ntp=lambda: True,
+        mem_mb=lambda: 1000,
+        disk_free_gb=lambda _: 10,
+        now=lambda: 100001,
+    )
+    assert not report["ok"]
+    assert (
+        "the hub has no admin yet: open the first-admin link from `orch install hub --new-admin-code`"
+        in report["problems"][0]
+    )
+    assert ("expired" in report["problems"][0]) == expired
+    assert "SECRET" not in str(report)

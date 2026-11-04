@@ -9,6 +9,15 @@ from pathlib import Path
 import pytest
 
 from orch import _build
+from tests.cli.conftest import run_cli
+
+
+@pytest.fixture
+def cli():
+    """Its own fixture: with some prepush target selections the directory's conftest fixture was not found under xdist
+    ("fixture 'cli' not found", on develop too); importing run_cli makes the test independent of collection order."""
+    return run_cli
+
 
 STAMP_PY = Path(__file__).resolve().parents[4] / "scripts" / "release" / "stamp.py"
 

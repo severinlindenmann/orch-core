@@ -97,6 +97,8 @@ def _ops(
         "min_mem_mb": ops.MIN_MEM_MB,
         "update_record": str(_update_record(ctx)),
     }
+    if role == "hub":
+        cfg["setup_token_file"] = str(lay.data("hub") / "setup-token")
     if role == "hub" and backup_drop:
         cfg |= {"backup_drop": backup_drop, "backup_record": str(ops_dir / "backup-copied.json")}
     cfg_file = ops_dir / "health.json"

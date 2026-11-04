@@ -1208,7 +1208,7 @@ def test_only_changes_writes_membership_and_grants():
 
 def test_setup_refuses_once_an_admin_exists(w, tmp_path):
     token_file = tmp_path / "setup-token"
-    token_file.write_text("tok-123\n")
+    token_file.write_text(json.dumps({"token": "tok-123", "issued_ms": w.api.d.now_ms()}))
     w.api.d.setup_token_file = token_file  # a leftover token file with an admin already present
     s, o, _ = w.call("POST", "/setup", {"token": "tok-123", "name": "mallory", "password": "x" * 14})
     assert (s, o) == (403, {"error": "not_allowed"})

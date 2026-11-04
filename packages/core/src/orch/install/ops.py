@@ -179,6 +179,16 @@ def run_health(
 ) -> dict[str, Any]:
     """The checks of one run: ``{"ts", "ok", "problems": [...]}`` (plain sentences)."""
     problems: list[str] = []
+    if cfg.get("setup_token_file"):
+        from .admin_code import has_admin, read_code
+
+        path = Path(cfg["setup_token_file"])
+        # a file left behind on a hub that has its admin is not "no admin yet" (#1837 review)
+        if path.exists() and not has_admin(path.parent):
+            warning = "the hub has no admin yet: open the first-admin link from `orch install hub --new-admin-code`"
+            if read_code(path, int(now() * 1000)) is None:
+                warning += " (the first-admin link has expired)"
+            problems.append(warning)
     for p in cfg.get("parts", []):
         why = http(p["url"])
         if why:

@@ -280,7 +280,11 @@ def test_dns_not_ready_skips_tls_for_that_part_only(tmp_path):
     assert plan.tls_parts == ["publish"]
 
 
-def test_hub_role_binds_the_vpn_ip_and_the_card_advertises_it(tmp_path):
+def test_hub_role_binds_the_vpn_ip_and_the_card_advertises_it(tmp_path, monkeypatch):
+    from orch.ops import workspace_init as wi
+
+    shown = []
+    monkeypatch.setattr(wi.TERMINAL, "show", shown.append)
     root = tmp_path / "orch.d"
     caddy = root / "orch-hub"
     caddy.mkdir(parents=True)
@@ -307,7 +311,10 @@ def test_hub_role_binds_the_vpn_ip_and_the_card_advertises_it(tmp_path):
     card = json.loads((ctx.layout.data("hub") / "hub-settings.json").read_text())
     assert card["addresses"][0] == {"kind": "private", "web": "https://hub.example.com:443", "link": f"{VPN}:8105"}
     assert "not remote_ip 100.64.0.0/16" in (caddy / "hub.caddy").read_text()
-    assert "https://hub.example.com/#setup=TOKEN" in out.getvalue()
+    assert "https://hub.example.com/#setup=TOKEN" in "".join(shown)
+    assert "#setup=" not in out.getvalue() + err.getvalue()
+    cfg = json.loads((ctx.layout.root / "ops" / "health.json").read_text())
+    assert cfg["setup_token_file"] == str(ctx.layout.data("hub") / "setup-token")
     assert f"resolve hub.example.com to {VPN}" in out.getvalue()
     import re
 

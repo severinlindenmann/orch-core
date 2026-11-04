@@ -29,6 +29,7 @@ from orch.update.layout import InstallLayout as UpdateLayout
 from orch.wsproto import wire
 from orch.wsproto.localdial import dial_host
 
+from . import admin_code
 from . import parts as P
 from .helper import remove_helper, sync_helper, wait_for_socket
 from .parts import InstallError
@@ -46,6 +47,7 @@ USAGE = (
     "                    [--backup-drop DIR]\n"
     "                    [--publish-url U | --no-publish-url] [--relay-url U | --no-relay-url]\n"
     "                    [--port-base N] [--yes]\n"
+    "usage: orch install hub --new-admin-code (also server --role hub --new-admin-code)\n"
     "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
     "                    [--publish-url U] [--relay-url U] [--port-base N] [--dev] [--yes]\n"
@@ -480,13 +482,13 @@ def refuse_unfinished_update(ctx: Ctx) -> None:
         raise InstallError("an update was interrupted: run `orch update` to finish or roll back")
 
 
-def serialized_with_update(fn: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+def serialized_with_update(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Run an install under the update engine's own lock (``<data>/update.lock``): an install and an update never run
     together. The lock is taken before the unfinished-update check and held until the install is done (so, until after
     the part's ``format.json`` is written). A running update makes the install refuse before it touches anything."""
 
     @functools.wraps(fn)
-    def wrapper(ctx: Ctx, part: str, **kw: Any) -> dict[str, Any]:
+    def wrapper(ctx: Ctx, *args: Any, **kw: Any) -> Any:
         try:
             fd = take_update_lock(UpdateLayout.of(ctx.env))
         except OrchError as exc:
@@ -495,7 +497,7 @@ def serialized_with_update(fn: Callable[..., dict[str, Any]]) -> Callable[..., d
             # held by `orch update` or by another install: the lock cannot tell which
             raise InstallError("an update or install is running: wait until it is done, then run this again") from exc
         try:
-            return fn(ctx, part, **kw)
+            return fn(ctx, *args, **kw)
         finally:
             os.close(fd)
 
@@ -688,11 +690,11 @@ def install_part(
             # TODO(#1263): run the init in a staging dir, write the marker there, then rename it into place (a crash
             # between the init and the marker is only acceptable while the hub's CURRENT is the baseline)
             mark(data, born)
-        token = (st["parts"].get("hub") or {}).get("setup_token") or ctx.token()
-        if fresh:  # the hub's console reads this file once: the first-admin page consumes it
+        if not admin_code.has_admin(data):
             tf = data / "setup-token"
-            tf.write_text(token + "\n")
-            tf.chmod(0o600)
+            now_ms = int(time.time() * 1000)
+            if admin_code.read_code(tf, now_ms) is None:
+                admin_code.write_code(tf, ctx.token(), now_ms)
     mark(data, born)  # the hub is marked already (after its key init: that needs an empty folder)
     if part == "hub":
         write_hub_settings(
@@ -774,7 +776,6 @@ def install_part(
             rec["console_url"] = web_origin + "/"
         elif hub_name:
             rec["console_url"] = f"http://{hub_name}:{port}/"
-        rec["setup_token"] = token
     st = load(lay)
     st["address"], st["domain"] = address, domain or st.get("domain")
     if forget_hub_name and part == "hub":
@@ -836,13 +837,49 @@ def _version(ctx: Ctx, rec: dict[str, Any], name: str, env: Mapping[str, str]) -
             rec["version"] = line.split()[1].lstrip("v")
 
 
+def _show_admin_code(ctx: Ctx, rec: dict[str, Any]) -> None:
+    from orch.custody import NoPrompt
+    from orch.ops import workspace_init as wi
+
+    data = ctx.layout.data("hub")
+    if admin_code.has_admin(data):
+        return
+    token = admin_code.read_code(data / "setup-token", int(time.time() * 1000))
+    if token is None:
+        return
+    text = f"  first admin:  {hub_console_url(rec)}#setup={token}\n"
+    if rec["bind"] != P.ADDRESS_LOOPBACK:
+        text += f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}/#setup={token}\n"
+    try:
+        wi.TERMINAL.show(text)
+    except (NoPrompt, OSError):
+        ctx.say(
+            "the first-admin link is shown only on a terminal: run `orch install hub --new-admin-code` "
+            "on this server in a terminal"
+        )
+
+
+@serialized_with_update
+def new_admin_code(ctx: Ctx) -> None:
+    refuse_unfinished_update(ctx)
+    st = load(ctx.layout)
+    rec = st["parts"].get("hub")
+    if rec is None:
+        raise InstallError("the hub is not installed: run `orch install hub` first")
+    data = ctx.layout.data("hub")
+    if admin_code.has_admin(data):
+        raise InstallError("the hub already has an admin; a first-admin code cannot be issued")
+    admin_code.write_code(data / "setup-token", ctx.token(), int(time.time() * 1000))
+    rec.pop("setup_token", None)
+    save(ctx.layout, st)
+    _show_admin_code(ctx, rec)
+
+
 def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
     ctx.say(f"installed {part} {rec['version']} at {rec['url']}  ({rec['runner']}: {rec['service']})")
     if part == "hub":
         ctx.say(f"  hub console:  {hub_console_url(rec)}")
-        ctx.say(f"  first admin:  {hub_console_url(rec)}#setup={rec['setup_token']}")
-        if rec["bind"] != P.ADDRESS_LOOPBACK:
-            ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}/#setup={rec['setup_token']}")
+        _show_admin_code(ctx, rec)
         ctx.say(f"  workspaces connect to the hub link at {rec.get('link_host') or rec['bind']}:{rec['link_port']}")
     if part != "hub" and rec["bind"] != P.ADDRESS_LOOPBACK:
         ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}")
@@ -1217,6 +1254,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--ref", default=None)
     p.add_argument("--publish-url")
     p.add_argument("--relay-url")
+    p.add_argument("--new-admin-code", action="store_true")
     p.add_argument("--dev", action="store_true")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
@@ -1251,6 +1289,11 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     try:
         if a.trust_hub is not None and a.cmd != "server":
             raise InstallError("--trust-hub belongs to --role edge")
+        if a.new_admin_code:
+            if a.rest or not (a.cmd == "hub" or (a.cmd == "server" and a.role == "hub")):
+                raise InstallError("--new-admin-code belongs to hub or server --role hub")
+            new_admin_code(ctx)
+            return 0
         if a.cmd == "status":
             return status(ctx, a.json)
         if a.cmd == "phone":

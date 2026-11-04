@@ -92,6 +92,8 @@ _GRP = r"[a-z0-9][a-z0-9-]{0,39}"
 _PARAM = {"change_id": r"[0-9A-Za-z]{26,32}"}
 
 #: wire code -> HTTP status. Anything not listed is answered as ``internal`` (500), never echoed.
+SETUP_CODE_LIFETIME_MS = 24 * 60 * 60 * 1000  # #1837: a first-admin code works for 24 h after it was issued
+
 STATUS = {
     "malformed": 400,
     "unknown_skill": 404,
@@ -129,6 +131,7 @@ STATUS = {
     "no_channel": 403,
     "no_session": 401,
     "bad_credentials": 401,
+    "setup_code_expired": 403,
     "unauthorized": 403,
     "bad_channel_proof": 403,
     "forbidden_role": 403,
@@ -844,6 +847,15 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
     def _fail(self, code: str) -> tuple[int, list[tuple[str, str]], bytes]:
         if code not in STATUS:
             code = "internal"
+        if code == "setup_code_expired":
+            return self._out(
+                STATUS[code],
+                {
+                    "error": code,
+                    "message": "This first-admin link has expired. Run orch install hub --new-admin-code on the server for a new one.",
+                },
+                [],
+            )
         return self.error(STATUS[code], code)
 
     def _handle(
@@ -1068,11 +1080,21 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         f = self.d.setup_token_file
         with self._plock:
             try:
-                want = f.read_text().strip() if f is not None else ""
+                raw = f.read_text() if f is not None else ""
             except OSError:
-                want = ""
+                raw = ""
+            try:
+                record = json.loads(raw) if raw else None
+            except ValueError:
+                record = None
+            want = record.get("token") if isinstance(record, dict) and isinstance(record.get("token"), str) else ""
+            # #1837: the token is compared FIRST. Only the holder of the right code learns that it expired; anyone else
+            # gets the same bad_credentials, so the answer never reveals whether an unclaimed (or expired) code exists.
             if not want or not hmac.compare_digest(want.encode(), b["token"].encode()):
                 raise ApiError("bad_credentials")  # a wrong token answers as before, whoever is (not) an admin
+            issued = record.get("issued_ms")
+            if type(issued) is not int or not 0 <= self.d.now_ms() - issued < SETUP_CODE_LIFETIME_MS:
+                raise ApiError("setup_code_expired")
             if self.d.access.members(ADMIN_GROUP):
                 raise ApiError("not_allowed")  # first admin only: a leftover token file never makes a second one
             check_name(b["name"])
@@ -1080,12 +1102,16 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
             uid = self.d.keys.issue_uk(None)["o"]["user_id"]
             self.d.access.add_user(uid, b["name"])
-            self.d.access.add_member(ADMIN_GROUP, uid)
             self.d.channels.set_password(uid, b["password"])
             t = self.d.channels.new_totp(uid)
-            # the admin exists by now: a failure here leaves the token file, but /setup answers not_allowed from then on
+            # #1837 review: the admin membership is the LAST step, so a failure above leaves no half-made admin that
+            # would lock /setup (not_allowed) for good; the code stays usable for another try
             s = self.d.channels.open_setup_session(uid)
-            f.unlink(missing_ok=True)  # single use
+            self.d.access.add_member(ADMIN_GROUP, uid)  # nothing after this can fail the answer (the unlink is guarded)
+            try:
+                f.unlink(missing_ok=True)  # single use
+            except OSError:
+                pass  # the admin exists: /setup answers not_allowed from now on; never lose the TOTP over this
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
         cookie = [self._session_cookie(s["token"], ttl)]
         return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}, cookie

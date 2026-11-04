@@ -16,6 +16,9 @@ import { HubStep } from '../host/HubStep'
 import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick } from './shared'
 import { ModeChoice } from './ModeChoice'
 
+/** W04: how long a "Paste from clipboard" press waits for the browser before it says to paste with the keyboard. */
+const CLIP_WAIT_MS = 2500
+
 export const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+)?(~[0-9a-f]{32})?$/
 
 /** The connect link the hub's /c page put in the address (`#connect=<link>`), or null. Only a full, well-formed connect link
@@ -60,7 +63,10 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [problem, setProblem] = useState('')
   const [signed, setSigned] = useState(false)
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
-  const [noCopied, setNoCopied] = useState(false)
+  // W04: what the last "Paste from clipboard" press came to: '' (nothing to say), reading (waiting for the browser), empty
+  // (nothing copied), notlink (copied text is not a connect link), blocked (the browser refused or never answered).
+  const [clipState, setClipState] = useState<'' | 'reading' | 'empty' | 'notlink' | 'blocked'>('')
+  const inputRef = useRef<HTMLInputElement>(null)
   const link = text.trim()
   const info = found && found.link === link ? found.info : null
   const textRef = useRef(text)
@@ -72,13 +78,20 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const canRead = typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function'
   // `auto`: no click was made (permission was already granted): the link only fills the field and names its host; the lookup
   // (an outbound call) waits for "Look up this hub", exactly like a link that came in the address.
+  // W04: a press always answers. The browser may hold the read on a permission prompt that never resolves (or refuse it):
+  // after CLIP_WAIT_MS the person is told to paste with the keyboard, and the cursor is put in the field for that.
   const useCopied = async (auto = false) => {
-    setNoCopied(false)
+    if (!auto) setClipState('reading')
+    const blocked = () => { setClipState('blocked'); inputRef.current?.focus() }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<'late'>(resolve => { timer = setTimeout(() => resolve('late'), CLIP_WAIT_MS) })
     try {
-      const got = ((await navigator.clipboard.readText()) ?? '').trim()
+      const raw = await Promise.race([navigator.clipboard.readText(), late])
+      if (raw === 'late') { if (!auto) blocked(); return }
+      const got = (raw ?? '').trim()
       if (auto && textRef.current.trim()) return // the person typed or pasted meanwhile: never replace it
-      if (LINK.test(got)) { setText(got); setArmed(!auto) } else if (!auto) setNoCopied(true)
-    } catch { if (!auto) setNoCopied(true) }
+      if (LINK.test(got)) { setText(got); setArmed(!auto); setClipState('') } else if (!auto) setClipState(got ? 'notlink' : 'empty')
+    } catch { if (!auto) blocked() } finally { clearTimeout(timer) }
   }
 
   // Run 15 P04: when the browser already lets this page read the clipboard, a copied connect link is picked up at once (same
@@ -124,11 +137,13 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
       <div data-testid="hub-link-paste" className="space-y-1">
         <label htmlFor="hub-link-text" className="block text-sm text-text-muted">Paste the connect link from your hub admin</label>
         <div className="flex gap-2">
-          <input id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false}
+          <input ref={inputRef} id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => { setText(e.target.value); setArmed(true); setClipState('') }} autoComplete="off" spellCheck={false}
             className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-bg px-3 font-mono text-xs" />
           {canRead && <Action id="hub-link-use-copied" onClick={() => { void useCopied() }}>Paste from clipboard</Action>}
         </div>
-        {noCopied && <p role="status" data-testid="hub-link-nocopied" className="text-sm text-text-muted">Copy the link in the hub first.</p>}
+        {clipState === 'reading' && <p role="status" data-testid="hub-link-reading" className="text-sm text-text-muted">Reading the clipboard… If your browser asks, allow it.</p>}
+        {(clipState === 'empty' || clipState === 'notlink') && <p role="alert" data-testid="hub-link-nocopied" className="text-sm text-warning">{clipState === 'empty' ? 'Nothing is copied yet. Copy the link in the hub first.' : 'The copied text is not a connect link. Copy the link in the hub first.'}</p>}
+        {clipState === 'blocked' && <p role="alert" data-testid="hub-link-noclipboard" className="text-sm text-warning">This browser did not let orch read the clipboard. Press ⌘V (Ctrl+V on Windows) to paste the link here.</p>}
       </div>
       {info && valid && <p role="status" data-testid="hub-link-found" className="font-medium text-success">Link found: <Raw>{hubName || hubHost}</Raw></p>}
     </div>}

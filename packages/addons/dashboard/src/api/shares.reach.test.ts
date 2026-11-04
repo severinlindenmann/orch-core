@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { reachNote } from './shares'
+import { localOnly, reachNote } from './shares'
 
 describe('reachNote: who can open the links', () => {
   it('both addresses on this computer: a local test link', () => {
@@ -35,5 +35,15 @@ describe('reachNote: who can open the links', () => {
   })
   it('an unknown address: no claim either way', () => {
     expect(reachNote(null, 'http://127.0.0.1:8104')).toBeNull()
+  })
+})
+
+describe('B07: localOnly, so the warning never says "anyone" for a link that opens only here', () => {
+  it('both addresses on this computer and the server known to be here', () => {
+    expect(localOnly('http://127.0.0.1:8103', 'http://localhost:8104', 'computer')).toBe(true)
+  })
+  it('a hub reached through a loopback address, or a public link address, is not local only', () => {
+    expect(localOnly('http://127.0.0.1:8103', 'http://localhost:8104', 'hub')).toBe(false)
+    expect(localOnly('http://127.0.0.1:8103', 'https://links.acme.example', 'computer')).toBe(false)
   })
 })

@@ -1784,8 +1784,6 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         if self.d.user_invites is not None:  # the links they made and the links made for them die with the account
             self.d.user_invites.void_created_by(p["user_id"])
             self.d.user_invites.void_for_user(p["user_id"])
-        if self.d.shares is not None:  # B08: a removed person keeps no withdrawal notices
-            self.d.shares.store.forget_reader(p["user_id"])
         return 200, {"ok": True}
 
     # --- people: invitation links (join, reset, recovery), disable / enable (M2-5) --------------------------------------
@@ -1873,8 +1871,6 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         if self.d.user_invites is not None:
             self.d.user_invites.void_for_user(uid)
             self.d.user_invites.void_created_by(uid)  # and the links they made for others
-        if self.d.shares is not None:  # B08: a disabled person keeps no withdrawal notices
-            self.d.shares.store.forget_reader(uid)
         return 200, {"ok": True}
 
     def _h_a_user_enable(self, c: Ctx, p: dict, q: dict, b: dict | None):

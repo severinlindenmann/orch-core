@@ -13,6 +13,7 @@ Rules enforced here, in one place:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sqlite3
@@ -142,6 +143,9 @@ class Access:
         #: the audit chain). If it raises, the change is rolled back; a failed commit after it leaves an audit record
         #: for a change that did not happen, never the reverse.
         self.observer: Callable[[dict], None] | None = None
+        # Clear private reader state on removal, disable, and enable (including repeated disable).
+        # Runs under the access transaction before the lifecycle change becomes visible.
+        self.forget_reader: Callable[[str], None] | None = None
         try:
             self._db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
@@ -228,6 +232,7 @@ class Access:
                             "actor_user_id": actor,
                         }
                     )
+                self._forget(user_id)
                 db.execute("DELETE FROM users WHERE user_id=?", (user_id,))
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
@@ -251,12 +256,21 @@ class Access:
         who has not redeemed the recovery link has NO live channel, so old devices never come back on enable."""
         return self.is_active(user_id) and not self.must_recover(user_id)
 
+    def _forget(self, user_id: str) -> None:
+        """B08: drop the person's withdrawal notices. A nicety: a failure never blocks the disable or removal."""
+        if self.forget_reader is None:
+            return
+        try:
+            self.forget_reader(user_id)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("orch_hub.access").warning("withdrawal notices not cleared (%s)", type(e).__name__)
+
     def set_disabled(self, user_id: str, disabled: bool, *, actor: str | None = None) -> bool:
         """Set or clear the disabled flag in ONE transaction. A disabled person has no role in any workspace (``roles``
         and ``role_of`` skip them, so the next ``hub.snapshot`` fingerprint changes and its version moves up, exactly as
         for a grant change). Refused: disabling yourself (``self_disable``) and the last enabled hub admin
-        (``last_admin``). Idempotent; returns whether anything changed. It touches nothing but this flag: a workspace's
-        own owner key and SELECTIVE membership are not hub-derived roles and stay as they are."""
+        (``last_admin``). Idempotent; returns whether anything changed. Also clears reader notices through the lifecycle
+        hook. A workspace's own owner key and SELECTIVE membership are not hub-derived roles and stay as they are."""
         _hex(user_id, "user_id")
         if actor is not None:
             _hex(actor, "actor")
@@ -279,6 +293,7 @@ class Access:
                         ).fetchone()
                         if others == 0:
                             raise AccessError("last_admin")
+                self._forget(user_id)
                 if (row[0] is not None) == disabled:
                     return False
                 # an enabling NEVER brings the old credentials back: ``must_recover`` is set in the same statement that

@@ -3,6 +3,7 @@
 
 import sqlite3
 
+import pytest
 from conftest import NOW
 from shares_helpers import IT1, OWNER, audit_records, shub  # noqa: F401
 from test_shares_audience import BEN, CARL, access, ticket_body
@@ -189,3 +190,96 @@ def test_restore_notices_take_live_only_and_fresh_restore_clears_backup(tmp_path
     store = ShareStore(str(new / "shares.db"))
     assert not store.ended_for("old") and not store.ended_for("live")
     store.close()
+
+
+@pytest.mark.parametrize("operation", ["revoke", "purge"])
+def test_reshare_between_withdrawal_and_notices(operation, monkeypatch):
+    store = ShareStore()
+    try:
+        store.put("w", "i", b"old", 1, "hash", 0)
+        store.put("w", "other", b"other", 1, "hash", 0)
+        notices = store._notices
+
+        def reshare_then_notice(rows, **kwargs):
+            # Deterministically interleave a put after the withdrawal commits.
+            monkeypatch.setattr(store, "_notices", notices)
+            store.put("w", "i", b"new", 2, "new-hash", 2, readers={"b"})
+            notices(rows, **kwargs)
+
+        monkeypatch.setattr(store, "_notices", reshare_then_notice)
+        rows = [("b", "w", "i", "key", "title", "Ann", 1)]
+        if operation == "revoke":
+            assert store.revoke("w", "i", 1, ended=rows)
+        else:
+            rows.append(("b", "w", "other", "other-key", "Other", "Ann", 1))
+            assert store.purge("w", 1, ended=rows) == 2
+        assert store.get("w", "i")[0] == b"new"
+        assert [r["item_id"] for r in store.ended_for("b")] == ([] if operation == "revoke" else ["other"])
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("operation", ["disable", "enable", "remove"])
+def test_access_lifecycle_clears_notices_for_all_callers(shub, operation):
+    acc = access()
+    h = shub(access=acc)  # the real ShareService installs the Access lifecycle hook
+    try:
+        if operation == "enable":
+            acc.set_disabled(BEN, True)
+        rows = [(u, "w", "i", "key", "title", "Ann", NOW) for u in (BEN, CARL)]
+        h.share_store._notices(rows)  # includes a late write during the disable window
+        if operation == "remove":
+            acc.remove_user(BEN)
+        else:
+            assert acc.set_disabled(BEN, operation == "disable")
+        assert h.share_store.ended_for(BEN) == []
+        assert h.share_store.ended_for(CARL)
+        if operation == "disable":
+            h.share_store._notices(rows)
+            assert not acc.set_disabled(BEN, True)  # retries also finish cleanup
+            assert h.share_store.ended_for(BEN) == []
+    finally:
+        acc.close()
+
+
+def test_web_enable_clears_notices_written_while_disabled(tmp_path):
+    from orch_hub.invites import Invites
+    from orch_hub.shares import ShareService
+
+    w = Web(tmp_path)
+    invites = Invites(now_ms=w.clock)
+    try:
+        # Web uses FakeShares; install the real service to exercise lifecycle registration.
+        w.api.d.shares = ShareService(w.shares.store, w.reg, hub_id=G.HUB_ID, hxk=None, dev_mode=True, access=w.env.acc)
+        w.api.d.user_invites = invites
+        token = w.login(w.admin)
+        rows = [(w.ann, WS_SEL, IT1, "key", "title", "Ben", w.clock())]
+        w.shares.store._notices(rows)
+        assert w.call("POST", f"/admin/users/{w.ann}/disable", token=token)[0] == 200
+        assert not w.shares.store.ended_for(w.ann)
+        w.shares.store._notices(rows)
+        assert w.shares.store.ended_for(w.ann)
+        assert w.call("POST", f"/admin/users/{w.ann}/enable", token=token)[0] == 200
+        assert w.env.acc.is_active(w.ann)
+        assert not w.shares.store.ended_for(w.ann)
+    finally:
+        invites.close()
+        w.close()
+
+
+def test_cli_user_remove_clears_persisted_notices(tmp_path, capsys):
+    from test_access_cli import run
+
+    from orch_hub.keys import HubKeys
+
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    reader = run(state, capsys, "users", "add", "Ben")["user_id"]
+    store = ShareStore(str(state / "shares.db"))
+    try:
+        store._notices([(reader, "w", "i", "key", "title", "Ann", NOW)])
+        assert store.ended_for(reader)
+        run(state, capsys, "users", "remove", reader)
+        assert store.ended_for(reader) == []
+    finally:
+        store.close()

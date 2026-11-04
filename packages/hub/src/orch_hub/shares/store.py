@@ -6,7 +6,7 @@ Per (workspace, item) the SEALED bytes exactly as received (never opened here), 
 (protocol.md §10.2b): a revoked version never comes back. Plus an append-only ``share_log`` (change, digest, time; no
 content), the hub-local audit next to the chain's ``share`` events. No policy and no clock: :mod:`orch_hub.shares.service`
 decides, this only stores. One transaction per method. B08 withdrawal notices retain only key/title content plus
-reader, item, owner-name and time metadata; they commit with the item change and never enter the audit log.
+reader, item, owner-name and time metadata; they commit after the item change and never enter the audit log.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ class ShareStore:
                 "INSERT INTO share_log(ws, item_id, change, digest, ts_ms) VALUES (?,?,?,?,?)",
                 (ws, item_id, change, digest, now_ms),
             )
-        self._notices(ended)  # readers the new version drops; best effort, after the change committed
+        self._notices(ended, allow_live=True)  # readers the new version drops; best effort, after the change committed
         return change
 
     def revoke(
@@ -200,13 +200,24 @@ class ShareStore:
     def _write_ended(self, rows: Iterable[tuple[str, str, str, str, str, str, int]]) -> None:
         self._db.executemany("INSERT OR REPLACE INTO share_ended VALUES (?,?,?,?,?,?,?)", rows)
 
-    def _notices(self, rows: Iterable[tuple[str, str, str, str, str, str, int]]) -> None:
+    def _notices(self, rows: Iterable[tuple[str, str, str, str, str, str, int]], *, allow_live: bool = False) -> None:
         """B08 notices in their own transaction, after the item change: a failure loses notices, never the change."""
         rows = list(rows)
         if not rows:
             return
         try:
             with self.lock, self._db:
+                self._db.execute("BEGIN IMMEDIATE")
+                # Revoke/purge notices may arrive after a re-share cleared the old notices.
+                # Replacement notices deliberately describe readers dropped from a live item.
+                if not allow_live:
+                    rows = [
+                        row
+                        for row in rows
+                        if not self._db.execute(
+                            "SELECT 1 FROM share_item WHERE ws=? AND item_id=? AND revoked=0", row[1:3]
+                        ).fetchone()
+                    ]
                 self._write_ended(rows)
         except Exception as e:  # noqa: BLE001 - the change already committed; a notice must never fail it afterwards
             _log.warning("withdrawal notices not written (%d, %s)", len(rows), type(e).__name__)

@@ -51,6 +51,8 @@ class ShareService:
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._on_change = on_change
         self._access = access  # the hub's Access (P02): resolves a signed audience; None: owner alias only
+        if access is not None:
+            access.forget_reader = store.forget_reader
         self._pending: set[str] = (
             set()
         )  # workspaces whose purge failed (audit down): retried at the next sync/reconcile

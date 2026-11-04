@@ -93,3 +93,42 @@ test("run-15 J02: a workspace that is not switchable (selective) cannot be opene
   assert.equal(row.switchable, false);
   assert.equal(row.canOpen, false);
 });
+
+test("ux-audit P02: Back to my workspace goes to the workspace's http(s) origin, else back, else sign-in", async () => {
+  const { backToWorkspace } = await import("../../src/orch_hub/web/switch.js");
+  const calls = [];
+  const nav = (canBack) => ({ assign: (u) => calls.push(["assign", u]), back: () => calls.push(["back"]), canBack: () => canBack, login: () => calls.push(["login"]) });
+  backToWorkspace({ name: "Acme", origin: "https://ws.example:8150" }, nav(true));
+  backToWorkspace({ origin: "javascript:alert(1)" }, nav(true));
+  backToWorkspace(null, nav(false));
+  assert.deepEqual(calls, [["assign", "https://ws.example:8150/"], ["back"], ["login"]]);
+});
+
+test("ux-audit P02: the way back is https (or loopback http), origin only, never a free redirect", async () => {
+  const { backOrigin } = await import("../../src/orch_hub/web/switch.js");
+  assert.equal(backOrigin("https://ws.example:8150/x?y#z"), "https://ws.example:8150/");
+  assert.equal(backOrigin("http://127.0.0.1:8150"), "http://127.0.0.1:8150/");
+  assert.equal(backOrigin("http://evil.example"), null);
+  assert.equal(backOrigin("https://user:pw@ws.example"), null);
+  assert.equal(backOrigin("javascript:alert(1)"), null);
+});
+
+test("QA b1852 P02: the sign-in never prefills an id-shaped value, only a person's name", async () => {
+  const { namePrefill } = await import("../../src/orch_hub/web/switch.js");
+  assert.equal(namePrefill("Anna Test"), "Anna Test");
+  assert.equal(namePrefill("  Ben  "), "Ben");
+  assert.equal(namePrefill("61106ff84ccd4f6c9a2e3b4d5c6e7f80"), "");
+  assert.equal(namePrefill("61106FF84CCD4F6C"), "");
+  assert.equal(namePrefill("6110-6ff8-4ccd-4f6c-9a2e-3b4d5c6e7f80"), "");
+  assert.equal(namePrefill(null), "");
+  assert.equal(namePrefill(""), "");
+});
+
+test("QA b1852 P02: reauth and loginView pass the name through namePrefill, never state.user.user_id", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /prefill:\s*state\.user\?\.user_id/);
+  assert.doesNotMatch(src, /const name = state\.user\?\.user_id/);
+  assert.match(src, /id\.value = prefill;/);
+  assert.match(src, /const prefill = namePrefill\(opts\.prefill\)/);
+});

@@ -10,7 +10,7 @@ import {
   type Review,
   type Progress,
 } from '../api/setup'
-import { Inline, Raw } from '../components/sign/visible'
+import { Inline, Name, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
@@ -138,36 +138,48 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
   return { lines, unknown, odd: oddLines }
 }
-type Fact = { icon: string; label: string; value: string | string[] }
-/** The short card of a review (plain words only): from the review's own items and flags, nothing else. What this
+type Fact = { label: string; value: string }
+const addonSentence = (id: string, fallback: string): string => ({
+  'start-agent': 'You can start agents from the dashboard.',
+  terminals: 'You can use the Command window, an optional advanced tool.',
+  worktrees: 'Agents get their own copy of each ticket’s files.',
+  quick: 'You can run quick tasks.',
+}[id] ?? fallback)
+/** The short card of a review (plain words only): from the review's own items and flags, never the chosen profile. What this
  * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
-export function reviewFacts(review: Review): Fact[] {
+export function reviewFacts(review: Review, host?: string, newWorkspace = false): Fact[] {
   const facts: Fact[] = []
   const ws = review.workspace
+  // P43: the computer is named (over ssh "this computer" is not the one in front of the person)
+  if (host) facts.push({ label: 'Computer', value: host })
   if (ws) {
-    // P06: the owner, the folder, the ticket prefix, the git copy and the history are not decisions: they stay in the
+    // P06: the owner, the ticket prefix, the git copy and the history are not decisions: they stay in the
     // Details fold (the workspace's own lines and the flag texts)
-    facts.push({ icon: '▦', label: 'Workspace', value: ws.workspace_name ?? ws.name })
+    facts.push({ label: 'Workspace', value: ws.workspace_name ?? ws.name })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
-  const approve = has('custody') ? 'One click on this computer' : has('terminal') || review.tty_confirm ? 'In a terminal, with your password' : null
-  let agents: string | undefined
-  for (const item of review.items) {
-    const f = item.fields
-    if (item.id === 'runner_grant' && f && typeof f.hours === 'number')
-      // the short words only for the ordinary grant; any other scope or verbs keeps the raw values on the card
-      agents = f.scope === 'workable' && f.verbs === 'agent'
-        ? `may work for ${duration(f.hours)}`
-        : `agent access for ${duration(f.hours)} (scope ${String(f.scope)}, verbs ${String(f.verbs)})`
-    else if (item.type === 'settings.changed' && f?.set && typeof f.set === 'object') {
-      const set = f.set as Record<string, unknown>
-      if (agents === undefined && typeof set.grant_hours === 'number') agents = `may work for ${duration(set.grant_hours)}`
-    }
+  const approve = has('custody') ? `You approve with One click on ${host || 'this computer'}.` : has('terminal') || review.tty_confirm ? 'You approve in a terminal, with your password.' : null
+  const grant = review.items.find((item) => item.id === 'runner_grant' && item.type === 'grant.issued')?.fields
+  const settings = review.items.filter((item) => item.type === 'settings.changed')
+    .map((item) => item.fields?.set as Record<string, unknown> | undefined)
+  const hours = settings.find((set) => typeof set?.grant_hours === 'number')?.grant_hours
+  // Only an applied runner grant permits agents to start; a duration setting alone does not.
+  let agents = newWorkspace ? 'Agents may not work on their own.' : "Agents' access stays as it is."
+  const where = host || 'this computer'
+  if (grant) {
+    // any applied runner grant says agents may work; an unexpected shape never reads as "may not"
+    const time = typeof grant.hours === 'number' ? ` for ${duration(grant.hours)}` : ''
+    agents = grant.scope === 'workable' && grant.verbs === 'agent'
+      ? `Agents may work on their own on ${where}${time}.`
+      : `Agents get access on ${where}${time}, with rights that setup does not usually give. Check them before you continue.`
+  } else if (typeof hours === 'number') {
+    agents = `Agent access time is set to ${duration(hours)}. This alone lets no agent start.`
   }
-  const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
-  if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
-  if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
-  if (approve) facts.push({ icon: '◈', label: 'How you approve', value: approve })
+  for (const item of review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard')) {
+    facts.push({ label: item.title, value: addonSentence(item.id.replace(/^addon:/, ''), item.title) })
+  }
+  facts.push({ label: 'Agents', value: agents })
+  if (approve) facts.push({ label: 'How you approve', value: approve })
   return facts
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
@@ -187,18 +199,17 @@ export function defaultWorkspaceName(name: string): string {
 export function approvalSummary(
   profile: { agent_hours: number; agent_grant?: boolean; records?: boolean },
   access: 'none' | number,
-  opts: { records: boolean; trust?: boolean },
+  opts: { records: boolean; trust?: boolean; host?: string },
 ): string {
   const out = [
     access === 'none'
       ? 'No agent works here until you give access.'
-      : profile.agent_grant === false
-        ? `Agents may work for ${duration(profile.agent_hours)}; none start on this computer yet.`
-        : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
+      // Duration without a runner grant can no longer be chosen.
+      : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
   ]
   if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
-  if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open this folder without asking.' : 'AI helpers ask before they open this folder.')
-  return out.join(' ')
+  if (opts.trust !== undefined) out.push(opts.trust ? 'AI helpers open your project folder without asking.' : 'AI helpers ask before they open your project folder.')
+  return out.join(' ').replaceAll('this computer', opts.host || 'this computer')
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
@@ -209,7 +220,7 @@ export function groupProgress(steps: Progress['steps']): Progress['steps'] {
     { id: 'key', label: 'Your way to approve', ids: ['keys', 'genesis', 'custody'] },
     { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Starting orch', ids: ['register', 'runner', 'runner_grant'] },
-    { id: 'addons', label: 'Add-ons', ids: [] },
+    { id: 'addons', label: 'What agents can do', ids: [] },
     { id: 'approval', label: 'Your choices saved', ids: ['flags'] },
   ]
   return groups.flatMap(({ id, label, ids }) => {
@@ -217,7 +228,7 @@ export function groupProgress(steps: Progress['steps']): Progress['steps'] {
     if (!members.length) return []
     const has = (status: Progress['steps'][number]['status']) => members.some((step) => step.status === status)
     const status = has('failed') ? 'failed' : has('doing') ? 'doing'
-      : has('todo') && !has('done') ? 'todo'
+      : has('todo') ? (has('done') ? 'doing' : 'todo')
       : members.every((step) => step.status === 'skipped') ? 'skipped' : 'done'
     return [{ id, label, status }]
   })
@@ -285,7 +296,7 @@ function FinishChoices({
       {!state.complete && <p>This workspace already exists. Nothing that is on will be switched off.</p>}
       {state.complete && (
         <p>
-          <Raw>{current.name}</Raw> is ready.
+          <Name>{current.name}</Name> is ready.
         </p>
       )}
       <details className="current-fold" open={!state.complete}>
@@ -293,7 +304,7 @@ function FinishChoices({
         <dl className="current">
           <dt>Name</dt>
           <dd>
-            <Raw>{current.name}</Raw>
+            <Name>{current.name}</Name>
           </dd>
           {!state.complete && (
             <>
@@ -320,7 +331,7 @@ function FinishChoices({
             <label className="toggle" key={a.id}>
               <span>
                 <strong>{a.title}</strong>
-                <small>{a.desc}</small>
+                <small>{addonSentence(a.id, a.desc)}</small>
               </span>
               <input
                 type="checkbox"
@@ -432,6 +443,18 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
     </section>
   )
 }
+/** Security review (W1a): the summary names only what the chosen add-ons really allow. */
+export function agentsCan(addons: readonly string[]): string {
+  const can = [
+    addons.includes('start-agent') && 'start from the dashboard',
+    addons.includes('terminals') && 'open a terminal',
+    addons.includes('worktrees') && 'get their own copy of each ticket’s files',
+    addons.includes('quick') && 'run quick tasks',
+  ].filter((x): x is string => !!x)
+  if (!can.length) return 'Agents start only when you start them in a terminal.'
+  return `Agents can ${can.length === 1 ? can[0] : `${can.slice(0, -1).join(', ')} and ${can[can.length - 1]}`}.`
+}
+
 export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
@@ -469,11 +492,11 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [lineNote, setLineNote] = useState('')
   const pendingTarget = useRef<{ href: string; workspace_id?: string } | null>(null)
   const [openFailed, setOpenFailed] = useState(false) // Finish answered but the dashboard did not open: "Try again"
-  // "No agent access" is a choice of its own (B11 finding 21); it keeps the workspace default time and no runner grant.
+  // Access off preserves the former "No agent access" values: the workspace default time and no runner grant.
   const [access, setAccess] = useState<'none' | number>('none')
   const chooseAccess = (a: 'none' | number) => {
     setAccess(a)
-    setProfile((p) => ({ ...p, agent_hours: a === 'none' ? 8 : a, ...(a === 'none' ? { agent_grant: false } : {}) }))
+    setProfile((p) => ({ ...p, agent_hours: a === 'none' ? 8 : a, agent_grant: a !== 'none' }))
     setReview(undefined)
   }
   const heading = useRef<HTMLHeadingElement>(null)
@@ -481,6 +504,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const confirmed = useRef(false)
   const secretRef = useRef<Secrets | null>(null)
   secretRef.current = secrets
+  const hostRef = useRef<string | undefined>(undefined)
   const drop = () => {
     if (secretRef.current) {
       secretRef.current.passphrase = null
@@ -574,7 +598,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             // agent_hours/agent_grant are seeded only together with the access picker, so the two never disagree
             const { agent_hours: sugHours, agent_grant: sugGrant, ...rest } = s.suggested
             setProfile((p) => ({ ...p, ...rest, addons }))
-            // U1: "let agents work for you" starts ticked (3 days); the person can still pick "No agent access"
+            // U1: retain the suggested access and duration; the person can turn access off.
             if (sugGrant && typeof sugHours === 'number' && s.agent_hours.includes(sugHours)) {
               chooseAccess(sugHours)
               setProfile((p) => ({ ...p, agent_grant: true }))
@@ -610,7 +634,8 @@ export function Setup({ api }: { api: SetupAPI }) {
         if (!next.done && !next.error) timer = setTimeout(() => void poll(), 1000)
       } catch {
         if (active) {
-          setError('Connection interrupted. Check your terminal. We will keep checking your progress.')
+          // P43: a dropped tunnel in plain words; `host` is read from the latest render through the ref
+          setError(`The connection${hostRef.current ? ` to ${hostRef.current}` : ''} dropped. If you reach it through an ssh tunnel, check that the terminal running the tunnel is still open. Also check your setup terminal. We keep trying.`)
           timer = setTimeout(() => void poll(), 2500)
         }
       }
@@ -680,6 +705,16 @@ export function Setup({ api }: { api: SetupAPI }) {
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
+  // P13: the project folder is named the same way on every screen (its name, never the full path)
+  const folder = state?.dir_name ? (
+    <>
+      your project folder “<Inline>{state.dir_name}</Inline>”
+    </>
+  ) : (
+    'your project folder'
+  )
+  const host = state?.host || undefined
+  hostRef.current = host
   // Print: the tick comes from the browser's own afterprint event (display only)
   useEffect(() => {
     const done = () => setSavedHow('print')
@@ -688,12 +723,18 @@ export function Setup({ api }: { api: SetupAPI }) {
   }, [])
   // the recommendation no longer applies: a switch is not at its default
   const agentsDiffer = !!state?.addons?.some((a) => a.kind !== 'flag' && !a.required && a.default !== profile.addons.includes(a.id))
+  const reviewSeq = useRef(0)
   const update = (value: Partial<Profile>) => {
+    reviewSeq.current++
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
   }
+  // Choice changes and Back invalidate answers to older review requests.
   async function getReview() {
-    setReview(await api.call<Review>('review', {}))
+    const seq = ++reviewSeq.current
+    const r = await api.call<Review>('review', {})
+    if (seq !== reviewSeq.current) return
+    setReview(r)
     setStep(5)
   }
   async function approveProfile() {
@@ -797,7 +838,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const orderedMethods = state ? [...state.methods].sort((a, b) => (b === 'click' && state.click_available ? 1 : 0) - (a === 'click' && state.click_available ? 1 : 0)) : []
   const methodCard = (method: Profile['method']) =>
     state && (
-      <label className="toggle" key={method}>
+      <label className="method-card" key={method}>
       <input
         type="radio"
         name="method"
@@ -807,16 +848,17 @@ export function Setup({ api }: { api: SetupAPI }) {
       />
       <span>
         <strong>
-          {method === 'click' ? 'One click on this computer' : 'Password'}
+          {method === 'click' ? `One click on ${host || 'this computer'}` : 'Password'}
           {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
         </strong>
         <small>
           {method === 'terminal'
-            ? 'Type your password each time. Safest if others use this computer.'
+            ? `Type your password each time. Safest if others use ${host || 'this computer'}.`
             : state.click_available
               ? 'No typing. Best on your own computer.'
-              : clickOffText(state.click_reason)}
+              : clickOffText(state.click_reason).replace('this computer', host || 'this computer')}
         </small>
+        {method === 'click' && state.click_available && <small>Anything running as you on {host || 'this computer'} could approve too.</small>}
         {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
       </span>
     </label>
@@ -852,10 +894,12 @@ export function Setup({ api }: { api: SetupAPI }) {
       Continue →
     </button>
   )
-  // The dots carry their names (compact on a phone: only the current one). Finish setup has its own two steps.
+  // The current step stays readable at every width. Finish setup has its own two steps.
   const finishing = state?.mode === 'finish'
   const names = finishing ? finishSteps : steps
-  const at = finishing ? (step === 5 ? 1 : 0) : step
+  // P75: when setup is finished every step is done (none is current, none stays grey)
+  const allDone = (!!progress?.done && !progress.error) || (!!state?.complete && !run)
+  const at = allDone ? names.length : finishing ? (step === 5 ? 1 : 0) : step
   const title = ended
     ? 'Setup paused'
     : run
@@ -885,14 +929,15 @@ export function Setup({ api }: { api: SetupAPI }) {
           orch<span>.</span>
         </strong>
         <nav aria-label="Setup progress">
+          <p className="step-position">{allDone ? 'Setup complete' : `Step ${at + 1} of ${names.length}: ${names[at]}`}</p>
           <ol>
             {names.map((s, i) => (
               <li
                 key={s}
-                className={`${i <= at ? 'active' : ''}${i === at ? ' current' : ''}`}
+                className={`${i <= at ? 'active' : ''}${i === at ? ' current' : ''}${allDone ? ' finished' : ''}`}
                 aria-current={i === at ? 'step' : undefined}
               >
-                <span className="dot" aria-hidden />
+                <span className="dot" aria-hidden>{allDone ? '✓' : null}</span>
                 <span className="name">{s}</span>
               </li>
             ))}
@@ -924,14 +969,20 @@ export function Setup({ api }: { api: SetupAPI }) {
               {!state.complete && (
                 <>
                   <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
-                  <p>We will set this up in your project folder.</p>
-                  <details className="welcome-technical">
-                    <summary>Details</summary>
-                    <p><Inline>{state.dir_name}</Inline></p>
-                    <Raw>{state.dir}</Raw>
+                  {state.host && (
+                    <p data-testid="setup-computer">
+                      Setting up on <strong><Inline>{state.host}</Inline></strong>. Your workspace and your agents run on that computer.
+                    </p>
+                  )}
+                  <p>We will set this up in {folder}.</p>
+                  <p>Setup adds orch&apos;s own files to this folder and a few lines to AGENTS.md, CLAUDE.md and .gitignore.</p>
+                  <details className="file-changes">
+                    <summary>What exactly changes?</summary>
+                    <p>Setup adds orch&apos;s own files to this folder (a hidden .orch folder, AGENTS.orch.md and skill folders) and an orch section in AGENTS.md, lines in CLAUDE.md that load the instructions, and one line in .gitignore to keep orch’s private folder out of git, creating these files if needed (and a git repository if you choose one). Existing orch instructions may be updated; other content in these three files stays as it is.</p>
                   </details>
+                  <p>{profile.addons.includes('worktrees') ? 'With work copies on, agents change their own copies until you merge them.' : 'Agents change the files in this folder directly.'}</p>
                   {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
-                  <p>Everything stays on this computer unless you choose to connect your phone.</p>
+                  <p>Everything stays on {host ? <Inline>{host}</Inline> : 'this computer'} unless you choose to connect your phone.</p>
                 </>
               )}
               {state.mode === 'finish' && state.current ? (
@@ -952,7 +1003,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 1 && (
             <>
               <label>
-                Your name
+                Name of the person who will use this workspace
                 <input autoComplete="name" value={profile.name} onChange={(e) => {
                     const name = e.target.value
                     // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
@@ -964,7 +1015,6 @@ export function Setup({ api }: { api: SetupAPI }) {
                   }}
                 />
               </label>
-              {!profile.name.trim() && <small>Type your name to continue.</small>}
               {!showWorkspaceFields && (
                 <div className="ws-summary">
                   <span data-testid="ws-summary" aria-live="polite">
@@ -978,7 +1028,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                         ))}
                       </>
                     ) : (
-                      'Your workspace is named after you.'
+                      'The workspace is named after that person.'
                     )}
                   </span>
                   <button type="button" className="link" onClick={() => setShowWorkspaceFields(true)}>
@@ -1023,6 +1073,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(0)}>Back</button>
+                {!profile.name.trim() && <small className="why-disabled" data-testid="name-needed">Type the name to continue.</small>}
                 <button
                   className="primary"
                   disabled={!profile.name.trim() || !profile.workspace_name.trim() || !prefixOk(profile.prefix)}
@@ -1035,9 +1086,24 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 2 && (
             <>
+              <label className="toggle">
+                <span>Allow agents to work<small>Turning this on lets agents start on {host || 'this computer'} for {access === 'none' ? 'the chosen time' : duration(profile.agent_hours)}. You can stop them at any time.</small></span>
+                <input type="checkbox" role="switch" checked={access !== 'none'} disabled={!state.agent_hours.length}
+                  onChange={(e) => chooseAccess(e.target.checked ? (state.agent_hours.includes(72) ? 72 : state.agent_hours[0]) : 'none')} />
+              </label>
+              <p>Allowing agents to work does not start a task.</p>
+              {access !== 'none' && <>
+                <p>Access starts when you create the workspace and ends after {duration(profile.agent_hours)}; after that, agents need your permission again.</p>
+                <h2>How long can agents work on their own?</h2>
+                <div className="segments">
+                  {state.agent_hours.map((h) => (
+                    <button key={h} aria-pressed={access === h} onClick={() => chooseAccess(h)}>{hoursText(h)}</button>
+                  ))}
+                </div>
+              </>}
               <div className="agents-summary" data-testid="agents-summary">
                 <strong>Recommended for most people</strong>
-                <small>Agents can start from the dashboard, open a terminal, get their own copy of each ticket&apos;s files, and run quick tasks. Your files are not changed.</small>
+                <small>{agentsCan(profile.addons)}{profile.addons.includes('worktrees') ? ' With work copies on, agents change their own copies until you merge them.' : ' Agents change the files in this folder directly.'}</small>
               </div>
               {/* the fold opens by itself when the recommendation does not apply (a switch differs from its default, or the folder question was answered Skip) */}
               <details className="approval-more" data-testid="agents-more" open={agentsDiffer || undefined}>
@@ -1050,7 +1116,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <div className="toggle" key={a.id}>
                       <span>
                         <strong>{a.title}</strong>
-                        <small>{a.desc}</small>
+                        <small>{addonSentence(a.id, a.desc)}</small>
                       </span>
                       <span className="always">Always on</span>
                     </div>
@@ -1059,7 +1125,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <label className="toggle">
                     <span>
                       <strong>{a.title}</strong>
-                      <small>{a.desc}</small>
+                      <small>{addonSentence(a.id, a.desc)}</small>
                     </span>
                     <input
                       type="checkbox"
@@ -1100,52 +1166,21 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 3 && (
             <>
               <p>{state.click_available ? 'We picked what works best on your own computer.' : 'Choose what works for you on this device.'}</p>
-              {methodCard(profile.method)}
+              <div className="approval-methods">{orderedMethods.map(methodCard)}</div>
               {profile.method === 'click' && state.click_available && (
                 <details className="click-risk" data-testid="click-risk">
                   <summary>What does this mean?</summary>
                   <p>
-                    <Inline>{clickMeaningCopy}</Inline>
+                    <Inline>{clickMeaningCopy.replace('this computer', host || 'this computer')}</Inline>
                   </p>
                 </details>
               )}
-              {/* r11-P16: the safe defaults in one line; every other choice behind one click (forced open when a choice
-                  must be seen: no One click here, or a parent AI helper setting asks for "Trust anyway") */}
+              {/* Keep optional settings together; a parent AI helper setting may need "Trust anyway". */}
               <p className="approval-summary" data-testid="approval-summary">
-                {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
+                {approvalSummary(profile, access, { host, records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
               </p>
               <details className="approval-more" data-testid="approval-more" open={!state.click_available || !!parentConfig || undefined}>
                 <summary>Change these settings</summary>
-                {orderedMethods.filter((m) => m !== profile.method).map(methodCard)}
-              <h2>How long can agents work on their own?</h2>
-              <div className="segments">
-                <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
-                  No agent access
-                </button>
-                {state.agent_hours.map((h) => (
-                  <button key={h} aria-pressed={access === h} onClick={() => chooseAccess(h)}>
-                    {hoursText(h)}
-                  </button>
-                ))}
-              </div>
-              {access === 'none' ? (
-                <p>No agent can work in this workspace until you give access. You can do that later.</p>
-              ) : (
-                <label className="toggle">
-                  <span>
-                    Let agents start on this computer now
-                    <small>
-                      You can stop them at any time.
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={profile.agent_grant}
-                    onChange={(e) => update({ agent_grant: e.target.checked })}
-                  />
-                </label>
-              )}
               {state.relay.available && state.relay.enabled && (
                 <>
                   <label className="toggle">
@@ -1169,7 +1204,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <label className="toggle">
                   <span>
                     Keep a history of this workspace
-                    <small>Saved on this computer automatically. Nothing is uploaded.</small>
+                    <small>Saved on {host || 'this computer'} automatically. Nothing is uploaded.</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1199,8 +1234,9 @@ export function Setup({ api }: { api: SetupAPI }) {
               {offersTrust && !parentConfig && (
                 <label className="toggle">
                   <span>
-                    Let your AI helpers open this folder without asking
-                    <small>They will not stop to ask first. This folder only holds orch’s files.</small>
+                    Let your AI helpers open {folder} without asking
+                    <small>They will not stop to ask first. It is the folder with your project files; orch adds its own files to it.</small>
+                    {state.dir && <small data-testid="trust-folder-path">Folder: <Raw>{state.dir}</Raw></small>}
                   </span>
                   <input
                     type="checkbox"
@@ -1275,24 +1311,10 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 5 && review && (
             <>
               <dl className="current review-facts review-summary">
-                {reviewFacts(review).map((f) => (
-                  <Fragment key={f.label}>
-                    <dt>
-                      <span aria-hidden="true">{f.icon}</span> {f.label}
-                    </dt>
-                    <dd>
-                      {Array.isArray(f.value) ? (
-                        <span className="addon-chips">
-                          {f.value.map((v) => (
-                            <span className="chip" key={v}>
-                              <Inline>{v}</Inline>
-                            </span>
-                          ))}
-                        </span>
-                      ) : (
-                        <Inline>{f.value}</Inline>
-                      )}
-                    </dd>
+                {reviewFacts(review, host, state.mode !== 'finish').map((f, i) => (
+                  <Fragment key={i}>
+                    <dt>{f.label}</dt>
+                    <dd><Inline>{f.value}</Inline></dd>
                   </Fragment>
                 ))}
                 {summary.odd.length > 0 && (
@@ -1405,6 +1427,14 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
               <SetupFooter cancel={cancel}>
+                {/* P52: fix a choice without starting over (Finish setup has its choices on the first screen) */}
+                <button className="secondary" onClick={() => {
+                  // Back discards the review and its terminal check (both live in `review`), and makes any review answer
+                  // still on its way stale: Continue fetches a new one for the changed choices
+                  reviewSeq.current++
+                  setReview(undefined)
+                  setStep(state.mode === 'finish' ? 0 : 3)
+                }}>Back</button>
                 <button
                   className="primary"
                   disabled={terminalReviewMissing}
@@ -1450,20 +1480,23 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          {state?.os === 'darwin' && !progress?.done && !progress?.error && groupProgress(progress?.steps ?? []).some((g) => g.id === 'services' && g.status === 'doing') && (
+          {(state?.os ? state.os === 'darwin' : /Mac/i.test(navigator.platform || navigator.userAgent)) && !progress?.done && !progress?.error && progress?.steps.some((s) => s.id === 'register' && s.status === 'doing') && (
             // only while the steps run (the Mac asks then); never on the ready or the error screen
             <p><small>Your Mac may show a note that orch runs in the background. That is fine; leave it on.</small></p>
           )}
-          <ol className="progress">
-            {groupProgress(progress?.steps ?? []).map((s) => (
-              <li key={s.id}>
-                <span>{s.label}</span>
-                <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
-                  <span aria-hidden="true">{statusIcon[s.status]}</span> {statusWord[s.status]}
-                </strong>
-              </li>
-            ))}
-          </ol>
+          {/* P75: once it is ready the internal checklist goes; the title and the Open button say the rest */}
+          {!allDone && (
+            <ol className="progress">
+              {groupProgress(progress?.steps ?? []).map((s) => (
+                <li key={s.id}>
+                  <span>{s.label}</span>
+                  <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
+                    <span aria-hidden="true">{statusIcon[s.status]}</span> {statusWord[s.status]}
+                  </strong>
+                </li>
+              ))}
+            </ol>
+          )}
           {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
             <div className="progress-note" role="note">
               {progress.reason_codes?.trust === 'not_installed' || progress.reason_codes?.trust === 'not_started'
@@ -1530,7 +1563,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               <p>
                 <strong>One last step: connect to your workspace.</strong>
               </p>
-              <p>Your workspace runs on the other computer. Paste this line where you started setup, and leave it open:</p>
+              <p>Your workspace runs on {host ? <Inline>{host}</Inline> : 'the other computer'}. Paste this line where you started setup, and leave it open:</p>
               <div className="code-line">{tunnelLine}</div>
               <button
                 className="primary"

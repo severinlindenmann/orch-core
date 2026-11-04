@@ -2,6 +2,7 @@
 // hub card and checks it against the link, and the page shows which hub it is. One click then signs the join (HubStep,
 // with the backup key: the hub always requires the owner's proof), and the host tells the hub (hub.connect, with the
 // link's code and address). Both modes use this review and one-click flow.
+import { JoinShareOffer } from './SendShares'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useQueryClient } from '@tanstack/react-query'
@@ -166,6 +167,7 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
   const refresh = useHubRefresh(ws)
   const qc = useQueryClient()
   const [state, setState] = useState<'idle' | 'working' | 'waiting' | 'failed'>('idle')
+  const [offer, setOffer] = useState(false)
   const [why, setWhy] = useState('')
   const started = useRef(false)
   const done = (confirmedMode?: HubMode | null) => {
@@ -179,7 +181,10 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
     refresh()
     void qc.invalidateQueries() // the hub confirmed: the whole page behind the dialog is read once, now
     toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share, plus this workspace\'s name.')
-    onClose()
+    void api.getHubShare(ws).then(share => {
+      if ((share.not_sent_count ?? 0) > 0) setOffer(true)
+      else onClose()
+    }, onClose)
   }
   const failure = (e: unknown) => { setWhy(e instanceof ApiError && e.message ? e.message : 'The hub did not answer.'); setState('failed') }
   const run = () => {
@@ -194,6 +199,7 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
     api.refreshHub(ws).then(got => { if (got.confirmed === true) done(); else setState('waiting') }, failure)
   }
   useEffect(() => { if (!started.current) { started.current = true; run() } }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  if (offer) return <JoinShareOffer ws={ws} onClose={onClose} />
   return <div className="space-y-3" data-testid="hub-connect-stage">
     {(state === 'idle' || state === 'working') && <p role="status">Signed. Telling the hub… and waiting for it to confirm.</p>}
     {state === 'waiting' && <div role="status" className="space-y-2" data-testid="hub-connect-waiting">

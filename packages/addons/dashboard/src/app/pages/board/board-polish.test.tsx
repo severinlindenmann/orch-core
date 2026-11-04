@@ -45,8 +45,9 @@ describe('board polish', () => {
     expect(empties.length).toBeGreaterThan(0)
     await waitFor(() => expect(within(backlog).queryByTestId(/^card-/)).toBeNull(), T)
     expect(within(backlog).getByText('Nothing here')).toBeInTheDocument()
-    expect(within(backlog).getByText('Create a ticket (c)')).toBeInTheDocument()
+    expect(within(backlog).getByText('Create a ticket')).toBeInTheDocument()
+    expect(screen.queryByText(/\(c\)/)).toBeNull() // no keyboard shortcut in parentheses
     const open = screen.getByRole('region', { name: 'Open' })
-    expect(within(open).queryByText('Create a ticket (c)')).toBeNull()
+    expect(within(open).queryByText('Create a ticket')).toBeNull()
   })
 })

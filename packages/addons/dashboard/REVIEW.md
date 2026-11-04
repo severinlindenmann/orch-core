@@ -683,3 +683,10 @@ Create a ticket with “Create and start”. With missing/short access, verify t
 ### D5 check (2026-10-28)
 
 On a real host, post a comment and let the C3 arm finish: the toast says “Sending in N s; closing this page still sends.” Undo within ten seconds cancels without a signature. Navigate away or close/reopen the page to see delivery checked against the signer. Restart the signer during the wait to see “Not sent”; sleep past the deadline by more than 30 seconds has the same outcome. Add-on off and runner off offer Undo that opens a fresh turn-on review. Follow-up cancel keeps its existing signed, authority-checked Undo within 120 seconds.
+
+### X3 check (2026-10-31)
+
+1. In the mock, use `?hub=delivery` and open DEMO-0043, DEMO-0045, DEMO-0042 and DEMO-0044. See: sent, waiting, not sent and refused respectively.
+2. On the not-sent ticket, choose Send now. See: the existing sharing review; nothing sent until Sign. Cancel sends nothing.
+3. Open Settings > Hub or the real host's Shares page with unsent shares. See: the count and Send now opening the same review.
+4. Join with pre-existing, unconfirmed share rules. See: “Some shares were made before you joined. Send them now?” Later dismisses it for that join; reopening Settings does not offer again.

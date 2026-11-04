@@ -6,7 +6,8 @@ import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { queries } from '@/api/queries'
-import { adminCommand, destinationLine, isUnknownWorkspace, newIdem, reachNote, sameOrigin, shareError, shareQueries, sharesApi } from '@/api/shares'
+import { suggestedWhere, type PublishWhere } from '@/api/addOnSwitches'
+import { adminCommand, destinationLine, hostOf, isUnknownWorkspace, newIdem, reachNote, sameOrigin, shareError, shareQueries, sharesApi } from '@/api/shares'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -29,7 +30,8 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
   // "this computer" in the note only when the Publish add-on row names this computer as the source of this very address
   const addOns = useQuery(queries.addOns(ws))
   const row = addOns.data?.available ? addOns.data.add_ons.find((r) => r.id === 'publish') : undefined
-  const from = !!row?.suggest && !!data?.server && sameOrigin(row.suggest, data.server) ? row.suggest_from ?? null : null
+  const suggestedServer = suggestedWhere(row)?.server
+  const from = !!suggestedServer && !!data?.server && sameOrigin(suggestedServer, data.server) ? row?.suggest_from ?? null : null
   const note = data?.configured ? reachNote(data.server, data.share, from) : null
   const [editing, setEditing] = useState(false)
   const [server, setServer] = useState('')
@@ -192,15 +194,17 @@ export function publishValidation(server: string, share: string) {
 }
 
 /** One address by default (files and links both use it). `share` follows `server` until the person opens "Links open at a different address". */
-export function PublishForm({ server, share, setServer, setShare, suggested, suggestedFrom, hubName }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void; suggested?: string | null; suggestedFrom?: 'computer' | 'hub' | null; hubName?: string | null }) {
+export function PublishForm({ server, share, setServer, setShare, suggested, suggestedFrom, hubName }: { server: string; share: string; setServer: (value: string) => void; setShare: (value: string) => void; suggested?: string | PublishWhere | null; suggestedFrom?: 'computer' | 'hub' | null; hubName?: string | null }) {
   const { problem } = publishValidation(server, share)
   const [separate, setSeparate] = useState(share !== '' && share !== server)
   const [changing, setChanging] = useState(false)
+  // A plain string is one address for both values; a pair keeps `server` and `share` apart (#1838).
+  const where = typeof suggested === 'string' ? { server: suggested, share: suggested } : suggested
   // P02: a Publish server installed on this computer is named in one sentence; the address field only appears behind "Change"
-  if (suggested && !changing && server === suggested && share === suggested)
+  if (where && where.server && !changing && server === where.server && share === where.share)
     return (
       <div className="flex items-center gap-1.5 text-[13px]" data-testid="publish-suggested">
-        <span>{destinationLine(suggestedFrom, hubName, suggested)}</span>
+        <span>{destinationLine(suggestedFrom, hubName, where.server)}</span>
         <InfoDrawer text="Details">
           {(close) => (
             <>
@@ -210,7 +214,12 @@ export function PublishForm({ server, share, setServer, setShare, suggested, sug
                 </p>
               ) : (
                 <p>
-                  Files and links use the Publish server on this computer: <Inline>{suggested}</Inline>
+                  Files and links use the Publish server on this computer: <Inline>{where.server}</Inline>
+                </p>
+              )}
+              {where.share !== where.server && (
+                <p>
+                  Links open at <Inline>{hostOf(where.share)}</Inline>.
                 </p>
               )}
               <button type="button" className="text-[12px] text-text-muted hover:underline" onClick={() => { close(); setChanging(true) }}>

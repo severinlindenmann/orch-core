@@ -12,6 +12,7 @@ import copy
 
 import pytest
 
+from orch.canon.jcs import JcsError
 from orch.crypto import suite
 from orch.host import hubaddr, hubops
 from orch.hubclient import HubLink, HubRefused, HubState, connectlink, wire
@@ -197,21 +198,214 @@ def test_the_name_is_carried_as_the_hubs_own_words_and_cleaned(human, served, mo
     assert status(served)["hub_says"] == {"name": "Acme hub", "from": "hub"}  # labelled; no workspace-owned field
 
 
-def test_the_hubs_publish_address_is_kept_as_a_hint_and_shown_in_the_status(human, served, monkeypatch, probe):
+def test_the_legacy_publish_string_of_the_hub_is_ignored_and_never_suggested(human, served, monkeypatch, probe):
+    """#1838 (contract 10.9.1): the unsigned ``publish`` string is accepted in shape and dropped; only a signed
+    ``publish_where`` is ever suggested, so nothing is kept or shown from the legacy string."""
     hub = bound(served, human, monkeypatch)
     probe.live = {"10.0.0.5:8105"}
-    assert status(served)["hub_publish"] is None
+    assert status(served)["publish_where"] is None and "hub_publish" not in status(served)
     hub.where_answer = {**where("10.0.0.5:8105"), "publish": "http://127.0.0.1:8102"}
     refresh(served)
-    assert _state(served).hub_publish == "http://127.0.0.1:8102"
-    assert status(served)["hub_publish"] == "http://127.0.0.1:8102"
-    hub.where_answer = where("10.0.0.5:8105")  # the hub no longer names one: the hint goes
-    refresh(served)
-    assert _state(served).hub_publish is None and status(served)["hub_publish"] is None
+    assert _state(served).publish_where is None and status(served)["publish_where"] is None
+    assert "hub_publish" not in _state(served).to_json()
     for bad in ("http://evil.example.com", "https://x.com/p", "ftp://x"):
         hub.where_answer = {**where("10.0.0.5:8105"), "publish": bad}
         refresh(served)
-        assert _state(served).hub_publish is None  # malformed answer: the host keeps what it holds
+        assert _state(served).publish_where is None  # malformed answer: the host keeps what it holds
+
+
+# --- the signed publish_where of hub_where (#1838) ----------
+
+
+def with_pw(*links, **kw):
+    from tests.hub.fake import signed_publish_where
+
+    return {**where(*links), "publish_where": signed_publish_where(**kw)}
+
+
+def held_of(served):
+    held = _state(served).publish_where
+    return None if held is None else (held["o"]["seq"], held["o"]["share"])
+
+
+def floor_seqs(served):
+    return {k: v["seq"] for k, v in _state(served).publish_where_floors.items()}
+
+
+def test_a_signed_publish_where_is_verified_stored_and_shown_by_status(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    assert held_of(served) == (3, "https://apps.example.org")
+    assert status(served)["publish_where"] == {
+        "hub_id": HUB_ID, "hub_name": "Acme hub", "server": "https://pub.example.org",
+        "share": "https://apps.example.org",
+    }  # fmt: skip
+    assert status(served)["publish_from"] is None and status(served)["publish_moved"] is None
+
+
+def test_the_seq_rule_higher_replaces_equal_must_match_lower_and_bad_signature_keep_the_last_good(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=4, share="https://new.example.org")
+    refresh(served)
+    assert held_of(served) == (4, "https://new.example.org")
+    same = hub.where_answer
+    refresh(served)  # byte-identical at the same seq: nothing changes
+    assert held_of(served) == (4, "https://new.example.org")
+    for bad in (
+        with_pw("10.0.0.5:8105", seq=4, share="https://other.example.org"),  # equal seq, other content
+        with_pw("10.0.0.5:8105", seq=2),  # lower seq
+        with_pw("10.0.0.5:8105", seq=9, key="wsk_a"),  # bad signature on a NEW object
+        with_pw("10.0.0.5:8105", seq=9, hub_id="ab" * 16),  # another hub
+        with_pw("10.0.0.5:8105", seq=9, server="https://10.0.0.9"),  # a private origin
+    ):
+        hub.where_answer = bad
+        refresh(served)
+        assert held_of(served) == (4, "https://new.example.org")
+    hub.where_answer = same
+    refresh(served)
+    assert held_of(served) == (4, "https://new.example.org")
+
+
+def test_a_hub_that_stops_advertising_it_loses_the_object_but_not_the_tombstone(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    hub.where_answer = where("10.0.0.5:8105")
+    refresh(served)
+    assert held_of(served) is None and status(served)["publish_where"] is None
+    assert floor_seqs(served) == {HUB_ID: 3}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=2)  # older than the tombstone: refused
+    refresh(served)
+    assert held_of(served) is None
+
+
+def test_a_revoked_op_cert_makes_the_held_object_absent_on_the_next_read_and_deletes_it(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    assert status(served)["publish_where"] is not None
+    st = _state(served)
+    st.revoked_op_certs.append(st.card["op_cert"]["o"]["cert_id"])
+    hubops._save_state(_service(served), st)  # noqa: SLF001
+    assert status(served)["publish_where"] is None  # absent, no suggestion
+    assert held_of(served) is None  # and gone from hub.json
+
+
+def test_the_tombstone_survives_leave_and_a_rejoin_never_takes_an_older_seq(human, served, monkeypatch, probe):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=7)
+    refresh(served)
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
+    assert held_of(served) is None and floor_seqs(served) == {HUB_ID: 7}
+    from tests.hub.fake import signed_publish_where
+
+    card = copy.deepcopy(CARD)
+    hub.join_answer = {"publish_where": signed_publish_where(seq=3)}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)  # the re-join's own hub_where offers the older one too
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    ok(served.client().req("hub.connect", {"invite": "invite-2", "hub_card": card, "addr": "127.0.0.1:9"}, idem=True))
+    hubaddr.wait_idle()  # the connect's own address work runs in the background: let it finish before the next refresh
+    assert _state(served).status == "bound" and held_of(served) is None  # the join stands, the old object is refused
+    assert floor_seqs(served) == {HUB_ID: 7}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=8)
+    refresh(served)
+    assert held_of(served) == (8, "https://apps.example.org")
+
+
+def test_an_unbind_of_a_binding_the_log_moved_past_clears_the_held_object_and_keeps_the_tombstone(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=4)
+    refresh(served)
+    assert held_of(served) == (4, "https://apps.example.org")
+    from types import SimpleNamespace
+
+    service = _service(served)
+    monkeypatch.setattr(hubops, "_audit", lambda *a, **k: None)
+    state = _state(served)
+    assert state.status == "bound" and state.binding_seq == 1
+    plan = {"model": {"hub_id": HUB_ID, "status": "joined", "binding_seq": 2}}  # the log moved on to binding 2
+    saved = []
+    out = hubops._unbind(  # noqa: SLF001
+        SimpleNamespace(service=service), plan, state, None, b"", lambda: 0, lambda s: saved.append(s.publish_where),
+        None, lambda **kw: None,
+    )  # fmt: skip
+    assert out["binding_ended"] is True and saved == [None]  # cleared before it was saved
+    assert state.publish_where is None and state.publish_where_floors[HUB_ID]["seq"] == 4
+
+
+def test_a_background_store_that_finishes_after_a_leave_restores_neither_bound_nor_the_object(
+    human, served, monkeypatch, probe
+):
+    from tests.hub.fake import signed_publish_where
+
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    started = _state(served)  # what a hub_where that began before the leave holds
+    human.run("hub.leave", {})
+    ok(served.client().req("hub.unbind", {}, idem=True))
+    assert _state(served).status == "unbound" and held_of(served) is None
+    on_disk = _state(served).to_json()
+    pw = signed_publish_where(seq=9)
+    assert hubaddr._store(_service(served), started, ["10.0.0.5:8105"], ["10.0.0.5:8105"], "Late", pw) is False  # noqa: SLF001
+    assert _state(served).to_json() == on_disk  # still unbound, no object, no new address, no new floor
+    assert floor_seqs(served) == {HUB_ID: 3}
+    # nor does the same finish with no object (the "hub stopped advertising it" branch) write anything
+    assert hubaddr._store(_service(served), started, [], [], None, None) is False  # noqa: SLF001
+    assert _state(served).to_json() == on_disk
+
+
+def test_saving_a_copy_loaded_before_a_background_store_never_lowers_the_tombstone_or_brings_back_the_old_object(
+    human, served, monkeypatch, probe
+):
+    hub = bound(served, human, monkeypatch)
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    stale = _state(served)  # a join or leave that loaded this and is still busy on the network
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=6, share="https://new.example.org")
+    refresh(served)
+    assert held_of(served) == (6, "https://new.example.org")
+    hubops._save_state(_service(served), stale)  # noqa: SLF001
+    assert floor_seqs(served) == {HUB_ID: 6}  # the tombstone only grows
+    assert held_of(served) == (6, "https://new.example.org")  # the object the newer store kept is not undone
+    stale2 = _state(served)
+    stale2.status = "unbound"  # a leave's copy: nothing is held after it, whatever was stored meanwhile
+    stale2.publish_where = None
+    hubops._save_state(_service(served), stale2)  # noqa: SLF001
+    assert held_of(served) is None and floor_seqs(served) == {HUB_ID: 6}
+
+
+@pytest.mark.parametrize("exc", [JcsError("x"), RecursionError(), OverflowError(), RuntimeError("boom")])
+@pytest.mark.parametrize("with_object", [True, False])
+def test_any_exception_of_the_publish_where_never_fails_the_refresh_and_the_addresses_are_kept(
+    human, served, monkeypatch, probe, exc, with_object
+):
+    from orch.hubclient import publish_held
+
+    hub = bound(served, human, monkeypatch)
+    probe.live = {"10.0.0.5:8105", "10.0.0.6:8105"}
+    hub.where_answer = with_pw("10.0.0.5:8105", seq=3)
+    refresh(served)
+    assert held_of(served) == (3, "https://apps.example.org")
+
+    def boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr(publish_held, "offer" if with_object else "read", boom)
+    hub.where_answer = (with_pw if with_object else where)("10.0.0.6:8105", **({"seq": 4} if with_object else {}))
+    assert refresh(served)["hub_id"] == HUB_ID  # the refresh answers
+    assert "10.0.0.6:8105" in _state(served).addrs  # the addresses of the same answer are stored
+    assert held_of(served) == (3, "https://apps.example.org")  # the held object is left as it was
 
 
 def test_a_hub_without_hub_where_still_refreshes(human, served, monkeypatch, probe):

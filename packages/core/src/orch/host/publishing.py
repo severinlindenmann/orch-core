@@ -717,7 +717,7 @@ def _prepare(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         raise HostError("op.not_allowed", "an agent prepares shares only on the ticket its session claims")
     _gate(call)
     cfg = _config(service)
-    route = _hub_route(service)  # a hub that cannot carry the share is said now, before anything is copied or signed
+    route = _hub_route(service, sending=True)  # a hub that cannot carry the share is said now, before any copy
     hub_max = None
     if route is not None:  # a share through the hub travels in one link frame: say the file limit before the review
         from orch.hubclient.publish import HUB_FILE_MAX
@@ -849,7 +849,7 @@ def facts_for(service: WorkspaceService, args: dict[str, Any], call: Call) -> ap
     _verify_stage(service, meta)
     view = _ticket(call, meta["ticket"]["uid"])
     _may_share(call, view)
-    _hub_route(service)  # refuse BEFORE the person signs when the hub path is not usable: no signature for nothing
+    _hub_route(service, sending=True)  # refuse BEFORE the person signs when the hub path is not usable
     return approval.ApprovalFacts(meta["staged_id"], view.key, _text(service, meta, cfg))
 
 
@@ -935,11 +935,12 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         _owner(call)
     _gate(call)
     cfg = _config(service)
+    _hub_guard(service, sending=op == "publish.send")  # #1838: settings that came from a hub that is gone or moved
     plan: dict[str, Any] = {"op": op, "cfg": cfg, "person": person}
     if op == "publish.register":
         _rate(call, "register", REGISTER_PER_MINUTE)
         plan["reg"] = _delegation(call)
-        plan["hub"] = _hub_route(service)
+        plan["hub"] = _hub_route(service, guard=False)  # _hub_guard ran above
         _plan_card(call, plan)
         return plan
     if op == "publish.revoke":
@@ -949,7 +950,7 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         _ticket(call, rec["ticket"])  # a ticket the person may not see is not theirs to act on
         _rate(call, "revoke")
         plan["record"] = rec
-        plan["hub"] = _hub_route(service)
+        plan["hub"] = _hub_route(service, guard=False)
         return plan
     if op in ("publish.extend", "publish.password"):
         return _plan_link(call, plan, op, args)
@@ -966,7 +967,11 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             "must match this staged copy and this server exactly",
         )
     _rate(call, "send")
-    plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest(), hub=_hub_route(service))
+    plan.update(
+        meta=meta,
+        text_hash=hashlib.sha256(text.encode()).hexdigest(),
+        hub=_hub_route(service, sending=True, guard=False),
+    )
     registered = _registered(service, cfg) is not None
     try:  # P05: the card is at hand even when registered, so a server that lost the workspace is registered again once
         plan["reg"] = _delegation(call)
@@ -998,7 +1003,7 @@ def _plan_link(call: Call, plan: dict[str, Any], op: str, args: dict[str, Any]) 
         _rate(call, "password")
         plan["password"], plan["pw"] = _new_password()  # drawn here, in the host; the plain text never leaves the call
     plan["record"] = rec
-    plan["hub"] = _hub_route(call.service)
+    plan["hub"] = _hub_route(call.service, guard=False)  # _plan ran _hub_guard before this
     return plan
 
 
@@ -1029,12 +1034,31 @@ def _plan_card(call: Call, plan: dict[str, Any]) -> None:
     plan["card"] = card
 
 
-def _hub_route(service: WorkspaceService, *, required: bool = True) -> dict[str, Any] | None:
+def _hub_guard(service: WorkspaceService, *, sending: bool = False) -> None:
+    """#1838: publish settings that came from hub X (``hubpublish.from_hub``) are inert while this workspace is not
+    bound to X (``publish.server_refused``, reason ``hub_left``), and, for what sends (``sending``), paused while the
+    hub's verified address has moved off them (reason ``hub_moved``). Settings the person typed or signed for
+    themselves are not touched. Worker thread."""
+    from . import hubpublish
+
+    prov = hubpublish.left(service)
+    if prov is not None:
+        raise hubpublish.hub_left_error(prov)
+    if sending and (new := hubpublish.moved(service)) is not None:
+        raise hubpublish.hub_moved_error(new)
+
+
+def _hub_route(
+    service: WorkspaceService, *, required: bool = True, sending: bool = False, guard: bool = True
+) -> dict[str, Any] | None:
     """The hub this workspace publishes through. A workspace without a hub is local only (D69, V3-D36): there is no
     direct path, so a standalone workspace is refused here (``required``) or gets ``None`` (``required=False``, a read
-    that degrades). Worker thread."""
+    that degrades). Settings that came from a hub this workspace has left are refused first (:func:`_hub_guard`;
+    ``guard=False`` when the caller has just run it with the same ``sending``). Worker thread."""
     from . import hubops
 
+    if guard:
+        _hub_guard(service, sending=sending)
     route = hubops.publish_route(service)
     if route is None and required:
         raise HostError(
@@ -1124,6 +1148,12 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
             # false) instead of failing, so a page can tell the person what to do next.
             return ok_result({**out, "live": False, "why": "local"})
+        from . import hubpublish
+
+        if hubpublish.left(service) is not None:  # #1838: the settings came from a hub this workspace is not bound to
+            return ok_result({**out, "live": False, "why": "hub_left"})
+        if (new := hubpublish.moved(service)) is not None:  # the hub's verified address moved off the settings
+            return ok_result({**out, "live": False, "why": "hub_moved", "hub_moved": new})
         hub = _hub_route(service, required=False)
         if hub is None:  # local only: there is no server to ask
             return ok_result({**out, "live": False, "why": "local"})
@@ -1297,6 +1327,11 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from .workspace import ok_result
 
     try:
+        if plan["op"] in ("publish.send", "publish.register"):
+            # #1838: the plan may be old by now (a leave or a moved address since): the guard runs again here, so the
+            # reason is hub_left / hub_moved and not whatever the hub says to an unbound workspace. revoke, extend and
+            # password are guarded at plan time only: they act on links already out, and stopping one must stay possible
+            _hub_guard(call.service, sending=plan["op"] == "publish.send")
         if plan["op"] == "publish.register":
             return ok_result(_register(call, plan))
         if plan["op"] == "publish.revoke":

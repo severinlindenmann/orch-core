@@ -1,0 +1,1 @@
+workspace-f1: made by tests/upgrade/make_corpus.py at commit b15e994c67313584367fbdbaeda321277526f6b4 (format 1): a genesis, one grant, one ticket created, edited and closed, workspace + ticket checkpoints (workspace 705d40abbb8c1c90354a1acaa94c935c). Throwaway test keys only. Frozen: never edit, never regenerate in place.

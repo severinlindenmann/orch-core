@@ -50,6 +50,22 @@ describe('Open hub', () => {
     await waitFor(() => expect(screen.getByTestId('hub-open').textContent).toBe('Open hub'))
     expect((screen.getByTestId('hub-open') as HTMLButtonElement).disabled).toBe(false)
   })
+  it('ux-audit P02: Open hub opens the hub in a new tab opened in the press, and this tab stays; a failure closes it', async () => {
+    setHubScenario('selective')
+    const tab = { opener: {} as unknown, location: { href: '' }, close: vi.fn() }
+    const open = vi.fn(() => tab)
+    vi.stubGlobal('open', open)
+    renderApp('/w/DEMO/settings/hub')
+    fireEvent.click(await screen.findByTestId('hub-open'))
+    expect(open).toHaveBeenCalledWith('', '_blank')
+    expect(tab.opener).toBeNull()
+    await waitFor(() => expect(tab.location.href).toBe('https://hub.example/t/abc'))
+    expect(assign).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByTestId('hub-open').textContent).toBe('Open hub'))
+    h.hubUrl.mockReset().mockRejectedValue(new Error('no'))
+    fireEvent.click(screen.getByTestId('hub-open'))
+    await waitFor(() => expect(tab.close).toHaveBeenCalled())
+  })
   it('standalone: no Open hub', async () => {
     setHubScenario('standalone')
     renderApp('/w/DEMO/settings/hub')

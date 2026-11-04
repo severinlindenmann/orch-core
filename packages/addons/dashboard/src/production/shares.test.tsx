@@ -44,6 +44,7 @@ let workItems: { name: string; bytes: number }[] = []
 let workMore = false
 let newResult = false
 let emptyResult = false
+let doneTicket = false
 let onlyEmpty = false
 // the Publish server installed on this computer, as the host's add-on row says it (the source of "Files go to this computer.")
 const PUBLISH_ROW = { id: 'publish', title: 'Publish', desc: 'Share files.', state: 'on' as const, locked: null, blocked: null, suggest: 'http://127.0.0.1:8103', suggest_from: 'computer' as const, suggest_hub: null }
@@ -69,10 +70,11 @@ const route = () => {
   workMore = false
   newResult = false
   emptyResult = false
+  doneTicket = false
   onlyEmpty = false
   state.host.override = (path, method, body) => {
     if (path.endsWith('/tickets/DEMO-0001') && method === 'GET')
-      return Response.json({ ...ticket, ...(ticketOwner === undefined ? {} : { people: { ...ticket.people, owner: ticketOwner } }), artifacts: [...(onlyEmpty ? [] : [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }]), ...(newResult ? [{ name: 'a.txt', kind: 'report', bytes: 3, sha256: 'aa'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] : []), ...(emptyResult ? [{ name: 'T1-receipt.log', kind: 'log', bytes: 0, sha256: 'ee'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] : [])] })
+      return Response.json({ ...ticket, ...(doneTicket ? { status: 'done' } : {}), ...(ticketOwner === undefined ? {} : { people: { ...ticket.people, owner: ticketOwner } }), artifacts: [...(onlyEmpty ? [] : [{ name: 'report.md', kind: 'report', bytes: 2048, sha256: 'ab'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }, { name: 'bad/name.md', kind: 'report', bytes: 1, sha256: 'cd'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }]), ...(newResult ? [{ name: 'a.txt', kind: 'report', bytes: 3, sha256: 'aa'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] : []), ...(emptyResult ? [{ name: 'T1-receipt.log', kind: 'log', bytes: 0, sha256: 'ee'.repeat(32), added_by: 'p_x', at: '2026-10-18T08:00:00Z' }] : [])] })
     if (path.endsWith('/tickets/DEMO-0001/workdir') && method === 'GET')
       return Response.json({ available: true, exists: workItems.length > 0, codebase: false, folder: '.orch-work/DEMO-0001', files: workItems.length, bytes: 16, truncated: false, items: workItems, items_truncated: workMore })
     if (!path.includes('/shares')) return undefined
@@ -636,6 +638,16 @@ async function onResults(user: ReturnType<typeof userEvent.setup>) {
   return await screen.findByRole('list', { name: 'Artifacts' }, T)
 }
 
+it('B12: a done ticket with a real result file and Publish on offers Publish as link; the empty receipt next to it does not', async () => {
+  route()
+  doneTicket = true
+  emptyResult = true
+  const user = userEvent.setup()
+  const list = await onResults(user)
+  expect(within(list).getByRole('button', { name: 'Publish report.md as a link' })).toBeEnabled()
+  expect(within(list).queryByRole('button', { name: 'Publish T1-receipt.log as a link' })).toBeNull()
+})
+
 it('Publish as link: one press prepares the copy and opens exactly ONE sign sheet (Publish); nothing is signed or sent before Sign; the link shows ONCE', async () => {
   route()
   const user = userEvent.setup()
@@ -1016,4 +1028,20 @@ it('P17: people sharing is named in the ticket panel even when there are no file
   const panel = await screen.findByTestId('ticket-shares', {}, T)
   await waitFor(() => expect(panel).toHaveTextContent('Shared with Ben; no file links.'), T)
   expect(panel).not.toHaveTextContent('Nothing is shared')
+})
+
+it('lists pre-join hub shares and opens the confirming sync review without sending', async () => {
+  route()
+  state.host.workspaces[0].features = [...READS, 'publish', 'hub']
+  const previous = state.host.override
+  state.host.override = (path, method, body) => {
+    if (path.endsWith('/hub/share')) return Response.json({ available: true, rules: [], shared: 0, refused: [], tickets: ['DEMO-0001'], tickets_complete: true, tickets_state: { 'DEMO-0001': 'not_sent' }, not_sent_count: 1 })
+    if (path.endsWith('/hub/share/preview')) return Response.json({ count: 1, new: 1, revoked: 0, more: 0, items: [], rules: [], plan: 'P'.repeat(43), review: { hub_id: 'demo', readers: { people: [], teams: [], note: null, info: null }, widened: [], new_count: 1, new_more: 0, new_items: ['ticket DEMO-0001: A ticket'], leaves: ['the title, status, labels and deadline'], later_edits: 'Later edits are shared too.' } })
+    return previous?.(path, method, body)
+  }
+  show('/w/DEMO/shares')
+  expect(await screen.findByText('1 shares are not sent yet.', {}, T)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Send now' }))
+  expect(await screen.findByRole('button', { name: 'Sign' }, T)).toBeTruthy()
+  expect(calls('/hub/share/sync')).toHaveLength(0)
 })

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
@@ -139,6 +139,8 @@ it('History lists the changes with ticket chips, shows one change and compares t
 it('the sidebar lists Files only while the explorer is served', async () => {
   route()
   show('/w/DEMO/board')
+  // P67: this entry sits in the side rail's "More" group
+  fireEvent.click(await screen.findByRole('button', { name: 'More' }, T))
   expect(await screen.findByRole('link', { name: 'Files' }, T)).toBeInTheDocument()
 })
 

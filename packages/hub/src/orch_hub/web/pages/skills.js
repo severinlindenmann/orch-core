@@ -77,4 +77,4 @@ export async function skillsPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "skills", nav: { label: "Skills", admin: true, needsWorkspace: true, after: "addons" }, render: skillsPage };
+export const page = { path: "skills", nav: { group: "Sharing & apps", label: "Skills", admin: true, needsWorkspace: true, after: "addons" }, render: skillsPage };

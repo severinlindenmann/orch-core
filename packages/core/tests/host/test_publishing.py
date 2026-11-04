@@ -1834,3 +1834,274 @@ def test_why_the_servers_numbers_are_missing(exc, why):
     from orch.host.publishing import _why_not_live
 
     assert _why_not_live(exc) == why
+
+
+# -- #1838: where the hub says to publish: provenance, inert after leave, moved ---------------------------------------
+
+
+NEW_SHARE = "http://127.0.0.1:8105"
+
+
+def hold(w, seq=1, server=SERVER, share=SHARE, **kw):
+    """The hub's signed ``publish_where`` as the host keeps it, through the one verifier (join and ``hub_where``)."""
+    from orch.hubclient import publish_held
+    from tests.hub.fake import signed_publish_where
+
+    service = w.served.service
+    with hubops._MU:
+        state = hubops._load_state(service)
+        code, _ = publish_held.offer(
+            state, signed_publish_where(seq=seq, server=server, share=share, **kw), int(service.clock() * 1000)
+        )
+        assert code is None, code
+        hubops._write_state(service, state)
+
+
+def sign_settings(w, server=SERVER, share=SHARE):
+    w.human.run("settings.set", {"set": {"publish": {"server": server, "share": share}}})
+
+
+def from_hub_file(w):
+    path = w.base() / "from_hub.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def status_of(w):
+    return ok(w.served.client().req("hub.status", {}, idem=False))["data"]
+
+
+def staged_and_approved(w):
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    staged = w.prepare(key, "report.md")["staged_id"]
+    w.approve(staged)
+    return staged
+
+
+def test_signing_the_hubs_values_records_where_they_came_from_in_an_unsigned_file_next_to_the_config(w):
+    hold(w)
+    assert from_hub_file(w) is None and status_of(w)["publish_from"] is None  # configured by hand so far
+    sign_settings(w)
+    assert from_hub_file(w) == {"hub_id": HUB_ID, "hub_name": None, "server": SERVER, "share": SHARE}
+    assert status_of(w)["publish_from"] == {"hub_id": HUB_ID, "hub_name": None}
+    assert oct((w.base() / "from_hub.json").stat().st_mode & 0o777) == "0o600"
+    # the signed setting itself keeps its shape: {server, share}, nothing about a hub
+    assert hubops.workspace_dev(w.served.service)
+    assert dict(w.served.service.store.state.workspace.settings["publish"]) == {"server": SERVER, "share": SHARE}
+
+
+def test_values_that_are_not_the_hubs_record_nothing_and_clear_an_earlier_record(w):
+    hold(w)
+    sign_settings(w, share=NEW_SHARE)  # the person's own choice
+    assert from_hub_file(w) is None
+    sign_settings(w)
+    assert from_hub_file(w) is not None
+    sign_settings(w, share=NEW_SHARE)  # re-confirming with anything else ends the hub's claim
+    assert from_hub_file(w) is None and status_of(w)["publish_from"] is None
+
+
+def test_the_same_values_with_no_verified_object_held_record_no_provenance(w):
+    sign_settings(w)  # the hub holds nothing: the values alone make no provenance
+    assert from_hub_file(w) is None
+
+
+def test_after_leave_the_settings_that_came_from_the_hub_are_inert_until_reconfirmed(w):
+    hold(w)
+    sign_settings(w)
+    staged = staged_and_approved(w)
+    uid, key = w.ticket_with(**{"other.md": REPORT})
+    w.human.run("hub.leave", {})
+    res = w.send(staged)
+    assert err(res) == "publish.server_refused" and res["error"]["detail"] == {"reason": "hub_left"}
+    assert "Sharing went through your hub. Connect again, or set a sharing server." in res["error"]["message"]
+    assert w.server.requests == [] and w.stage_dir(staged).exists()  # nothing left the computer, the copy waits
+    reg = w.req("publish.register", {})
+    assert err(reg) == "publish.server_refused" and reg["error"]["detail"] == {"reason": "hub_left"}
+    live = ok(w.req("publish.list", {"live": True}))["data"]
+    assert live["live"] is False and live["why"] == "hub_left"
+    prep = w.req("publish.prepare", {"ref": key, "artifacts": ["other.md"]})
+    assert err(prep) == "publish.server_refused" and prep["error"]["detail"] == {"reason": "hub_left"}
+    # re-confirming (signing publish settings again) clears it: the plain "no hub" answers are back
+    sign_settings(w)
+    assert from_hub_file(w) is None
+    assert ok(w.req("publish.list", {"live": True}))["data"]["why"] == "local"
+    assert err(w.send(staged)) == "hub.not_joined"
+
+
+def test_the_inert_text_names_the_hub_when_the_hub_told_its_name(w):
+    service = w.served.service
+    with hubops._MU:
+        state = hubops._load_state(service)
+        state.hub_name = "Acme hub"
+        hubops._write_state(service, state)
+    hold(w)
+    sign_settings(w)
+    staged = staged_and_approved(w)
+    w.human.run("hub.leave", {})
+    msg = w.send(staged)["error"]["message"]
+    assert msg == "Sharing went through your hub Acme hub. Connect again, or set a sharing server."
+
+
+def test_settings_typed_by_hand_are_not_inert_after_leave(w):
+    staged = staged_and_approved(w)
+    w.human.run("hub.leave", {})
+    assert err(w.send(staged)) == "hub.not_joined"  # as before #1838: no provenance, no new reason
+
+
+def test_when_the_hub_moves_the_address_the_row_says_hub_moved_and_a_send_is_refused(w):
+    hold(w)
+    sign_settings(w)
+    staged = staged_and_approved(w)
+    assert status_of(w)["publish_moved"] is None
+    hold(w, seq=2, share=NEW_SHARE)
+    moved = {"server": SERVER, "share": NEW_SHARE}
+    assert status_of(w)["publish_moved"] == moved and status_of(w)["publish_where"]["share"] == NEW_SHARE
+    live = ok(w.req("publish.list", {"live": True}))["data"]
+    assert live["live"] is False and live["why"] == "hub_moved" and live["hub_moved"] == moved
+    res = w.send(staged)
+    assert err(res) == "publish.server_refused" and res["error"]["detail"] == {"reason": "hub_moved"}
+    assert res["error"]["message"] == "Sharing paused: your hub now shares through 127.0.0.1:8105."
+    assert w.server.requests == []
+    uid, key = w.ticket_with(**{"other.md": REPORT})
+    assert err(w.req("publish.prepare", {"ref": key, "artifacts": ["other.md"]})) == "publish.server_refused"
+    # signing the new values is the way out
+    sign_settings(w, share=NEW_SHARE)
+    assert status_of(w)["publish_moved"] is None and from_hub_file(w)["share"] == NEW_SHARE
+
+
+def test_a_revoked_op_cert_ends_the_moved_state_with_the_suggestion(w):
+    hold(w)
+    sign_settings(w)
+    hold(w, seq=2, share=NEW_SHARE)
+    assert status_of(w)["publish_moved"] is not None
+    service = w.served.service
+    with hubops._MU:
+        state = hubops._load_state(service)
+        state.revoked_op_certs.append(state.card["op_cert"]["o"]["cert_id"])
+        hubops._write_state(service, state)
+    got = status_of(w)
+    assert got["publish_where"] is None and got["publish_moved"] is None
+    assert from_hub_file(w) is not None  # the record stays; it is only the hub's word that is gone
+
+
+def test_a_setting_signed_in_another_spelling_of_the_held_origins_is_the_same_address_and_not_moved(w):
+    from orch.host import hubpublish
+
+    hold(w, server="https://pub.example.org", share="https://apps.example.org")
+    service = w.served.service
+    canonical = {
+        "hub_id": HUB_ID, "hub_name": None, "server": "https://pub.example.org", "share": "https://apps.example.org",
+    }  # fmt: skip
+    sign_settings(w, server="https://pub.example.org:443", share="https://apps.example.org")  # the schema's spelling
+    assert from_hub_file(w) == canonical  # the record keeps the canonical values, not the person's spelling
+    got = status_of(w)
+    assert got["publish_from"] == {"hub_id": HUB_ID, "hub_name": None} and got["publish_moved"] is None
+    publishing._hub_guard(service, sending=True)  # not hub_moved, not hub_left: nothing raised
+    # the event schema only lets the default port through as another spelling; the comparison is canonical anyway
+    assert hubpublish._same("https://Pub.Example.org.:443", "https://pub.example.org", True)  # noqa: SLF001
+    assert not hubpublish._same("https://pub.example.org:8443", "https://pub.example.org", True)  # noqa: SLF001
+    # a real move is still seen, and compared canonically too
+    hold(w, seq=2, server="https://pub.example.org", share="https://new.example.org")
+    assert status_of(w)["publish_moved"] == {"server": "https://pub.example.org", "share": "https://new.example.org"}
+    # a record written with the raw spelling (as before) is read the same way
+    (w.base() / "from_hub.json").write_text(json.dumps({**canonical, "server": "https://Pub.Example.org:443"}))
+    assert status_of(w)["publish_from"] is not None
+
+
+def test_a_value_in_force_that_cannot_be_canonicalised_is_compared_as_written_so_the_guards_stay_on(w, monkeypatch):
+    from orch.host import hubpublish
+
+    hold(w)
+    sign_settings(w)
+    service = w.served.service
+    record = from_hub_file(w)
+    assert hubpublish.from_hub(service) == record
+    monkeypatch.setattr(hubpublish, "_canon", lambda value, dev: None)  # e.g. a ``.lan`` set before the rule
+    assert hubpublish.from_hub(service) == record  # raw equality: not None, not failing open
+    w.human.run("hub.leave", {})
+    assert hubpublish.left(service) == record  # hub_left still applies
+    (w.base() / "from_hub.json").write_text(json.dumps({**record, "share": "https://other.example.org"}))
+    assert hubpublish.from_hub(service) is None  # a record that names other values is not the settings' record
+
+
+def test_the_guard_runs_once_at_plan_time_and_once_at_execution_and_status_reads_each_thing_once(w, monkeypatch):
+    from orch.host import hubpublish
+
+    hold(w)
+    sign_settings(w)
+    staged = staged_and_approved(w)
+    calls = {"left": 0, "held": 0, "from_hub": 0}
+    for name, real in (("left", hubpublish.left), ("held", hubpublish.held), ("from_hub", hubpublish.from_hub)):
+
+        def counted(*a, _name=name, _real=real, **k):
+            calls[_name] += 1
+            return _real(*a, **k)
+
+        monkeypatch.setattr(hubpublish, name, counted)
+    # `left` runs from_hub once itself; moved() (sending) runs held once more
+    res = w.send(staged)
+    assert ok(res)["data"]
+    assert calls["left"] == 2  # _plan's guard and the executor's: _hub_route does not run it a third time
+    calls.update(held=0, from_hub=0)
+    status_of(w)
+    assert calls["held"] == 1 and calls["from_hub"] == 1  # status_fields: one read of each, passed down to moved()
+
+
+def test_a_plan_made_before_a_leave_or_a_move_is_refused_by_the_guard_when_it_runs(w):
+    from types import SimpleNamespace
+
+    hold(w)
+    sign_settings(w)
+    service = w.served.service
+    call = SimpleNamespace(service=service)
+    hold(w, seq=2, share=NEW_SHARE)  # the hub moved on after the plan was made
+    service.store.refresh()
+    for op, reason in (("publish.send", "hub_moved"),):
+        with pytest.raises(HostError) as e:
+            publishing._run(call, {"op": op})
+        assert e.value.code == "publish.server_refused" and e.value.detail == {"reason": reason}
+    w.human.run("hub.leave", {})  # and then the workspace left it
+    service.store.refresh()
+    for op in ("publish.send", "publish.register"):
+        with pytest.raises(HostError) as e:
+            publishing._run(call, {"op": op})
+        assert e.value.code == "publish.server_refused" and e.value.detail == {"reason": "hub_left"}
+    assert w.server.requests == []  # the executor never reached the network
+
+
+def test_the_run_time_guard_covers_send_and_register_and_not_the_ops_that_act_on_links_already_out(w, monkeypatch):
+    """#1840 R1: ``_run`` re-guards ``publish.send`` (``sending=True``) and ``publish.register`` (``sending=False``) and
+    never revoke, extend, password or list: stopping a link that is out must stay possible after a leave or a move."""
+    from types import SimpleNamespace
+
+    hold(w)
+    sign_settings(w)
+    service = w.served.service
+    call = SimpleNamespace(service=service)
+    guarded: list[tuple[str, bool]] = []
+    real_guard = publishing._hub_guard
+
+    def spy(svc, *, sending=False):
+        guarded.append(("send" if sending else "other", sending))
+        return real_guard(svc, sending=sending)
+
+    monkeypatch.setattr(publishing, "_hub_guard", spy)
+    ran: list[str] = []
+    for name in ("_register", "_send", "_revoke", "_extend", "_set_password", "_live"):
+        monkeypatch.setattr(publishing, name, lambda c, p, _n=name: ran.append(_n) or {})
+    w.human.run("hub.leave", {})  # the hub is gone: send and register must now be refused at run time ...
+    service.store.refresh()
+    for op in ("publish.send", "publish.register"):
+        with pytest.raises(HostError) as e:
+            publishing._run(call, {"op": op})
+        assert e.value.detail == {"reason": "hub_left"}
+    assert ran == [] and guarded == [("send", True), ("other", False)]
+    guarded.clear()
+    for op, fn in (
+        ("publish.revoke", "_revoke"),
+        ("publish.extend", "_extend"),
+        ("publish.password", "_set_password"),
+        ("publish.list", "_live"),
+    ):  # ... and these run on, with no guard at all
+        publishing._run(call, {"op": op})
+        assert ran[-1] == fn
+    assert guarded == []

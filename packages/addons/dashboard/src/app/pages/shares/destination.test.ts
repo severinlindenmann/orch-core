@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { destinationLine, hostOf, sameOrigin } from '@/api/shares'
+import { destinationLine, hostOf, hubMovedText, sameOrigin } from '@/api/shares'
 
 // The one plain line every publish review keeps in its main view: where the files go, by name.
 it('"this computer" only when the Publish server on this computer is the known source', () => {
@@ -12,6 +12,21 @@ it('"this computer" only when the Publish server on this computer is the known s
 it('a hub that supplied the address is named, also at a loopback address', () => {
   expect(destinationLine('hub', 'Anna’s hub', 'http://127.0.0.1:8102')).toBe('Files go to your hub, Anna’s hub.')
   expect(destinationLine('hub', null, 'http://127.0.0.1:8102')).toBe('Files go to your hub.')
+})
+
+it('a review that signs the server names its host after a name that is not signed', () => {
+  expect(destinationLine('hub', 'Anna’s hub', 'http://127.0.0.1:8102', true)).toBe('Files go to your hub, Anna’s hub (127.0.0.1).')
+  expect(destinationLine('hub', null, 'https://pub.example.org', true)).toBe('Files go to your hub (pub.example.org).')
+  expect(destinationLine('computer', null, 'http://127.0.0.1:8102', true)).toBe('Files go to this computer (127.0.0.1).')
+  expect(destinationLine(null, null, 'https://pub.example.org', true)).toBe('Files go to pub.example.org.') // already the host: not twice
+})
+
+it('hubMovedText names whichever of files and links moved, or both when the old pair is not known', () => {
+  const moved = { server: 'https://api.new.example', share: 'https://links.new.example' }
+  expect(hubMovedText(moved, { server: 'https://api.new.example/', share: 'https://links.old.example' })).toBe('Sharing paused: your hub now shares links through links.new.example.')
+  expect(hubMovedText(moved, { server: 'https://api.old.example', share: 'https://links.new.example' })).toBe('Sharing paused: your hub now takes files at api.new.example.')
+  expect(hubMovedText(moved, { server: 'https://api.old.example', share: 'https://links.old.example' })).toBe('Sharing paused: your hub now takes files at api.new.example and shares links through links.new.example.')
+  expect(hubMovedText(moved, null)).toBe('Sharing paused: your hub now takes files at api.new.example and shares links through links.new.example.')
 })
 
 it('an unknown server has no line', () => {

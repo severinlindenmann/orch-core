@@ -255,6 +255,9 @@ class WebDeps:
     switch: Any = None
     #: relay/publish health for the Services page (``orch_hub.services.Services``); None = ``unavailable``
     services: Any = None
+    #: B03: ``(workspace_ids) -> None`` pushes each workspace's latest binding to orch-publish before an admin read, so a
+    #: mode switch whose sync failed does not hide full-mode links (``HubPublish.resync``); None = no push
+    publish_sync: Callable[[list[str]], None] | None = None
     #: the service helper's socket client (``orch_hub.services.helper_client``); None = no helper (buttons stay hidden)
     helper: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
@@ -1255,10 +1258,17 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         is signed in here already. The ticket is not used."""
         b = _need(b, t=str)
         self._limit.hit("switch-peek", c.source, SWITCH_PEEK_LIMIT)
+        sw = self._switch()
         try:
-            r = self._switch().peek(b["t"], "to_hub")
+            r = sw.peek(b["t"], "to_hub")
         except SwitchError:
             raise ApiError("bad_ticket") from None
+        # ux-audit P02: the way back to the workspace the person came from (its dashboard origin, as the switch holds
+        # it; the page only ever navigates to an http(s) origin through safeUrl). Told only to the holder of the
+        # ticket, which is a one-time secret handed to that person.
+        ws = r.get("ws")
+        origin = sw.origin_of(ws) if type(ws) is str else None
+        name = self.d.registry.display_name(ws) if origin is not None else None
         return (
             200,
             {
@@ -1266,6 +1276,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
                 "user_id": r["user"],
                 "name": self._user_name(r["user"]),
                 "signed_in_as": self._session_name(c.cookie_value),
+                "workspace": None if origin is None else {"name": name, "origin": origin},
             },
             [],
         )

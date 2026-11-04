@@ -6,17 +6,17 @@ import type { TicketDocument } from '@/api/types'
 export function peopleShareLabel(ticket: Pick<TicketDocument, 'key' | 'type' | 'labels'>, share?: HubShare, audience?: HubAudienceList): string | null {
   if (!share?.available || !share.tickets.includes(ticket.key)) return null
   const rules = share.rules.filter(r => r.kind === 'ticket' && r.value === ticket.key || r.kind === 'type' && r.value === ticket.type || r.kind === 'tag' && ticket.labels.includes(r.value ?? ''))
-  if (!rules.length || rules.some(r => !r.audience) || !audience) return 'Shared'
+  if (!rules.length || rules.some(r => !r.audience) || !audience) return 'Shared with the hub'
   const names: string[] = []
   for (const rule of rules) {
     for (const id of rule.audience!.users) {
       const name = audience.people.find(p => p.user_id === id)?.name
-      if (!name) return 'Shared'
+      if (!name) return 'Shared with the hub'
       names.push(name)
     }
     names.push(...rule.audience!.groups)
   }
-  return names.length ? `Shared with ${[...new Set(names)].join(', ')}` : 'Shared'
+  return names.length ? `Shared with ${[...new Set(names)].join(', ')}` : 'Shared with the hub'
 }
 
 export function usePeopleShare(ws: string | undefined, ticket: TicketDocument, enabled: boolean) {

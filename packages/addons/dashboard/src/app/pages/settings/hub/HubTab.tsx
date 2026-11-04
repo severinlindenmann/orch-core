@@ -8,6 +8,7 @@ import { Raw } from '@/components/sign/visible'
 import { Action, Details, Panel, hubTitle, useFullAllowed, useHub, violet } from './shared'
 import { JoinFlow, connectFromHash } from './JoinFlow'
 import { FullSwitch } from './FullSwitch'
+import { HubSharing } from './HubSharing'
 import { LeaveFlow } from './LeaveFlow'
 import { ShareRules, AlwaysShared } from './ShareRules'
 import { NotTold } from './NotTold'
@@ -65,6 +66,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       {(s.reseal_needed || s.key_change_pending || s.log_sync_stuck || s.link === 'joining' || s.link === 'switching') && <Panel title="Hub needs attention" tone="border-warning/40 bg-warning-soft"><p>The hub connection has work pending. Check its state in a terminal before making changes.</p></Panel>}
       {s.mode === 'standalone' && <StandalonePage onJoin={() => setFlow('join')} />}
       {(s.mode === 'selective' || s.mode === 'full') && <OpenHub ws={ws} />}
+      {(s.mode === 'selective' || s.mode === 'full') && <HubSharing workspace={workspace} />}
       {s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} />}
       {s.mode === 'full' && <FullPage status={s} onLeave={() => setFlow('leave')} />}
       <Network workspace={workspace} />

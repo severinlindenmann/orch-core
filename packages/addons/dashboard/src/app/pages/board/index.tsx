@@ -29,7 +29,7 @@ import { noteRect } from '@/lib/motion'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { BoardColumnsSkeleton } from '../skeletons'
 import { useWorkspace } from '@/app/workspace'
-import { usePageHeader } from '@/app/shell/ShellUi'
+import { usePageHeader, useShellActions } from '@/app/shell/ShellUi'
 import { useSlot } from '@/addon-ui'
 import { AddonLanes, laneId } from './AddonLane'
 import { BOARD_COL_MIN, BOARD_RAIL, boardColumnsWidth, railedColumns } from './autoRail'
@@ -146,7 +146,7 @@ function Column({
         {visible.length === 0 ? (
           <div className="flex flex-col items-center gap-1 px-2 py-8 text-center text-[12px] text-text-faint">
             <p>Nothing here</p>
-            {filtering ? <p>No {STATUS_LABEL[status].toLowerCase()} tickets match the filters.</p> : status === 'backlog' && <p>Create a ticket (c)</p>}
+            {filtering ? <p>No {STATUS_LABEL[status].toLowerCase()} tickets match the filters.</p> : status === 'backlog' && <p>Create a ticket</p>}
           </div>
         ) : (
           visible.map((t) => <TicketCard key={t.key} ticket={t} people={people} me={me} task={tasks.get(t.key)} canMove={canMove} display={display} onOpen={onOpen} onMove={onMove} />)
@@ -178,6 +178,8 @@ export function BoardPage() {
   const [handoffMove, setHandoffMove] = useState<{ key: string; to: 'backlog' | 'open' } | null>(null)
   const role = useRole()
   const canMove = can(role, 'ticket.move')
+  const canCreate = can(role, 'ticket.create')
+  const { openNewTicket } = useShellActions()
   const boardRef = useRef<HTMLDivElement>(null)
   const lanes = useSlot('board.lane')
   const refocus = useRef<{ key: string; status: Status } | null>(null)
@@ -375,6 +377,13 @@ export function BoardPage() {
         <LoadFailed what="the board" onRetry={() => void meQ.refetch()} />
       ) : isPending || !me ? (
         <BoardColumnsSkeleton />
+      ) : tickets.length === 0 && canCreate ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border px-6 py-16 text-center" data-testid="board-empty">
+          <p className="text-[15px] font-medium text-text">No tickets yet</p>
+          <Button size="lg" data-testid="first-task" onClick={openNewTicket}>
+            Give your AI helper a task
+          </Button>
+        </div>
       ) : view === 'list' ? (
         <ListView tickets={filtered} people={people} onOpen={open} />
       ) : (

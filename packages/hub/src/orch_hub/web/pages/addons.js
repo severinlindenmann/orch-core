@@ -92,4 +92,4 @@ export async function addonsPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "addons", nav: { label: "Add-ons", admin: true, needsWorkspace: true, after: "services" }, render: addonsPage };
+export const page = { path: "addons", nav: { group: "Sharing & apps", label: "Add-ons", admin: true, needsWorkspace: true, after: "services" }, render: addonsPage };

@@ -103,12 +103,15 @@ def save(state: Path, settings: dict[str, Any]) -> None:
     write_atomic(state / SETTINGS_FILE, (json.dumps(clean, indent=2, sort_keys=True) + "\n").encode())
 
 
-def where_answer(state: Path, *, extra_public: str | None = None, publish: str | None = None) -> dict[str, Any]:
+def where_answer(
+    state: Path, *, extra_public: str | None = None, publish_where: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The ``hub_where`` reply (protocol 10.9) built from the settings file only: the entries that have a link address, in
     file order (at most 4), and the name. A missing or damaged file, or nothing with a link, is ``unavailable``: the
     host keeps what it holds. ``extra_public`` (``serve --link-ws-public``, R6) is a ``ws://``/``wss://`` address of the
-    hub's front, listed last as kind ``public`` (a hint like every address; it takes one of the 4 places). The reply is
-    validated with the same checker the host replays."""
+    hub's front, listed last as kind ``public`` (a hint like every address; it takes one of the 4 places).
+    ``publish_where`` (#1838, §10.9.1) is the hub's signed ``hub.publish_where``, carried as is; there is no unsigned
+    publish address any more. The reply is validated with the same checker the host replays."""
     from .contract.hub import Refused
     from .contract.where import check_hub_where
 
@@ -126,8 +129,8 @@ def where_answer(state: Path, *, extra_public: str | None = None, publish: str |
     if extra_public is not None and all(e["link"] != extra_public for e in entries):
         entries = [*entries[: 4 - 1], {"kind": "public", "link": extra_public}]
     answer: dict[str, Any] = {"addresses": entries, "name": s["name"]}
-    if publish is not None:  # P02: where this hub's publish server is, so a joined workspace needs no typed address
-        answer["publish"] = publish
+    if publish_where is not None:
+        answer["publish_where"] = publish_where
     return check_hub_where(answer)
 
 

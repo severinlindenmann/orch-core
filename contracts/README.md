@@ -22,6 +22,11 @@ every consumer in the same commit, list them in the PR, and expect the `contract
 | `core/followup_addon_event_vectors.json` | add-on events in follow-ups (#718, addon-api 1.2): `addon.granted` with `events`, `followup.set` on an add-on event (with and without a status filter), `followup.fired` with the add-on event, and the refusals (undeclared status, another add-on's kind, ref of the wrong format, event outside the set..wake window). Unsigned, model-level scenarios | core | core `tests/model/test_followup_addon_vectors.py` (the hub summary, dashboard and phone render these shapes: replay the same steps if they check them) |
 | `core/r2_framing.json` | R2 bridge framing vectors; also the source of the phone's `PhoneRetryTableGenerated.swift` | none: FROZEN. Its producer, the host bridge `orch.relay`, was deleted in R4c (`b31b5befe`); the generator went with it (#1300). To regenerate, check out `b31b5befe^` | mobile (`R2FramingVectorTests`, `gen_retry_table.py --check`) |
 
+`formats/<kind>.json` (`host`, `workspace`, `hub`, `relay`, `publish`) are not protocol vectors: they are the baseline of
+the persisted-format guard (`scripts/formats.py`, checked by each package's `tests/test_format_guard.py`; see
+`docs/architecture/persisted-formats.md`). Regenerate one only with `python scripts/formats.py --update <kind>`, after the
+migration step and the `CURRENT` bump.
+
 Two files stay next to their code on purpose:
 
 - `packages/core/src/orch/identity/reader_kat_1.json` ships inside core's wheel (the host reads it at run time); the F1

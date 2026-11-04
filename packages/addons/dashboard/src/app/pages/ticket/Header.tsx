@@ -1,4 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { ShareDelivery } from './ShareDelivery'
+import { SendSharesReview } from '../settings/hub/SendShares'
 import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
@@ -174,6 +176,8 @@ export interface ShareTicket {
   shared: boolean
   label?: string | null
   stop?: () => void
+  state?: string
+  send: () => void
   run: () => void
   node: React.ReactNode
 }
@@ -189,15 +193,15 @@ function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
   const ws = home?.id
   const share = usePeopleShare(ws, ticket, viewer.role === 'owner')
   const hubbed = share.joined
-  const [open, setOpen] = useState<'share' | 'stop' | null>(null)
+  const [open, setOpen] = useState<'share' | 'stop' | 'send' | null>(null)
   const shown = hubbed && !!share.data?.available && ticket.status !== 'closed'
   const shared = !!share.label
   const node = open && home ? (
-    open === 'share'
+    open === 'send' ? <SendSharesReview workspace={home} onClose={() => setOpen(null)} /> : open === 'share'
       ? <ShareTicketDialog key="share" ws={home.id} workspace={home} ticket={ticket.key} title={ticket.title} onClose={() => setOpen(null)} />
       : <StopSharing key="stop" ws={home.id} workspace={home} ticket={ticket.key} onClose={() => setOpen(null)} />
   ) : null
-  return { shown, shared, label: share.label, run: () => setOpen('share'), stop: () => setOpen('stop'), node }
+  return { shown, shared, label: share.label, state: share.data?.tickets_state?.[ticket.key], send: () => setOpen('send'), run: () => setOpen('share'), stop: () => setOpen('stop'), node }
 }
 
 export interface ShareFiles {
@@ -609,7 +613,10 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
             Restricted
           </Pill>
         )}
-        {share.shared && <span data-testid="shared-chip"><Pill>{share.label ?? 'Shared'}</Pill></span>}
+        {/* W5 P17 names the people once it is sent; X3 says what is still on its way (Waiting / Not sent yet + Send now / refused) */}
+        {share.shared && (share.state === undefined || share.state === 'sent'
+          ? <span data-testid="shared-chip"><Pill>{share.label ?? 'Shared with the hub'}</Pill></span>
+          : <ShareDelivery state={share.state} onSend={share.send} />)}
       </div>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">

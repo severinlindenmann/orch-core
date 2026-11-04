@@ -6,11 +6,9 @@ import { emptyState, loading } from "../feel.js";
 import { chip, h, text, when, withNames } from "../ui.js";
 
 export const STATEMENT = "The hub and its admins can read this space.";
-export const NO_START = "None of your workspaces can start a space yet. A workspace that shares only selected items can join later, once its owner accepts.";
-export const LATER = "Can join later, once its owner accepts";
 export const RESTORE_LINE = "To get an older version back, restore it from the workspace.";
 const TYPES = [["wiki", "Wiki", "Pages people write together"], ["files", "Files", "Documents everyone starts from"], ["board", "Board", "Cards that move from planned to done"]];
-export const HINT_PICK = "Tick a workspace that joins now.";
+export const HINT_PICK = "Tick a workspace that shares everything.";
 export const HINT_TICK = "Tick \u201cI understand\u201d to create the space.";
 const typeName = (t) => (TYPES.find((x) => x[0] === t) ?? [t, ""])[1];
 
@@ -54,20 +52,15 @@ export function newSpaceDialog(workspaces, done, close) {
   const tick = h("input", { type: "checkbox", id: "space-understood", "aria-label": "I understand" });
   const create = h("button", { type: "button", class: "pri", text: "Create" });
   const next = h("button", { type: "button", class: "pri", text: "Next" });
-  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner and cannot be ticked. A space needs at
-  // least one that joins now, so when none can, the reason is said up front.
+  // The hub adds only 'full' workspaces now; a 'selective' one waits for its owner and cannot be ticked.
   const joinsNow = () => workspaces.some((w) => w.mode === "full" && form.members.has(w.workspace_id));
-  const cannotStart = workspaces.length > 0 && !workspaces.some((w) => w.mode === "full");
-  const noStart = h("p", { class: "banner warn", id: "space-no-start", role: "note", text: NO_START });
   const hint = h("p", { class: "small muted space-hint", id: "space-hint", role: "note" });
   const ready = () => {
-    noStart.hidden = !cannotStart;
     create.disabled = !(form.understood === true && joinsNow());
-    // What Create is waiting for, in one line. When no workspace can start at all, the banner above says why instead.
-    hint.textContent = cannotStart || !create.disabled ? "" : joinsNow() ? HINT_TICK : HINT_PICK;
+    // What Create is waiting for, in one line.
+    hint.textContent = !create.disabled ? "" : joinsNow() ? HINT_TICK : HINT_PICK;
     hint.hidden = !hint.textContent;
-    if (cannotStart) create.setAttribute("aria-describedby", "space-no-start");
-    else if (create.disabled) create.setAttribute("aria-describedby", "space-hint");
+    if (create.disabled) create.setAttribute("aria-describedby", "space-hint");
     else create.removeAttribute("aria-describedby");
   };
   tick.addEventListener("change", () => { form.understood = tick.checked === true; ready(); });
@@ -94,19 +87,12 @@ export function newSpaceDialog(workspaces, done, close) {
       })],
       2: [h("label", {}, "Name", nameIn), h("label", {}, "What is it for? (optional)", purposeIn)],
       3: [h("p", { text: "Which workspaces use it?" }),
-        ...(workspaces.length ? workspaces.map((w) => {
-          const joins = w.mode === "full";
+        ...workspaces.filter((w) => w.mode === "full").map((w) => {
           const box = h("input", { type: "checkbox", "aria-label": nameOf(w) });
-          if (joins) {
-            box.checked = form.members.has(w.workspace_id);
-            box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
-          } else {
-            box.disabled = true;
-          }
-          return h("label", { class: "check" + (joins ? "" : " disabled") }, box, h("span", { class: "grow", text: nameOf(w) }),
-            h("span", { class: "small muted", text: joins ? "joins now" : LATER }));
-        }) : [h("p", { class: "small muted", text: "No workspace is connected yet." })]),
-        noStart,
+          box.checked = form.members.has(w.workspace_id);
+          box.addEventListener("change", () => { box.checked ? form.members.add(w.workspace_id) : form.members.delete(w.workspace_id); ready(); });
+          return h("label", { class: "check" }, box, h("span", { class: "grow", text: nameOf(w) }), h("span", { class: "small muted", text: "Shares everything" }));
+        }),
         h("label", { class: "check" }, tick, h("span", { text: "I understand: " + STATEMENT }))],
     };
     body.replaceChildren(h("h1", { text: "New shared space (step " + step + " of 3)" }), ...steps[step],
@@ -122,6 +108,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
   const all = data.spaces ?? [];
   const about = data.about ?? {};
   const candidates = (data.workspaces ?? []).filter((w) => w.mode != null && w.status !== "unbound");
+  const canStart = candidates.some((w) => w.mode === "full");
   const archived = all.filter((s) => s.archived_ms != null);
   let showArchived = false;
   const list = h("div", { id: "spaces-list" });
@@ -129,7 +116,7 @@ export function spacesView(data, actions = {}, now = Date.now()) {
   const toggle = archived.length ? h("button", { type: "button", id: "toggle-archived", text: "Show archived (" + archived.length + ")" }) : null;
   const draw = () => {
     const shown = all.filter((s) => showArchived || s.archived_ms == null);
-    list.replaceChildren(...(shown.length ? shown.map(card) : [emptyState("spaces")]));
+    list.replaceChildren(...(shown.length ? shown.map(card) : [emptyState(!canStart && candidates.length ? "spaces-nostart" : "spaces")]));
     if (toggle) { toggle.textContent = (showArchived ? "Hide archived (" : "Show archived (") + archived.length + ")"; }
   };
   const card = (s) => {
@@ -176,12 +163,25 @@ export function spacesView(data, actions = {}, now = Date.now()) {
       panel);
   };
   const open = () => {
+    if (!canStart) return;
     const close = () => dialogHost.replaceChildren();
     dialogHost.replaceChildren(newSpaceDialog(candidates, async (form) => { close(); await actions.create?.(form); }, close));
   };
+  // QA P03: while no workspace can start a space the button is a plain, dimmed one, never the page's main action
+  const newSpace = h("button", { type: "button", id: "new-space", class: canStart ? "pri" : "", text: "New shared space", onclick: open });
+  newSpace.disabled = !canStart;
+  const noStart = !canStart && candidates.length ? h("div", { class: "small muted", id: "space-no-start", role: "note" },
+    h("span", { text: (candidates.length > 1 ? "Your workspaces need" : nameOf(candidates[0]) + "'s workspace needs") + " to share everything before you can start a space." }),
+    h("details", {},
+      h("summary", { text: "Show me how" }),
+      h("ol", {},
+        h("li", { text: "Open " + candidates.map(nameOf).join(" or ") + " on its own computer." }),
+        h("li", { text: "Go to Settings > Hub." }),
+        h("li", {}, "Choose ", h("b", { text: "Share everything" }), ". Then come back here.")))) : null;
+  if (noStart) newSpace.setAttribute("aria-describedby", "space-no-start");
   const root = h("div", { class: "spaces" },
     h("div", { class: "row" }, h("h1", { class: "grow", text: "Shared spaces" }),
-      h("button", { type: "button", id: "new-space", class: "pri", text: "New shared space", onclick: open }),
+      newSpace, noStart,
       info("About shared spaces", "Workspaces put documents into a shared space and read each other's. A workspace set to Reads only can read but not add or remove. Archiving stops new additions; reading goes on.")),
     all.length ? h("p", { class: "banner warn", role: "note", text: STATEMENT }) : null,
     toggle, list, dialogHost);
@@ -221,4 +221,4 @@ export async function spacesPage(d) {
 }
 
 // The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
-export const page = { path: "spaces", nav: { label: "Spaces", admin: true, needsWorkspace: true, after: "mcp" }, render: spacesPage };
+export const page = { path: "spaces", nav: { group: "Sharing & apps", label: "Shared spaces", admin: true, needsWorkspace: true, after: "mcp" }, render: spacesPage };

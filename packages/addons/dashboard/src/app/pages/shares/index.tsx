@@ -1,3 +1,4 @@
+import { UnsentShares } from '../settings/hub/SendShares'
 // Shares of a real host (the Publish add-on): every link made from a ticket's files, with its kind, end time, opens
 // and state, and Stop sharing. A link itself is never listed: orch keeps none, it is shown once when it is made.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -6,13 +7,14 @@ import { useState } from 'react'
 import { queries } from '@/api/queries'
 import { hasFeature } from '@/api/features'
 import { atLeast } from '@/api/permissions'
-import { effectiveState, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, viewsText, type Share, type Staged } from '@/api/shares'
+import { effectiveState, hubLeftText, kindText, newIdem, shareError, shareQueries, sharesApi, STATE_TEXT, stopName, viewsText, type Share, type Staged } from '@/api/shares'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { fmtDateTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { usePageHeader } from '@/app/shell/ShellUi'
+import { SharingPaused } from '../settings/hub/HubSharing'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 import { refreshShares, ShareFlow } from './ShareFlow'
@@ -75,6 +77,7 @@ function SharesBody({ onRevoke, onSign, onShareAgain }: { onShareAgain: (key: st
     return (
       <div className="max-w-2xl space-y-2">
         <h1 className="text-xl font-semibold tracking-tight">Shares</h1>
+        <UnsentShares workspace={workspace} />
         <p data-testid="shares-unavailable" className="text-[13px] text-text-muted">
           No file links yet.
         </p>
@@ -107,6 +110,17 @@ function SharesBody({ onRevoke, onSign, onShareAgain }: { onShareAgain: (key: st
           </Button>
         </p>
       )}
+      {data && data.configured && !data.live && data.why === 'hub_left' && (
+        // The settings came from a hub this workspace is no longer bound to: the host's own plain words. Trying again cannot help; Settings, Hub can.
+        <p role="status" data-testid="shares-hub-left" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
+          <span>{hubLeftText()}</span>
+          <Link to="/settings/$tab" params={{ tab: 'hub' }} className="text-brand hover:underline">
+            Open Settings, Hub
+          </Link>
+        </p>
+      )}
+      <UnsentShares workspace={workspace} />
+      <SharingPaused workspace={workspace} />
       {data && data.configured && !data.live && (data.why === undefined || data.why === 'unreachable') && (
         <p role="status" data-testid="shares-unreachable" className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 px-3 py-2 text-[12px]">
           <span>Sharing is paused: your hub cannot be reached. Nothing was sent.</span>

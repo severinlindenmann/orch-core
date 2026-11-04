@@ -285,6 +285,15 @@ def test_peek_does_not_use_the_ticket_and_names_both_people(w):
     assert s == 200  # still unused after two peeks
 
 
+def test_peek_names_the_way_back_only_when_the_hub_knows_the_workspace_origin(w):
+    """ux-audit P02: the landing page's 'Back to my workspace' goes to the origin the switch holds for that workspace."""
+    t = w.sw.issue_to_hub(w.ann, WS, "/x")
+    assert w.call("POST", "/switch/peek", {"t": t})[1]["workspace"] is None  # no origin known: nothing is guessed
+    w.sw.set_origin(WS, "https://ws.example:8150")
+    o = w.call("POST", "/switch/peek", {"t": t})[1]
+    assert o["workspace"]["origin"] == w.sw.origin_of(WS) and "name" in o["workspace"]
+
+
 def test_a_ticket_never_replaces_another_persons_session_silently(w):
     mine = w.login(w.admin)
     t = w.sw.issue_to_hub(w.ann, WS, "/x")

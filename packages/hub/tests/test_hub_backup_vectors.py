@@ -12,8 +12,9 @@ from pathlib import Path
 import pytest
 
 from orch_hub.contract import backup as B
+from orch_hub.contract import publish_where as PW
 from orch_hub.contract import where as W
-from orch_hub.contract.canon import b64u
+from orch_hub.contract.canon import b64u, unb64u
 from orch_hub.contract.hub import Refused
 from orch_hub.contract.labels import ACCESS_CHANGE_LABEL, CUSTODIAL_PREFIX, HUB_LABELS, V2_REUSED
 
@@ -33,7 +34,28 @@ REQUIRED = {
     "floor_boundary_one_over_in_place", "where_ok", "where_five_entries", "where_bad_addr_no_port",
     "where_unknown_kind", "where_name_61_long", "where_name_control_and_bidi_stripped", "where_name_surrogate_private_use_unassigned_stripped",
 }  # fmt: skip
-CHECKS = {"bk_key", "open_backup", "tar", "file_list", "restore_floor", "hub_where"}
+CHECKS = {
+    "bk_key",
+    "open_backup",
+    "tar",
+    "file_list",
+    "restore_floor",
+    "hub_where",
+    "publish_where",
+    "canonical_origin",
+}
+#: #1838: the cases a hub.publish_where implementation must not lose (each name is a case of the file)
+REQUIRED_PUBLISH_WHERE = {
+    "pw_good", "pw_good_dev", "pw_wrong_hub_id", "pw_bad_signature", "pw_signed_under_another_op_key",
+    "pw_dev_true_at_a_real_pin", "pw_dev_false_at_a_dev_pin", "pw_loopback_http_dev_false_refused",
+    "pw_loopback_http_dev_true_accepted", "pw_server_private_ip_10_refused", "pw_server_local_name_refused",
+    "pw_server_localhost_refused", "pw_server_userinfo_refused", "pw_server_path_refused", "pw_server_query_refused",
+    "pw_server_fragment_refused", "pw_share_private_ip_10_refused", "pw_share_local_name_refused",
+    "pw_idn_canonicalised_to_the_a_label", "pw_default_port_and_trailing_dot_canonicalised",
+    "pw_lower_seq_refused", "pw_equal_seq_byte_identical_accepted", "pw_equal_seq_other_content_refused",
+    "pw_higher_seq_accepted", "where_publish_where_ok", "where_publish_where_and_legacy_publish",
+    "where_publish_ok_https", "origin_private_ip_10_refused", "origin_idn_a_label",
+}  # fmt: skip
 
 
 def _gen():
@@ -93,6 +115,14 @@ def run(c: dict):
         return _result(lambda: B.restore_floor(a["live"], a["backup"], a["now_s"]))
     if ck == "hub_where":
         return _result(lambda: W.check_hub_where(a["answer"]))
+    if ck == "publish_where":
+        return _result(
+            lambda: PW.check_publish_where(
+                a["signed"], op_pub=unb64u(a["op_pub"], 65), hub_id=a["hub_id"], dev=a["dev"], held=a.get("held")
+            )
+        )
+    if ck == "canonical_origin":
+        return _result(lambda: PW.canonical_origin(a["origin"], a["dev"]))
     raise AssertionError(f"unknown check {ck}")
 
 
@@ -112,6 +142,7 @@ def test_required_cases_exist_and_names_are_unique() -> None:
     names = [c["name"] for c in CASES]
     assert len(names) == len(set(names))
     assert REQUIRED <= set(names), REQUIRED - set(names)
+    assert REQUIRED_PUBLISH_WHERE <= set(names), REQUIRED_PUBLISH_WHERE - set(names)
     assert {c["check"] for c in CASES} == CHECKS  # an unknown check, or a check nobody replays, fails here
 
 

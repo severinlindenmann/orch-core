@@ -1,0 +1,9 @@
+{
+  "fingerprint": "85778636ae2413bd2bed0d64206843d8e7ad78b1046a4363d5482c0c2c6d384a",
+  "format": 1,
+  "kind": "relay",
+  "sources": [
+    "packages/relay/src/orch_relay/db.py",
+    "packages/relay/src/orch_relay/schema.sql"
+  ]
+}

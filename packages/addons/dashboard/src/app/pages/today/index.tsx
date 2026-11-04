@@ -13,7 +13,8 @@ import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
 import { useAttention, type Attention } from '../../attention'
 import { SEEN_PREFIX, useTodayGeneration } from '../../todayRestart'
-import { usePageHeader } from '../../shell/ShellUi'
+import { usePageHeader, useShellActions } from '../../shell/ShellUi'
+import { Button } from '@/components/ui/button'
 import { TodaySkeleton } from '../skeletons'
 import { LoadFailed } from '@/components/LoadFailed'
 import { LOADER_WAIT_MS } from '../../routeData'
@@ -176,6 +177,8 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
   const addons = useAddons()
+  const { openNewTicket } = useShellActions()
+  const canCreate = can(useRole(), 'ticket.create')
   // Two columns only when the page itself is wide (the window minus the dock), never because the window is.
   const wide = useTodayWide()
   const now = today.data!.now
@@ -398,8 +401,13 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
               ? "You'll see a row here when an agent asks you something or needs your OK."
               : counts.working > 0
                 ? `${plural(counts.working, 'agent is', 'agents are')} working. You will see a row here when one needs a decision.`
-                : 'No agent is working either. Pick a ticket from the board to start something.'}
+                : 'No agent is working either.'}
           </p>
+          {canCreate && (
+            <Button size="lg" className="mt-5" data-testid="first-task" onClick={openNewTicket}>
+              Give your AI helper a task
+            </Button>
+          )}
         </div>
       )}
       {!readOnly && waiting.count > 0 && (

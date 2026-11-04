@@ -130,6 +130,7 @@ class LinkServer:
         hooks: Any = None,
         activity: Any = None,
         where: Callable[[], dict[str, Any]] | None = None,
+        publish_where: Callable[[], dict[str, Any] | None] | None = None,
         closing: Any = None,
         deliveries: Any = None,
         streams: StreamSink | None = None,
@@ -176,6 +177,7 @@ class LinkServer:
         self._hooks = hooks
         self._activity = activity
         self._where = where
+        self._publish_where = publish_where
         self._closing = closing  # orch_hub.closing.Closing: the guard, the notice (#1463); None = never closing
         self._live: dict[
             str, set[_Port]
@@ -738,6 +740,7 @@ class LinkServer:
                 hooks=self._hooks,
                 activity=self._activity,
                 where=self._where,
+                publish_where=self._publish_where,
                 closing=self._closing,
                 same_computer=same,
             )

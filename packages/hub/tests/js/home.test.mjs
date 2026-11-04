@@ -72,13 +72,37 @@ test("first-run home shows only the connect card", () => {
   assert.match(text, /We make a link for your workspace\. You use it once\./);
   assert.doesNotMatch(text, /one-time|Settings/);
   assert.match(text, /More areas \(approvals, add-ons, activity…\) appear here once a workspace is connected\./);
-  const member = homeView({ user: { name: "Ben" }, workspaces: [], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} }).map((n) => n.textContent).join(" ");
+  const member = homeView({ user: { name: "Ben" }, workspaces: [], items: [], channels: [], shared: [], thisBrowser: { state: "unregistered" }, actions: {} }).map((n) => n.textContent).join(" ");
   assert.match(member, /Ask your hub admin to connect a workspace for you\./);
   assert.doesNotMatch(text, /Where you can sign|Register this browser|Needs you|My workspaces/);
   const withWs = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} });
   const t2 = withWs.map((n) => n.textContent).join(" ");
   assert.match(t2, /Where you can sign/);
   assert.doesNotMatch(t2, /Connect your first workspace/);
+});
+
+test("a member without a workspace sees shared tickets first and can open one", () => {
+  const ticket = { workspace_id: "a", key: "AT-0002", title: "Invoice CSV export", shared_by: "Anna Test" };
+  let opened;
+  const base = { user: { name: "Ben Test" }, workspaces: [], items: [], channels: [], shared: [ticket],
+    actions: { openShared: (it) => { opened = it; }, connect() {} } };
+  const out = homeView(base);
+  const text = out.map((n) => n.textContent).join(" ");
+  assert.doesNotMatch(text, /1 ticket shared with you\./);
+  assert.match(text, /Shared with you \(1\)/);
+  assert.match(text, /Invoice CSV export/);
+  assert.match(text, /Shared by Anna Test/);
+  assert.match(text, /For your own workspace, ask your hub admin\./);
+  assert.doesNotMatch(text, /Ask your hub admin to connect a workspace for you\.|Connect your first workspace|A workspace|Needs you|My workspaces/);
+  const buttons = out.flatMap((n) => n.all()).filter((n) => n.tag === "button");
+  assert.deepEqual(buttons.map((n) => n.textContent), ["Open"]);
+  assert.equal(buttons[0].className, "pri");
+  buttons[0].listeners.click();
+  assert.equal(opened, ticket);
+  const admin = homeView({ ...base, user: { name: "Anna", is_admin: true } });
+  assert.match(admin.map((n) => n.textContent).join(" "), /Connect your first workspace/);
+  const ended = homeView({ ...base, shared: [], ended: [{ id: "a:AT-0002", by: "Anna Test", title: ticket.title }] });
+  assert.match(ended.map((n) => n.textContent).join(" "), /Anna Test stopped sharing Invoice CSV export/);
 });
 
 test("the first-run home carries a root marker and gives way once a workspace or item exists", async () => {
@@ -88,6 +112,7 @@ test("the first-run home carries a root marker and gives way once a workspace or
   assert.equal(firstRunOutgrown([], []), false);
   assert.equal(firstRunOutgrown([{ id: "a" }], []), true);
   assert.equal(firstRunOutgrown([], [{ key: "k" }]), true);
+  assert.equal(firstRunOutgrown([], [], [{}]), true);
   const src = (await import("node:fs")).readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
   assert.match(src, /querySelector\("\.first-run-root"\) && firstRunOutgrown\(/);
 });
@@ -164,16 +189,16 @@ test("P07: Shared tickets card lists tickets shared with me with workspace and w
   const ws = [{ workspace_id: "w1", name: "Product", online: true, mode: "selective" }];
   const textOf = (out) => out.flat().map((n) => n.textContent).join("\n");
   const none = homeView({ workspaces: ws, items: [], shared: [], actions: {} });
-  assert.doesNotMatch(textOf(none), /Shared tickets/);
+  assert.doesNotMatch(textOf(none), /Shared with you/);
   let opened;
   const out = homeView({ workspaces: ws, items: [], actions: { openShared: (it) => { opened = it.workspace_id + "/" + it.key; } },
     shared: [{ workspace_id: "w1", key: "PW-1", title: "Invoice CSV export", shared_by: "Anna" }] });
   const t = textOf(out);
-  assert.match(t, /Shared tickets \(1\)/);
+  assert.match(t, /Shared with you \(1\)/);
   assert.match(t, /Invoice CSV export/);
-  assert.match(t, /Product · shared by Anna/);
+  assert.match(t, /Product · Shared by Anna/);
   const all = (n) => [n, ...n.children.flatMap(all)];
-  const open = out.flatMap(all).filter((n) => n.tag === "button" && n.textContent === "Read" && n.listeners.click);
+  const open = out.flatMap(all).filter((n) => n.tag === "button" && n.textContent === "Open" && n.listeners.click);
   open[0].listeners.click();
   assert.equal(opened, "w1/PW-1");
 });
@@ -196,7 +221,7 @@ test("P04: ended lines show in the Shared tickets card (even with nothing shared
   const all = (n) => [n, ...n.children.flatMap(all)];
   out.flatMap(all).find((n) => n.tag === "button" && n.textContent === "Dismiss").listeners.click();
   assert.equal(dismissed, "w1:PW-1");
-  assert.doesNotMatch(textOf(homeView({ workspaces: ws, items: [], shared: [], ended: [], actions: {} })), /Shared tickets/);
+  assert.doesNotMatch(textOf(homeView({ workspaces: ws, items: [], shared: [], ended: [], actions: {} })), /Shared with you/);
 });
 
 test("P04: the sharer's own rows (no shared_by) never become a stopped-sharing line", () => {
@@ -210,4 +235,22 @@ test("run18 P04: Home calls a stored key dead only when it is this person's own;
   const line = src.split("\n").find((l) => l.includes("const dead = "));
   assert.match(line, /!mine && state\.me\?\.userId === user\.user_id;/);
   assert.ok(!src.includes("forgetLocal"), "no Forget path: setting up again replaces the old key");
+});
+
+const { workspacesView } = await import("../../src/orch_hub/web/workspaces.js");
+test("workspaces without own rows show each shared ticket and retain the original empty state otherwise", () => {
+  const shared = [{ workspace_id: "a", key: "A-1", title: "Invoice CSV export", shared_by: "Anna Test" }, { workspace_id: "b", key: "B-1", title: "Another ticket", shared_by: "Carla" }];
+  const opened = [];
+  const data = { workspaces: [], handoffs: [], shared, actions: { openShared: (it) => opened.push(it) } };
+  const out = workspacesView(data);
+  const text = out.map((n) => n.textContent).join(" ");
+  assert.match(text, /No workspaces of your own yet.*Shared with you \(2\)/);
+  assert.doesNotMatch(text, /Connected workspaces|tickets shared with you/);
+  assert.match(text, /Shared by Anna Test/);
+  const buttons = out.flatMap((n) => n.all()).filter((n) => n.tag === "button" && n.textContent === "Open");
+  assert.equal(buttons.length, 2);
+  buttons.forEach((b) => b.listeners.click());
+  assert.deepEqual(opened, shared);
+  assert.match(workspacesView({ ...data, shared: shared.slice(0, 1) }).map((n) => n.textContent).join(" "), /Shared with you \(1\)/);
+  assert.match(workspacesView({ ...data, shared: [] }).map((n) => n.textContent).join(" "), /No workspaces yet/);
 });

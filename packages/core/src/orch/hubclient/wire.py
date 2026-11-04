@@ -61,6 +61,7 @@ SIG_CARD = b"orch/v2/hub-card|"
 SIG_OP_REVOKED = b"orch/v2/hub-op-revoked|"
 SIG_SNAPSHOT = b"orch/v2/hub-snapshot|"
 SIG_CLOSING = b"orch/v2/hub-closing|"  # #1463 (hub protocol 9.7): the hub is being removed
+SIG_PUBLISH_WHERE = b"orch/v2/hub-publish-where|"  # #1838 (hub protocol 10.9.1): the hub's publish and share origins
 SIG_UK_CERT = b"orch/v2/hub-uk-cert|"
 SIG_CHANNEL_CERT = b"orch/v2/hub-channel-cert|"
 SIG_BINDING = b"orch/v2/sig/hub-binding|"
@@ -277,6 +278,15 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "epoch": _int_min(1),
         "prev_members_hash": _b64u_n(32),
         "members_hash": _b64u_n(32),
+        "dev": lambda x: type(x) is bool,
+    },
+    # #1838 (hub protocol 10.9.1): the hub's publish and share origins, signed by HK_op (rule: publish_where.py)
+    "hub.publish_where": {
+        "hub_id": hex16,
+        "server": lambda x: type(x) is str,
+        "share": lambda x: type(x) is str,
+        "seq": _int_min(1),
+        "issued_ms": _int_min(0),
         "dev": lambda x: type(x) is bool,
     },
     "hub.link": {

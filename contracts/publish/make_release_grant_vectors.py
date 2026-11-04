@@ -41,11 +41,11 @@ def build():
     text = "\n".join([
         "App approval: let an app go live",
         "App name: Team report", "Kind: page", "Address slug: team-report",
-        "Who can open it: group " + "44" * 16,
+        "Who can open it: group unknown (" + "44" * 16 + ")",
         "The app may contact: https://api.example.com",
         "The app runs code in the browser of everyone who opens it",
         f"File: index.html ({len(data)} bytes, sha256 {meta['files'][0]['sha256']})",
-        f"Workspace: {ws}", f"Hub: {hub}", f"App id: {app}",
+        f"Workspace: unknown ({ws})", f"Hub: unknown ({hub})", f"App id: {app}",
         "Staged release: " + release["staged_id"], f"App hash: {meta_hash}",
     ])
     # Canonical unsigned event: the ordinary F1 envelope plus the new signed payload.
@@ -68,10 +68,13 @@ def build():
     for name, expected in [("commit_meta_hash_ok", None),
                            ("commit_meta_hash_mismatch", "meta_mismatch"),
                            ("commit_meta_hash_missing", "malformed"),
+                           ("commit_meta_hash_without_domain", "meta_mismatch"),
                            ("commit_meta_hash_reach_changed", "meta_mismatch")]:
         case = {"name": name, **copy.deepcopy(base), "expect": expected}
         if name == "commit_meta_hash_mismatch":
             case["body"]["meta_hash"] = digest(b"orch/v2/app-meta|" + b"different canonical meta")
+        elif name == "commit_meta_hash_without_domain":
+            case["body"]["meta_hash"] = digest(cj(meta))
         elif name == "commit_meta_hash_missing":
             del case["body"]["meta_hash"]
         elif name == "commit_meta_hash_reach_changed":
@@ -83,8 +86,19 @@ def build():
         "doc": "Protocol 11.3 RG-1 to RG-8, 4 Nov 2026. Synthetic ids; no real keys. "
                "Commit cases assume valid request approval and exercise stored-meta verification only.",
         "status": "pending", "pending_reason": "Spec-only amendment: release fields and the commit meta_hash check are not implemented",
-        "required": {"commit": [c["name"] for c in cases], "release_note": ["release_note_fields"]},
+        "required": {"commit": [c["name"] for c in cases], "release_note": ["release_note_fields"],
+                     "state": ["commit_to_stopped_app_stays_stopped"]},
         "commit_cases": cases,
+        "state_cases": [{
+            "name": "commit_to_stopped_app_stays_stopped", "status": "pending",
+            **copy.deepcopy(base),
+            "initial_state": {"running": False, "current_version": 6},
+            "approval": "otherwise valid owner approval for this exact commit request",
+            "expect": {"error": None, "running": False, "current_version": 7},
+            "scope": "orch-publish commit state transition, even with valid approval; "
+                     "only app.start with its own approval starts the app. "
+                     "Separately, the signer must refuse a grant approval for a last-known stopped app.",
+        }],
         "release_note_cases": [{
             "name": "release_note_fields", "event": event,
             "workspace_id": ws, "log": meta["ticket"],

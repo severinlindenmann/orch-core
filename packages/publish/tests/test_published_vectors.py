@@ -244,3 +244,10 @@ def test_release_grant_commit(c):
 @pytest.mark.skip(reason="Pending core signer replay of RG-1 signed release fields and real-press custody")
 def test_release_grant_note(c):
     pass
+
+
+@pytest.mark.parametrize("c", RG_VEC["state_cases"], ids=lambda c: c["name"])
+@pytest.mark.skip(reason="Pending orch-publish replay of RG-8 commit running-state preservation")
+def test_release_grant_state(c):
+    # Requires the commit handler/state transition, not only P.check_release.
+    pass

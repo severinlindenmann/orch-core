@@ -269,7 +269,7 @@ export function Members({ workspace, viewer, canEdit }: { workspace: Workspace; 
                       {m.name}
                       <span className="font-mono text-[11px] text-text-faint">{m.person}</span>
                     </span>
-                    {lastOwner && <span data-testid="only-owner-note" className="mt-1 block text-[12px] text-text-muted">{m.person === viewer ? 'You are the only owner. To change your role, make someone else an owner first.' : 'The only owner. To change this role, make someone else an owner first.'}</span>}
+                    {lastOwner && <span data-testid="only-owner-note" className="mt-1 block max-w-64 whitespace-normal text-[12px] text-text-muted">{m.person === viewer ? 'You are the only owner. To change your role, make someone else an owner first.' : 'The only owner. To change this role, make someone else an owner first.'}</span>}
                   </TableCell>
                   <TableCell>
                     {lastOwner && canEdit ? (

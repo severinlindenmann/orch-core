@@ -173,6 +173,8 @@ def build():
     result["create_cases"] = []
     for name, is_new, initial, error in [
         ("new_app_id_exists_refused", True, {"app_ids": [app], "slugs": []}, "app_exists"),
+        ("new_app_id_exists_other_workspace_refused", True,
+         {"app_ids": [app], "slugs": [], "existing_app_workspace_id": "99" * 16}, "app_exists"),
         ("new_app_slug_taken_refused", True, {"app_ids": ["99" * 16], "slugs": [meta["slug"]]}, "slug_taken"),
         ("existing_app_unknown_refused", False, {"app_ids": [], "slugs": []}, "not_found"),
     ]:
@@ -210,11 +212,17 @@ def build():
     # Pending server transitions: newness must be checked without relying on PUT.
     for name, op, initial in [
         ("new_commit_after_current_refused", "commit",
-         {"current_version": 8, "ever_had_current_version": True, "ever_started_or_stopped": False}),
+         {"current_version": 8, "ever_current": True, "ever_started_or_stopped": False}),
         ("new_start_after_stop_refused", "start",
-         {"current_version": 7, "ever_had_current_version": True, "ever_started_or_stopped": True}),
+         {"current_version": 7, "ever_current": True, "ever_started_or_stopped": True}),
         ("new_byte_identical_restage_refused", "commit",
-         {"current_version": 8, "ever_had_current_version": True, "ever_started_or_stopped": True}),
+         {"current_version": 8, "ever_current": True, "ever_started_or_stopped": True}),
+        ("rollback_to_creation_version_refused", "rollback",
+         {"current_version": 8, "ever_current": True, "ever_started_or_stopped": True,
+          "previous_current_versions": [7, 8]}),
+        ("not_new_survives_version_clear", "commit",
+         {"current_version": None, "ever_current": True, "ever_started_or_stopped": False,
+          "previous_current_versions": [7, 8]}),
     ]:
         result["state_cases"].append({
             "name": name, "status": "pending", "meta": copy.deepcopy(new_meta),
@@ -227,17 +235,41 @@ def build():
             "approval": "otherwise valid owner approval for this exact request",
             "expect": {"error": "not_new", "http_status": 409, "state_unchanged": True},
         })
-    result["create_cases"][0]["initial_state"]["existing_app_workspace_id"] = "99" * 16
     result["create_cases"].append({
         "name": "creation_meta_put_retry_unchanged", "status": "pending",
         "meta": copy.deepcopy(new_meta), "stored_meta_utf8": cj(new_meta).decode(),
         "request_meta_utf8": cj(new_meta).decode(), "version": 7,
-        "initial_state": {"app_id": app, "created_by_this_meta_put": True,
+        "initial_state": {"app_id": app, "exists": True,
                           "creation_version": 7, "current_version": None,
-                          "ever_had_current_version": False, "running": False},
+                          "ever_current": False, "ever_started_or_stopped": False, "running": False},
         "method": "PUT", "target": f"/v1/ws/{ws}/apps/{app}/versions/7",
         "expect": {"error": None, "result": "unchanged", "state_unchanged": True},
     })
+    cross_signer = copy.deepcopy(next(c for c in result["state_cases"]
+                                      if c["name"] == "release_new_app_start_ok"))
+    cross_signer.update({
+        "name": "new_start_after_failed_first_start_ok",
+        "initial_state": {"exists": True, "running": False, "current_version": 7,
+                          "ever_current": True, "ever_started_or_stopped": False},
+        "prior_attempt": {"signer": "device_A", "commit": "ok", "start": "failed"},
+        "signer": "device_B", "signer_local_approval_records": [],
+        "expect": {"commit_approvals": 1, "start_approvals": 1, "commit_error": "not_new",
+                   "start_error": None, "running": True, "current_version": 7,
+                   "ever_current": True, "ever_started_or_stopped": True},
+        "scope": "Intended fresh press after failed first start; commit signature unlocks start, "
+                 "even though commit is refused. No restoration of device_A's grant.",
+    })
+    del cross_signer["meta_put"]
+    result["state_cases"].append(cross_signer)
+    refused = copy.deepcopy(result["start_cases"][2])
+    refused.update({
+        "name": "refused_start_sets_no_history", "meta": copy.deepcopy(new_meta),
+        "initial_state": {"running": False, "current_version": 7,
+                          "ever_current": True, "ever_started_or_stopped": False},
+        "expect": {"error": "meta_mismatch", "state_unchanged": True, "running": False,
+                   "ever_current": True, "ever_started_or_stopped": False},
+    })
+    result["start_cases"].append(refused)
     legacy_meta = {k: v for k, v in meta.items() if k not in {"app_id", "new"}}
     legacy_hash = digest(b"orch/v2/app-meta|" + cj(legacy_meta))
     result["meta_hash_cases"] = []
@@ -261,7 +293,7 @@ def build():
                 "body": {**copy.deepcopy(body), "op": op, "meta_hash": legacy_hash},
                 "method": "POST", "target": f"/v1/ws/{ws}/apps/{app}/{op}",
                 "initial_state": {"running": False, "current_version": 7 if op == "start" else 8,
-                                  "ever_had_current_version": True, "ever_started_or_stopped": True},
+                                  "ever_current": True, "ever_started_or_stopped": True},
                 "approval": "ordinary owner approval for this exact request",
                 "expect": {"error": None, "current_version": 7, "running": op == "start"}}
         result["start_cases" if op == "start" else "state_cases"].append(case)

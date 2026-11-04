@@ -42,7 +42,7 @@ it.each([
   content = { headline: 'Share', summary }
   const qc = mount()
   expect(screen.getByTestId('where-files-go')).toBeVisible()
-  expect(screen.getByRole('note')).toHaveTextContent('Anyone with the link can open it.')
+  expect(screen.getByRole('note')).toHaveTextContent(/Anyone (on this computer )?with the link can open it\./) // B07: a local setup says this computer
   expect(screen.getByRole('note')).toHaveClass('text-warning')
   expect(screen.getByText('You see the link once.')).toBeVisible()
   qc.clear()

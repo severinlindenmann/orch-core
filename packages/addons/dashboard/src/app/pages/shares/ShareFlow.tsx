@@ -45,6 +45,7 @@ import {
   type ShareKind,
   type Staged,
   type Views,
+  localOnly,
 } from '@/api/shares'
 import type { Artifact } from '@/api/types'
 import { fmtDateTime } from '@/lib/time'
@@ -116,6 +117,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
   const where = rowLoading ? null : destinationLine(from, hubName, server)
   // "this computer" only when the row says the source is this computer
   const reach = reachNote(server, share, from)
+  const here = localOnly(server, share, from) // B07: a local test link: the warning says this computer, not 'anyone'
 
   // form
   const [picked, setPicked] = useState<string[]>([])
@@ -478,7 +480,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
               </ul>
               {!facts.destination && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
               {!content?.summary?.lines.includes(reach ?? '') && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-              {!facts.publicAccess && <p role="note" className="text-[12px] text-warning">Anyone with the link can open it.</p>}
+              {!facts.publicAccess && <p role="note" className="text-[12px] text-warning">{here ? 'Anyone on this computer with the link can open it.' : 'Anyone with the link can open it.'}</p>}
               {!facts.linkOnce && <p className="text-[12px] text-text-muted">You see the link once.</p>}
               <InfoDrawer text="Details">
                 {server && <p className="break-all font-mono">Files are sent to {server}</p>}
@@ -506,7 +508,7 @@ export function ShareFlow({ ws, ticket, resume, only, onClose }: { ws: string; t
             </ul>
             {!facts.destination && where && <p data-testid="where-files-go" className="font-medium">{where}</p>}
             {!content?.summary?.lines.includes(reach ?? '') && reach && <p className="text-[12px] text-text-muted">{reach}</p>}
-            {!facts.publicAccess && <p role="note" className="text-[12px] text-warning">Anyone with the link can open it.</p>}
+            {!facts.publicAccess && <p role="note" className="text-[12px] text-warning">{here ? 'Anyone on this computer with the link can open it.' : 'Anyone with the link can open it.'}</p>}
             {!facts.duration && <p className="text-[12px]">Works for {lasts} day{lasts === 1 ? '' : 's'}.</p>}
             {!facts.linkOnce && <p className="text-[12px] text-text-muted">You see the link once.</p>}
             <InfoDrawer>

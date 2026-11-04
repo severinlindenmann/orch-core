@@ -204,6 +204,9 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
   if (av.approveBoth) {
     return (
       <Card title="Ready for your approval" text="Read the requirements and the plan, then approve both with one signature.">
+        <Button size="sm" variant="ghost" onClick={() => jump({ tab: 'overview', id: 'sec-requirements' })}>
+          Read them
+        </Button>
         <Button size="sm" disabled={signing} onClick={(e) => sign({ kind: 'approve_both', pressed: trustedPress(e.nativeEvent) })}>
           Approve requirements and plan
         </Button>
@@ -217,6 +220,11 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
     const c = APPROVE[gate]
     return (
       <Card title={c.title} text={oneByOne && gate !== 'code' ? 'Approve them one at a time instead. ' + c.text : c.text} gate={{ name: gate, status: ticket.gates[gate], viewer }}>
+        {gate !== 'code' && (
+          <Button size="sm" variant="ghost" onClick={() => jump({ tab: 'overview', id: `sec-${gate}` })}>
+            Read {gate}
+          </Button>
+        )}
         <Button size="sm" disabled={signing} onClick={(e) => sign({ kind: 'approve', gate, pressed: trustedPress(e.nativeEvent) })}>
           {c.button}
         </Button>

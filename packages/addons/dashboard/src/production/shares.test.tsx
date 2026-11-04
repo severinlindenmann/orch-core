@@ -32,7 +32,7 @@ let shares: unknown[] = []
 let staged: unknown[] = []
 let configured = true
 let live = true
-let why: 'unreachable' | 'not_allowed' | 'local' = 'unreachable'
+let why: 'unreachable' | 'not_allowed' | 'refused' | 'local' = 'unreachable'
 let listRefusal: { code: string } | null = null
 let sendRefusal: { code: string; reason?: string } | null = null
 let registerRefusal: { code: string; reason?: string } | null = null
@@ -185,6 +185,17 @@ it('a hub that answers and refuses says it has not switched publishing on, and n
   const note = await screen.findByTestId('shares-not-allowed', {}, T)
   expect(note).toHaveTextContent('Your hub has not switched on publishing for this workspace yet. Nothing was sent.')
   expect(screen.queryByTestId('shares-unreachable')).toBeNull()
+  expect(screen.queryByText(/cannot be reached/)).toBeNull()
+  expect(within(note).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+})
+
+it('B09: a publish server that answered with a refusal says so, never that the hub cannot be reached', async () => {
+  route()
+  live = false
+  why = 'refused'
+  show('/w/DEMO/shares')
+  const note = await screen.findByTestId('shares-refused', {}, T)
+  expect(note).toHaveTextContent('Sharing is paused: the publish server did not take the request. Nothing was sent.')
   expect(screen.queryByText(/cannot be reached/)).toBeNull()
   expect(within(note).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
 })
@@ -666,8 +677,9 @@ it('Publish as link: one press prepares the copy and opens exactly ONE sign shee
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
   const sheet = screen.getByRole('dialog')
   expect(sheet).toHaveTextContent('report.md')
-  expect(sheet).toHaveTextContent('Anyone with the link can open it.')
-  expect((sheet.textContent ?? '').match(/Anyone with the link/g)).toHaveLength(1)
+  // B07 + W5: a local test link says "this computer", once, never "anyone"
+  expect(sheet).toHaveTextContent('Anyone on this computer with the link can open it.')
+  expect(sheet).not.toHaveTextContent('Anyone with the link')
   expect(within(sheet).getByTestId('where-files-go')).toHaveTextContent('Files go to this computer.') // by name, before Sign
   // Enter on the loaded review does not sign: focus is not on the Publish button, and a press must begin on it
   const publishButton = await within(sheet).findByRole('button', { name: 'Publish' }, T)
@@ -810,7 +822,7 @@ it('Publish as link: the one-file lead needs the staged copy to be that file; ot
   await user.click(within(list).getByRole('button', { name: 'Publish report.md as a link' }))
   await readyToSign('Share files')
   const sheet = screen.getByRole('dialog')
-  expect(sheet).toHaveTextContent('Anyone with the link can open it.')
+  expect(sheet).toHaveTextContent('Anyone on this computer with the link can open it.') // B07: local test link
   expect(sheet).toHaveTextContent('Works for 1 day.')
   expect(sheet).not.toHaveTextContent('1 days')
   expect(sheet).not.toHaveTextContent('works for 7 days')

@@ -304,11 +304,14 @@
     "state_unchanged": true
    },
    "initial_state": {
-    "app_ids": [
-     "33333333333333333333333333333333"
-    ],
-    "existing_app_workspace_id": "99999999999999999999999999999999",
-    "slugs": []
+    "app_id": "33333333333333333333333333333333",
+    "creation_version": 7,
+    "current_version": null,
+    "ever_current": false,
+    "ever_started_or_stopped": false,
+    "exists": true,
+    "running": false,
+    "workspace_id": "99999999999999999999999999999999"
    },
    "meta": {
     "access": "group",
@@ -368,8 +371,12 @@
     "v": 1,
     "workspace_id": "11111111111111111111111111111111"
    },
+   "request_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}",
+   "scope": "All unchanged retry conditions hold except route workspace binding; byte-identical meta still refuses app_exists.",
    "status": "pending",
-   "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/versions/7"
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}",
+   "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/versions/7",
+   "version": 7
   },
   {
    "expect": {
@@ -528,7 +535,8 @@
     "ever_current": false,
     "ever_started_or_stopped": false,
     "exists": true,
-    "running": false
+    "running": false,
+    "workspace_id": "11111111111111111111111111111111"
    },
    "meta": {
     "access": "group",
@@ -1029,6 +1037,11 @@
    "rollback_to_creation_version_refused",
    "not_new_survives_version_clear",
    "new_start_after_failed_first_start_ok",
+   "new_repress_same_signer_refused",
+   "new_repress_start_version_not_current",
+   "new_repress_start_meta_mismatch",
+   "new_repress_after_start_refused",
+   "new_repress_after_stop_refused",
    "legacy_app_commit_ok",
    "legacy_app_rollback_ok"
   ]
@@ -1986,12 +1999,37 @@
     "start_approvals": 1,
     "start_error": null
    },
+   "host_last_attempt": {
+    "start_successful": false
+   },
    "initial_state": {
     "current_version": 7,
     "ever_current": true,
     "ever_started_or_stopped": false,
     "exists": true,
     "running": false
+   },
+   "meta": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "new": true,
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
    },
    "name": "new_start_after_failed_first_start_ok",
    "presses": 1,
@@ -2070,7 +2108,631 @@
    "signer": "device_B",
    "signer_commit_approval_signed": true,
    "signer_local_approval_records": [],
-   "status": "pending"
+   "status": "pending",
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}"
+  },
+  {
+   "expect": {
+    "commit_approvals": 0,
+    "grants": 0,
+    "release_refused": true,
+    "rule": "RG-1",
+    "start_approvals": 0,
+    "state_unchanged": true
+   },
+   "host_last_attempt": {
+    "start_successful": false
+   },
+   "initial_state": {
+    "current_version": 7,
+    "ever_current": true,
+    "ever_started_or_stopped": false,
+    "exists": true,
+    "running": false
+   },
+   "meta": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "new": true,
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "new_repress_same_signer_refused",
+   "presses": 1,
+   "prior_attempt": {
+    "commit": "ok",
+    "signer": "device_A",
+    "start": "failed"
+   },
+   "release": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "hub_id": "22222222222222222222222222222222",
+    "meta": {
+     "access": "group",
+     "app_id": "33333333333333333333333333333333",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "First release",
+     "name": "Team report",
+     "new": true,
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+    "new": true,
+    "op": "commit",
+    "staged_id": "pa_55555555555555555555555555555555",
+    "v": 1,
+    "workspace_id": "11111111111111111111111111111111"
+   },
+   "requests": [],
+   "scope": "Fresh press with intact signed-approval records refuses locally under RG-1, before creating a grant or sending commit/start.",
+   "signer": "device_A",
+   "signer_commit_approval_signed": false,
+   "signer_local_approval_records": [
+    {
+     "app_id": "33333333333333333333333333333333",
+     "op": "commit"
+    }
+   ],
+   "status": "pending",
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}"
+  },
+  {
+   "expect": {
+    "commit_approvals": 1,
+    "commit_error": "not_new",
+    "current_version": 8,
+    "ever_current": true,
+    "ever_started_or_stopped": false,
+    "running": false,
+    "start_approvals": 1,
+    "start_error": "version_not_current",
+    "start_http_status": 409
+   },
+   "host_last_attempt": {
+    "start_successful": false
+   },
+   "initial_state": {
+    "current_version": 8,
+    "ever_current": true,
+    "ever_started_or_stopped": false,
+    "exists": true,
+    "running": false
+   },
+   "meta": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "new": true,
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "new_repress_start_version_not_current",
+   "presses": 1,
+   "prior_attempt": {
+    "commit": "ok",
+    "signer": "device_A",
+    "start": "failed"
+   },
+   "release": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "hub_id": "22222222222222222222222222222222",
+    "meta": {
+     "access": "group",
+     "app_id": "33333333333333333333333333333333",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "First release",
+     "name": "Team report",
+     "new": true,
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+    "new": true,
+    "op": "commit",
+    "staged_id": "pa_55555555555555555555555555555555",
+    "v": 1,
+    "workspace_id": "11111111111111111111111111111111"
+   },
+   "requests": [
+    {
+     "at_ms_from_press": 1000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "commit",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/commit"
+    },
+    {
+     "at_ms_from_press": 2000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "start",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/start"
+    }
+   ],
+   "scope": "Fresh grant with no local approval records: commit refuses not_new; host proceeds to the matching start, which refuses without changing state.",
+   "signer": "device_B",
+   "signer_commit_approval_signed": true,
+   "signer_local_approval_records": [],
+   "status": "pending",
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}"
+  },
+  {
+   "before_start": {
+    "meta": {
+     "access": "group",
+     "app_id": "33333333333333333333333333333333",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "Different stored meta",
+     "name": "Team report",
+     "new": true,
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"Different stored meta\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}"
+   },
+   "expect": {
+    "commit_approvals": 1,
+    "commit_error": "not_new",
+    "current_version": 7,
+    "ever_current": true,
+    "ever_started_or_stopped": false,
+    "running": false,
+    "start_approvals": 1,
+    "start_error": "meta_mismatch",
+    "start_http_status": 409
+   },
+   "host_last_attempt": {
+    "start_successful": false
+   },
+   "initial_state": {
+    "current_version": 7,
+    "ever_current": true,
+    "ever_started_or_stopped": false,
+    "exists": true,
+    "running": false
+   },
+   "meta": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "new": true,
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "new_repress_start_meta_mismatch",
+   "presses": 1,
+   "prior_attempt": {
+    "commit": "ok",
+    "signer": "device_A",
+    "start": "failed"
+   },
+   "release": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "hub_id": "22222222222222222222222222222222",
+    "meta": {
+     "access": "group",
+     "app_id": "33333333333333333333333333333333",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "First release",
+     "name": "Team report",
+     "new": true,
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+    "new": true,
+    "op": "commit",
+    "staged_id": "pa_55555555555555555555555555555555",
+    "v": 1,
+    "workspace_id": "11111111111111111111111111111111"
+   },
+   "requests": [
+    {
+     "at_ms_from_press": 1000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "commit",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/commit"
+    },
+    {
+     "at_ms_from_press": 2000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "start",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/start"
+    }
+   ],
+   "scope": "Fresh grant with no local approval records: commit refuses not_new; host proceeds to the matching start, which refuses without changing state. Stored meta differs at start after commit returned not_new.",
+   "signer": "device_B",
+   "signer_commit_approval_signed": true,
+   "signer_local_approval_records": [],
+   "status": "pending",
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}"
+  },
+  {
+   "expect": {
+    "commit_approvals": 1,
+    "commit_error": "not_new",
+    "current_version": 7,
+    "ever_current": true,
+    "ever_started_or_stopped": true,
+    "running": false,
+    "start_approvals": 1,
+    "start_error": "not_new",
+    "start_http_status": 409
+   },
+   "history_since_host_last_attempt": [
+    "successful start",
+    "successful stop"
+   ],
+   "host_last_attempt": {
+    "start_successful": false
+   },
+   "initial_state": {
+    "current_version": 7,
+    "ever_current": true,
+    "ever_started_or_stopped": true,
+    "exists": true,
+    "running": false
+   },
+   "meta": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "new": true,
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "new_repress_after_start_refused",
+   "presses": 1,
+   "prior_attempt": {
+    "commit": "ok",
+    "signer": "device_A",
+    "start": "failed"
+   },
+   "release": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "hub_id": "22222222222222222222222222222222",
+    "meta": {
+     "access": "group",
+     "app_id": "33333333333333333333333333333333",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "First release",
+     "name": "Team report",
+     "new": true,
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+    "new": true,
+    "op": "commit",
+    "staged_id": "pa_55555555555555555555555555555555",
+    "v": 1,
+    "workspace_id": "11111111111111111111111111111111"
+   },
+   "requests": [
+    {
+     "at_ms_from_press": 1000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "commit",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/commit"
+    },
+    {
+     "at_ms_from_press": 2000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "start",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/start"
+    }
+   ],
+   "scope": "Fresh grant with no local approval records: commit refuses not_new; host proceeds to the matching start, which refuses without changing state.",
+   "signer": "device_B",
+   "signer_commit_approval_signed": true,
+   "signer_local_approval_records": [],
+   "status": "pending",
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}"
+  },
+  {
+   "expect": {
+    "commit_approvals": 1,
+    "commit_error": "not_new",
+    "current_version": 7,
+    "ever_current": true,
+    "ever_started_or_stopped": true,
+    "running": false,
+    "start_approvals": 1,
+    "start_error": "not_new",
+    "start_http_status": 409
+   },
+   "history_since_host_last_attempt": [
+    "successful no-op stop of never-started app"
+   ],
+   "host_last_attempt": {
+    "start_successful": false
+   },
+   "initial_state": {
+    "current_version": 7,
+    "ever_current": true,
+    "ever_started_or_stopped": true,
+    "exists": true,
+    "running": false
+   },
+   "meta": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "files": [
+     {
+      "path": "index.html",
+      "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+      "size": 20
+     }
+    ],
+    "kind": "page",
+    "label": "First release",
+    "name": "Team report",
+    "new": true,
+    "pw": null,
+    "reach": [
+     "https://api.example.com"
+    ],
+    "slug": "team-report",
+    "ticket": "01J9ZP00000000000000000001"
+   },
+   "name": "new_repress_after_stop_refused",
+   "presses": 1,
+   "prior_attempt": {
+    "commit": "ok",
+    "signer": "device_A",
+    "start": "failed"
+   },
+   "release": {
+    "access": "group",
+    "app_id": "33333333333333333333333333333333",
+    "audience": "group:44444444444444444444444444444444",
+    "hub_id": "22222222222222222222222222222222",
+    "meta": {
+     "access": "group",
+     "app_id": "33333333333333333333333333333333",
+     "audience": "group:44444444444444444444444444444444",
+     "files": [
+      {
+       "path": "index.html",
+       "sha256": "9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441",
+       "size": 20
+      }
+     ],
+     "kind": "page",
+     "label": "First release",
+     "name": "Team report",
+     "new": true,
+     "pw": null,
+     "reach": [
+      "https://api.example.com"
+     ],
+     "slug": "team-report",
+     "ticket": "01J9ZP00000000000000000001"
+    },
+    "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+    "new": true,
+    "op": "commit",
+    "staged_id": "pa_55555555555555555555555555555555",
+    "v": 1,
+    "workspace_id": "11111111111111111111111111111111"
+   },
+   "requests": [
+    {
+     "at_ms_from_press": 1000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "commit",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/commit"
+    },
+    {
+     "at_ms_from_press": 2000,
+     "body": {
+      "access": "group",
+      "app_id": "33333333333333333333333333333333",
+      "audience": "group:44444444444444444444444444444444",
+      "meta_hash": "hMi8Njv5_vheEAIhG8pKEplf45Ym2TdXVYcZCueA6mM",
+      "op": "start",
+      "reach_hash": "o6uckNS4HZVOoDN_ncymGKUutxFBYrz8cAX7xtqqwyQ",
+      "version": 7
+     },
+     "method": "POST",
+     "nonce": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "target": "/v1/ws/11111111111111111111111111111111/apps/33333333333333333333333333333333/start"
+    }
+   ],
+   "scope": "Fresh grant with no local approval records: commit refuses not_new; host proceeds to the matching start, which refuses without changing state.",
+   "signer": "device_B",
+   "signer_commit_approval_signed": true,
+   "signer_local_approval_records": [],
+   "status": "pending",
+   "stored_meta_utf8": "{\"access\":\"group\",\"app_id\":\"33333333333333333333333333333333\",\"audience\":\"group:44444444444444444444444444444444\",\"files\":[{\"path\":\"index.html\",\"sha256\":\"9fcdcedf3a80f4b815f29dcf3b972eb9598e0ce71eae8e7b799ef01a5d6ea441\",\"size\":20}],\"kind\":\"page\",\"label\":\"First release\",\"name\":\"Team report\",\"new\":true,\"pw\":null,\"reach\":[\"https://api.example.com\"],\"slug\":\"team-report\",\"ticket\":\"01J9ZP00000000000000000001\"}"
   },
   {
    "approval": "ordinary owner approval for this exact request",

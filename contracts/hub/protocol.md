@@ -3519,12 +3519,15 @@ version is recorded when signing the commit approval, never as a release-consent
   on the same `new: true` release by another signer (or one that lost its local records) after a failed
   first start: if that version remains current and the app was never started or stopped, the new grant's
   commit gets `not_new`, but its matching start succeeds. Signing the commit approval, not commit
-  success, unlocks that grant's start use. This is fresh consent, not retry or restoration of the old grant.
-  Existing-app releases MUST NOT acquire start authority, even when stopped or newly staged.
+  success, unlocks that grant's start use within the same grant life and for the recorded version.
+  This is fresh consent, not retry or restoration of the old grant.
+  `new: false` existing-app releases MUST NOT acquire start authority, even when stopped or newly staged.
 
 **Resolved open item — First publish of a new app: resolved by RG-9.** One press authorises commit followed
 by the separate matching start approval. Creation and commit leave the new app stopped; only that start makes
-it live. Existing-app commits preserve running state and require separate consent for start or rollback.
+it live. Existing-app commits preserve running state. RG-9 permits fresh consent on the same `new: true`
+release after a failed first start, subject to its local-record, current-version, meta and history checks;
+otherwise existing apps require separate start consent. Rollback always requires separate consent.
 
 **Accepted audit gap.** Grant creation does not wait for log acceptance. A host that drops the note after signing
 could still use the grant; this gap is accepted because that host already holds WSK and the person's signed note
@@ -3549,7 +3552,7 @@ only for a new app the RG-9 start-approval signature, and adds no other capabili
 | --- | --- |
 | orch-publish | Atomically create on the first `new: true` meta PUT, refusing existing global ids (`app_exists`; host re-prepares with a fresh id) or workspace slugs (`slug_taken`), except the state-only, byte-identical creation retry defined in §11.4 returns `unchanged`; refuse `new: false` for an unknown app (`not_found`). Start requires the current version (`version_not_current`) and RG-3 stored-meta equality (`meta_mismatch`). Enforce §11.4 `not_new` history checks on commit/start/rollback even without a PUT; persist both flags, retain version history and never reuse ids, tombstones included; apply legacy stored-meta defaults without altering hash bytes. Verify the commit against stored meta/files (§11.4 C3); make the version current and NEVER change running state. Create new apps stopped; only `app.start` with its own approval starts them (RG-9 for a new app). |
 | `packages/core/src/orch/publishclient/approval.py`: `APP_MARK`, `app_release_text` | Keep the marker; build text from validated `release`/meta, including ids and the new hash; remove version as release consent input. `reserved_note_op`/`RESERVED_LINES` continue reserving the marker to `app.release`. |
-| `packages/core/src/orch/host/appops.py`: `_text`, `facts_for`, `signed_release`, send planning | Emit the machine fields; compare the signed fields and recomputed staged meta, actor and ticket before upload, not just matching prose. A persisted note permits no new grant; commit requires the live signer grant. |
+| `packages/core/src/orch/host/appops.py`: `_text`, `facts_for`, `signed_release`, send planning | Emit the machine fields; compare the signed fields and recomputed staged meta, actor and ticket before upload, not just matching prose. A persisted note permits no new grant; commit requires the live signer grant. For an existing app, the host MUST re-emit the same `new: true` release for a fresh press only when its own last attempt for that app ended without a successful start. On this path, a commit refused with `not_new` MUST still proceed to the grant's matching start; any other commit refusal MUST stop the flow. |
 | `packages/core/src/orch/host/signer.py`: `_person_op` | Validate the exact release shape and bindings, rejecting text-only notes for grant creation and machine fields smuggled into another op. |
 | `packages/core/src/orch/host/signcontent.py`: `log.added`/`APP_MARK` review | Render verified machine fields, including the public warning, rather than trusting the note text as the whole effect. |
 | `packages/addons/dashboard/server/src/orch_dashboard/signing.py`: `APP_MARK`, `expected(AppRelease)` | Check `release.staged_id` and the machine shape; do not extract stage identity from a text line or supply grant fields. The signer remains authoritative. |
@@ -3572,8 +3575,8 @@ These are build requirements, not claims of implemented verification. Each row i
 | RG-5 | Consent-first signing without a live matching grant fails; normal explicit request-first terminal approval still works; the click signer refuses ordinary non-grant approvals. Upload/commit cannot precede the release press on the grant path. |
 | RG-6 | Agent release/signing, remembered consent, batch/always-allow signing and replay of an old person-signed release create no grant; an agent-prepared stage with a fresh person press can. Release fields smuggled through ordinary, agent or custodial note paths are refused, with or without the reserved marker (`APP_MARK` / `reserved_note_op`, Signed-shape consumers above). |
 | RG-7 | Second use, two concurrent requests, retry after failure/unknown outcome, fresh-nonce retry and age >= 600000 ms fail. A request refused for bad ts, bad meta or wrong id leaves the original grant usable; a corrected request succeeds once, and its second use fails. Just below expiry can sign; ts expiry and server nonce replay still fail independently. Expiry at either deadline is exclusive (`>=`), including across sleep and wall-clock changes. A note never accepted by the log may still yield one approval (accepted gap); verify its local consumption record is inspectable after restart and cannot restore authority. Verify enrollment fsync includes the newly created file and directory entry, and consumption fsync completes before any approval is returned; write/fsync failure returns no approval and leaves the grant consumed, including on retry. |
-| RG-8 | Restart loses the grant; disk/log restoration, existing-app start or any rollback substitution and public review without its own warning or exact button fail. `commit_to_stopped_app_stays_stopped` checks orch-publish preserves stopped state even with an otherwise valid approval; only separately approved `app.start` starts it. `first_commit_new_app_stays_stopped` checks a new app is created stopped and its first commit leaves it stopped. The signer's advisory state check uses only its own last signed `app.start`/`app.stop` approval for that app. Commit approvals leave that indicator unchanged; restart preserves the advisory record in signer-owned state beside the audit record; an absent record shows no warning. A stopped indication produces the exact warning in the signer's review and never refuses; host state cannot override orch-publish's binding rule. |
-| RG-9 | orch-publish tests refuse `new: true` with an existing global id and `new: false` for an unknown app; signer tests check only its local record. `new_commit_after_current_refused`, `new_start_after_stop_refused`, `new_byte_identical_restage_refused` pin `not_new` (409). `creation_meta_put_retry_unchanged` pins the idempotent creation retry. `release_new_app_start_ok`: preallocated new app, one press, one commit approval then one start approval. Refuse start before commit signing, duplicate/concurrent start, other app/meta/version, and existing-app start. `new_app_id_exists_refused`, `new_app_id_exists_other_workspace_refused`, `new_app_slug_taken_refused` pin creation refusals; RG-3 owns the current-version/meta start vectors. `rollback_to_creation_version_refused`, `not_new_survives_version_clear`, `refused_start_sets_no_history` pin durable history. `new_start_after_failed_first_start_ok` pins the intended fresh-press cross-signer path. Check exact raw routes, distinct nonces, timestamp windows, shared expiry, restart/re-pin loss, interrupted start recovery and the fresh-press exception above. |
+| RG-8 | Restart loses the grant; disk/log restoration, `new: false` existing-app start or any rollback substitution and public review without its own warning or exact button fail. `commit_to_stopped_app_stays_stopped` checks orch-publish preserves stopped state even with an otherwise valid approval; only separately approved `app.start` starts it. The fresh-press `new: true` exception is covered by RG-9; it does not restore the old grant. `first_commit_new_app_stays_stopped` checks a new app is created stopped and its first commit leaves it stopped. The signer's advisory state check uses only its own last signed `app.start`/`app.stop` approval for that app. Commit approvals leave that indicator unchanged; restart preserves the advisory record in signer-owned state beside the audit record; an absent record shows no warning. A stopped indication produces the exact warning in the signer's review and never refuses; host state cannot override orch-publish's binding rule. |
+| RG-9 | orch-publish tests refuse `new: true` with an existing global id and `new: false` for an unknown app; signer tests check only its local record. `new_commit_after_current_refused`, `new_start_after_stop_refused`, `new_byte_identical_restage_refused` pin `not_new` (409). `creation_meta_put_retry_unchanged` pins the idempotent creation retry. `release_new_app_start_ok`: preallocated new app, one press, one commit approval then one start approval. Refuse start before commit signing, duplicate/concurrent start, other app/meta/version, and `new: false` existing-app start. `new_app_id_exists_refused`, `new_app_id_exists_other_workspace_refused`, `new_app_slug_taken_refused` pin creation refusals; RG-3 owns the current-version/meta start vectors. `rollback_to_creation_version_refused`, `not_new_survives_version_clear`, `refused_start_sets_no_history` pin durable history. `new_start_after_failed_first_start_ok` pins the intended fresh-press cross-signer path. `new_repress_same_signer_refused` pins RG-1 local refusal with intact approval records. Fresh-press variants `new_repress_start_version_not_current`, `new_repress_start_meta_mismatch`, `new_repress_after_start_refused` and `new_repress_after_stop_refused` pin the server refusals; the last includes a successful stop of a never-started app. Check exact raw routes, distinct nonces, timestamp windows, shared expiry, restart/re-pin loss, interrupted start recovery and the fresh-press exception above. |
 
 **Vectors.** `../publish/release_grant_v1.json` (generator `../publish/make_release_grant_vectors.py`) pins this
 amendment; its cases are pending until the build implements them. `meta_hash` is §11.4's existing domain-separated hash,
@@ -3622,10 +3625,11 @@ refusing an existing app id with `app_exists` (409), even if its slug matches or
 workspace: the app id space is global at orch-publish. A slug already present in the workspace refuses
 with `slug_taken` (409). On an id collision the host MUST re-prepare with a fresh id.
 Ids MUST never be reused, including deleted apps retained as tombstones; `app_exists` is global.
-The sole retry exception is defined by state only: the app exists, has no current version, has never
+The sole retry exception is defined by state only: the app exists in the route workspace, has no current version, has never
 been started or stopped, and the stored creation meta for that version is byte-identical to the PUT.
 Return `unchanged`, not `app_exists`, without changing state; caller identity or PUT provenance is irrelevant.
-Every other `new: true` meta PUT for an existing app is refused.
+Every other `new: true` meta PUT for an existing app is refused with `app_exists`, including
+byte-identical creation meta addressed through another workspace.
 A `new: false` meta PUT for an unknown app MUST refuse with `not_found` (404).
 The stored creation meta retains `new: true` through commit and start; it is not a fresh creation request.
 These required fields are part of the amended meta hash.
@@ -3656,8 +3660,10 @@ body = {op: "commit"|"rollback"|"start" (the route's), app_id (the route's), ver
 
 orch-publish MUST persist `ever_current` and `ever_started_or_stopped`, initially false for new apps.
 Only successful transitions set them: making a version current sets `ever_current`; a successful
-start or stop sets `ever_started_or_stopped`. Refused or failed attempts set neither. At migration,
+start or stop sets `ever_started_or_stopped`, including a successful no-op stop of a never-started
+app: this conservative rule ends its RG-9 start eligibility. Refused or failed attempts set neither. At migration,
 both flags MUST be true for any existing app with a current version or any run history, false otherwise.
+Over-flagging apps with only a current version and no known run history is intentional and conservative.
 Flags and the corresponding state transitions MUST be persisted atomically.
 
 orch-publish MUST atomically enforce these newness rules against durable app history, independent of
@@ -3667,9 +3673,9 @@ whether a meta PUT was made for this request:
   current version (`ever_current` is false); otherwise refuse `not_new` (409).
 - Start whose current version's stored meta has `new: true` is accepted only if the app has never been
   started or stopped (`ever_started_or_stopped` is false); otherwise refuse `not_new` (409).
-- Rollback to a stored `new: true` version MUST refuse `not_new` (409) once any later version has
-  been current, including after a version clear. The server MUST retain durable version history
-  sufficient to determine this; `ever_current` alone does not distinguish later versions.
+- Rollback to a stored `new: true` version MUST refuse `not_new` (409) once any other version has been made current after it
+  (by time, not version number), including after a version clear. The server MUST retain durable version history
+  sufficient to determine this; `ever_current` alone does not record the order of versions made current.
 
 After its first start the app is ordinary: subsequent releases use `new: false` and require ordinary
 start consent. Stored creation meta is unchanged, so a restart naming that `new: true` version still

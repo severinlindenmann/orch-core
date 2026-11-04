@@ -239,11 +239,22 @@ def build():
         "name": "creation_meta_put_retry_unchanged", "status": "pending",
         "meta": copy.deepcopy(new_meta), "stored_meta_utf8": cj(new_meta).decode(),
         "request_meta_utf8": cj(new_meta).decode(), "version": 7,
-        "initial_state": {"app_id": app, "exists": True,
+        "initial_state": {"app_id": app, "exists": True, "workspace_id": ws,
                           "creation_version": 7, "current_version": None,
                           "ever_current": False, "ever_started_or_stopped": False, "running": False},
         "method": "PUT", "target": f"/v1/ws/{ws}/apps/{app}/versions/7",
         "expect": {"error": None, "result": "unchanged", "state_unchanged": True},
+    })
+    cross_workspace = next(c for c in result["create_cases"]
+                           if c["name"] == "new_app_id_exists_other_workspace_refused")
+    retry = result["create_cases"][-1]
+    cross_workspace.update({
+        "stored_meta_utf8": retry["stored_meta_utf8"],
+        "request_meta_utf8": retry["request_meta_utf8"], "version": 7,
+        "initial_state": {**copy.deepcopy(retry["initial_state"]),
+                          "workspace_id": "99" * 16},
+        "scope": "All unchanged retry conditions hold except route workspace binding; "
+                 "byte-identical meta still refuses app_exists.",
     })
     cross_signer = copy.deepcopy(next(c for c in result["state_cases"]
                                       if c["name"] == "release_new_app_start_ok"))
@@ -252,6 +263,8 @@ def build():
         "initial_state": {"exists": True, "running": False, "current_version": 7,
                           "ever_current": True, "ever_started_or_stopped": False},
         "prior_attempt": {"signer": "device_A", "commit": "ok", "start": "failed"},
+        "host_last_attempt": {"start_successful": False},
+        "meta": copy.deepcopy(new_meta), "stored_meta_utf8": cj(new_meta).decode(),
         "signer": "device_B", "signer_local_approval_records": [],
         "expect": {"commit_approvals": 1, "start_approvals": 1, "commit_error": "not_new",
                    "start_error": None, "running": True, "current_version": 7,
@@ -261,6 +274,42 @@ def build():
     })
     del cross_signer["meta_put"]
     result["state_cases"].append(cross_signer)
+    local_refusal = copy.deepcopy(cross_signer)
+    local_refusal.update({
+        "name": "new_repress_same_signer_refused", "signer": "device_A",
+        "signer_local_approval_records": [{"app_id": app, "op": "commit"}],
+        "requests": [], "signer_commit_approval_signed": False,
+        "expect": {"release_refused": True, "rule": "RG-1", "grants": 0,
+                   "commit_approvals": 0, "start_approvals": 0, "state_unchanged": True},
+        "scope": "Fresh press with intact signed-approval records refuses locally under RG-1, "
+                 "before creating a grant or sending commit/start.",
+    })
+    result["state_cases"].append(local_refusal)
+    for name, error, current, history in [
+        ("new_repress_start_version_not_current", "version_not_current", 8, False),
+        ("new_repress_start_meta_mismatch", "meta_mismatch", 7, False),
+        ("new_repress_after_start_refused", "not_new", 7, True),
+        ("new_repress_after_stop_refused", "not_new", 7, True),
+    ]:
+        case = copy.deepcopy(cross_signer)
+        case["name"] = name
+        case["initial_state"].update(current_version=current, ever_started_or_stopped=history)
+        case["expect"].update(start_error=error, running=False, current_version=current,
+                              ever_started_or_stopped=history)
+        case["expect"]["start_http_status"] = 409
+        case["scope"] = ("Fresh grant with no local approval records: commit refuses not_new; "
+                         "host proceeds to the matching start, which refuses without changing state.")
+        if error == "meta_mismatch":
+            changed_meta = {**copy.deepcopy(new_meta), "label": "Different stored meta"}
+            case["before_start"] = {"meta": changed_meta,
+                                    "stored_meta_utf8": cj(changed_meta).decode()}
+            case["scope"] += " Stored meta differs at start after commit returned not_new."
+        if history:
+            case["history_since_host_last_attempt"] = (
+                ["successful start", "successful stop"] if "after_start" in name
+                else ["successful no-op stop of never-started app"]
+            )
+        result["state_cases"].append(case)
     refused = copy.deepcopy(result["start_cases"][2])
     refused.update({
         "name": "refused_start_sets_no_history", "meta": copy.deepcopy(new_meta),

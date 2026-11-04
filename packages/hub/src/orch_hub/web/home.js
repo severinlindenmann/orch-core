@@ -56,7 +56,8 @@ export const firstRunOutgrown = (rows, items, shared = []) => (rows ?? []).lengt
 
 /** Tickets shared with this person: read-only, hidden when there are none or no ended notices. */
 export function sharedCardView(d, nameOf = () => null) {
-  const sharedItems = (d.shared ?? []).filter((it) => it && typeof it === "object");
+  // QA b1856: what the person shared themselves (rows with `shared_with`) is not "shared with you"
+  const sharedItems = (d.shared ?? []).filter((it) => it && typeof it === "object" && !Array.isArray(it.shared_with));
   const endedItems = (d.ended ?? []).filter((e) => e && typeof e === "object");
   return sharedItems.length || endedItems.length ? h("section", { class: "card shared-tickets", "aria-labelledby": "shared-heading" },
     h("h2", { id: "shared-heading", text: "Shared with you (" + sharedItems.length + ")" }),

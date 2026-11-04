@@ -60,7 +60,7 @@ describe('the join waits for the hub', () => {
     vi.spyOn(api, 'getHubStatus').mockImplementation((ws: string) => joined ? new Promise<never>(() => {}) : real(ws))
     await joinUntilSigned(() => { joined = true })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
-    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
+    expect(await screen.findByText('Connected. The hub sees only what you share, plus this workspace’s name.', {}, T)).toBeTruthy()
     expect(screen.queryByTestId('hub-connect')).toBeNull()
   })
 

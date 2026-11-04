@@ -62,7 +62,7 @@ export function Panel({ title, children, tone = '' }: { title: string; children:
     <h2 className="font-semibold">{title}</h2>{children}
   </section>
 }
-export function Action({ id, children, onClick, disabled = false, variant = 'outline' }: { id: string; children: ReactNode; onClick: () => void; disabled?: boolean; variant?: 'outline' | 'default' }) {
+export function Action({ id, children, onClick, disabled = false, variant = 'outline' }: { id: string; children: ReactNode; onClick: () => void; disabled?: boolean; variant?: 'outline' | 'default' | 'link' }) {
   return <Button data-testid={id} variant={variant} className="h-auto max-w-full whitespace-normal text-left" disabled={disabled} onClick={onClick}>{children}</Button>
 }
 export function Field({ label, value, onChange, hint, testId }: { label: string; value: string; onChange: (v: string) => void; hint?: string; testId: string }) {
@@ -73,10 +73,10 @@ export function Field({ label, value, onChange, hint, testId }: { label: string;
   </div>
 }
 /** A small "Details" link: counts, ids and "not signed" notes stay one click away, never hidden from the person. */
-export function Details({ children, testId }: { children: ReactNode; testId?: string }) {
+export function Details({ children, testId, label }: { children: ReactNode; testId?: string; /** A named link ("More about sharing"): it keeps its words when open. Without it the link reads Details / Hide details. */ label?: string }) {
   const [open, setOpen] = useState(false)
   return <div className="space-y-2">
-    <button type="button" data-testid={testId} aria-expanded={open} className="text-[13px] text-text-muted underline" onClick={() => setOpen(v => !v)}>{open ? 'Hide details' : 'Details'}</button>
+    <button type="button" data-testid={testId} aria-expanded={open} className="text-[13px] text-text-muted underline" onClick={() => setOpen(v => !v)}>{label ?? (open ? 'Hide details' : 'Details')}</button>
     {open && <div className="space-y-2 text-text-muted">{children}</div>}
   </div>
 }

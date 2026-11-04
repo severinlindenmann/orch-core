@@ -1118,19 +1118,30 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             continue
         shares.append(_row({**rec, "ticket": view.key}))
     staged = []
+    from orch.store.render import thaw
+
+    person = call.column.name == "P" and call.viewer is not None
+    cfg_now = thaw(store.state.workspace.settings.get("publish")) if person else None
     for meta in _stages(service):
         view = store.ticket(meta["ticket"]["uid"])
         if view is None or not viewer.sees(view) or (wanted is not None and view.key != wanted):
             continue
         if call.column.name == "G" and not _claim_ok(call, view):
             continue
-        staged.append(
-            {k: meta[k] for k in ("staged_id", "kind", "days", "views", "origin", "files")}
-            | {"ticket": view.key, "created_at": _iso(meta["created"])}
-        )
+        row = {k: meta[k] for k in ("staged_id", "kind", "days", "views", "origin", "files")} | {
+            "ticket": view.key,
+            "created_at": _iso(meta["created"]),
+        }
+        # W22: this person already signed this exact copy (the same check publish.send makes) and the send failed:
+        # the page offers Send now, never a second signature ("Already done" would leave no way to send). Display
+        # only: publish.send verifies the signature again and never trusts this flag.
+        if person and isinstance(cfg_now, dict):
+            try:
+                row["signed"] = _signed_approval(call, meta, _text(service, meta, cfg_now))
+            except Exception:  # noqa: BLE001 - an odd stage must not break the person's whole list
+                row["signed"] = False
+        staged.append(row)
     ws = store.state.workspace
-    from orch.store.render import thaw
-
     cfg = thaw(ws.settings.get("publish"))
     out: dict[str, Any] = {
         "configured": isinstance(cfg, dict),

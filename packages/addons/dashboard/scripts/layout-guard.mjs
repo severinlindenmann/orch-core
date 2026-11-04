@@ -23,7 +23,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { waitForTarget, waitForDevTools } from './layout-startup.mjs'
-import { selectsRealHost } from './layout-guard-pages.mjs'
+import { SETTINGS_HUB_PAGES, selectsRealHost } from './layout-guard-pages.mjs'
 
 const argv = process.argv.slice(2)
 const opt = (name, fallback) => {
@@ -401,6 +401,7 @@ async function run(send, close) {
             ['repos-activity', '/addon/repos/repos?tab.repos=activity'],
             ...['general', 'members', 'gates', 'relay', 'addons', 'skills', 'connections'].map((t) => [`settings-${t}`, `/settings/${t}`]),
             ...addonNames.map((n) => [`settings-addon-${n}`, `/settings/addon/${n}`]),
+            ...SETTINGS_HUB_PAGES, // P07: the Hub tab in each mock hub scenario
           ]
           for (const [name, path] of routes) {
             if (ONLY && !ONLY.test(name)) continue

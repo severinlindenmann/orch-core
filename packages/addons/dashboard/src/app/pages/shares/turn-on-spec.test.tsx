@@ -4,7 +4,8 @@ import { replacedHosts, turnOnSpec } from './TurnOnPublish'
 
 // The turn-on review's lead: the signed server host is always named, the links line stands on its own.
 const lead = (where: { server: string; share: string }, row: { suggest_from: 'computer' | 'hub' | null; suggest_hub: string | null }, replaces?: { server: string | null; share: string | null } | null) => {
-  render(<>{turnOnSpec(where, row, () => {}, replaces).lead}</>)
+  const lead = turnOnSpec(where, row, () => {}, replaces).lead
+  render(<>{typeof lead === 'function' ? lead(undefined) : lead}</>)
 }
 
 it('through the hub: the hub’s name is followed by the signed server host, and the links host has its own line', () => {
@@ -32,7 +33,7 @@ it('replaces: names the old hosts that differ, nothing when the settings are the
   expect(replacedHosts(where, { server: null, share: null })).toBe('This replaces your own sharing settings.')
 })
 
-it('B11: the toast after the turn-on says Publish is on, never that something was signed or published', () => {
+it('B11 + W5: the turn-on shows no toast at all, so nothing reads as if something was published', () => {
   const spec = turnOnSpec({ server: 'https://api.acme.example', share: 'https://api.acme.example' }, { suggest_from: null, suggest_hub: null }, () => {})
-  expect(spec.doneToast).toBe('Publish is on.')
+  expect(spec.doneToast).toBe('')
 })

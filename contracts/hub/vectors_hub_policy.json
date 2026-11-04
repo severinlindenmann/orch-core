@@ -195,7 +195,7 @@
      "addons": {
       "allow": [
        "github",
-       "landing"
+       "merge-queue"
       ],
       "block": []
      },
@@ -212,7 +212,7 @@
    "check": "policy",
    "expect": {
     "ok": true,
-    "policy_hash": "4AHyYh6F7bxyJ8XOP-OHeP6ROksuW8t3UPMxWyNQGVQ"
+    "policy_hash": "7fJXhlY-iUjhvepej7mZY0UDIafbKvT1fZblOCrfuPE"
    },
    "name": "policy_allow_list"
   },
@@ -223,7 +223,7 @@
       "allow": null,
       "block": [
        "foo",
-       "landing@1.2.0"
+       "merge-queue@1.2.0"
       ]
      },
      "ceiling": null,
@@ -239,7 +239,7 @@
    "check": "policy",
    "expect": {
     "ok": true,
-    "policy_hash": "rk4dIw_m5NjIf10kelcRa0GmCJ79aie9eku8WwKrnZs"
+    "policy_hash": "xrNkk5TzQsMIGA-wuQdBPli9PIquW9oBZ7CaMz7qBPU"
    },
    "name": "policy_block_id_and_version"
   },
@@ -1497,7 +1497,7 @@
     "policy": {
      "addons": {
       "allow": [
-       "landing",
+       "merge-queue",
        "github"
       ],
       "block": []
@@ -3313,7 +3313,7 @@
     "policy": {
      "addons": {
       "allow": [
-       "landing"
+       "merge-queue"
       ],
       "block": []
      },
@@ -3930,7 +3930,7 @@
     "policy": {
      "addons": {
       "allow": [
-       "landing"
+       "merge-queue"
       ],
       "block": []
      },
@@ -3998,7 +3998,7 @@
     "policy": {
      "addons": {
       "allow": [
-       "landing"
+       "merge-queue"
       ],
       "block": []
      },

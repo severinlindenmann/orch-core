@@ -458,7 +458,7 @@ export function computeTurn(
     taskCount?: number
   } = {},
 ): Turn {
-  if (status === 'done' && landing) return { who: 'nobody', why: landing.state === 'failed' ? 'Landing failed' : 'Landing' }
+  if (status === 'done' && landing) return { who: 'nobody', why: landing.state === 'failed' ? 'Merge failed' : 'In merge queue' }
   if (status === 'done') return { who: 'nobody', why: 'Done' }
   if (openBlocking) return { who: openBlocking.to, why: `Answer ${openBlocking.id}` }
   if (status === 'testing' && !verdict) return { who: people.reviewers[0] ?? people.owner ?? 'nobody', why: 'Verdict needed' }

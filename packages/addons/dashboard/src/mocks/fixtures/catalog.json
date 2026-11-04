@@ -997,7 +997,7 @@
   },
   {
     "name": "land",
-    "title": "Landing",
+    "title": "Merge queue",
     "version": "0.1.0",
     "preview": true,
     "description": "Preview: lands approved tickets on their target branch one at a time, checked on the exact commit that merges.",
@@ -1012,7 +1012,7 @@
       {
         "slot": "nav",
         "id": "landing",
-        "title": "Landing",
+        "title": "Merge queue",
         "icon": "GitMerge",
         "node": {
           "type": "stack",
@@ -1032,7 +1032,7 @@
       {
         "slot": "ticket.panel",
         "id": "landing.ticket",
-        "title": "Landing",
+        "title": "Merge queue",
         "icon": "GitMerge",
         "when": "addon.byTicket.$ticket",
         "node": {
@@ -1042,7 +1042,7 @@
       {
         "slot": "board.card_field",
         "id": "landing.card",
-        "title": "Landing",
+        "title": "Merge queue",
         "icon": "GitMerge",
         "when": "addon.cards.$ticket",
         "node": {
@@ -1054,7 +1054,7 @@
       {
         "slot": "settings",
         "id": "land.settings",
-        "title": "Landing",
+        "title": "Merge queue",
         "icon": "GitMerge",
         "node": {
           "type": "stack",
@@ -1095,7 +1095,7 @@
     "commands": [
       {
         "id": "run_worker",
-        "title": "Run the landing worker (demo)",
+        "title": "Run the merge queue worker (demo)",
         "action": "run_worker"
       }
     ],
@@ -1110,11 +1110,11 @@
       },
       "enqueue": {
         "minRole": "member",
-        "label": "Add to the landing queue"
+        "label": "Add to the merge queue"
       },
       "dequeue": {
         "minRole": "member",
-        "label": "Take off the landing queue"
+        "label": "Take off the merge queue"
       },
       "resolve": {
         "minRole": "maintainer",
@@ -1130,7 +1130,7 @@
       },
       "mark_resolved": {
         "minRole": "member",
-        "label": "Mark the landing resolution done"
+        "label": "Mark the merge resolution done"
       },
       "open_checks": {
         "minRole": "viewer",

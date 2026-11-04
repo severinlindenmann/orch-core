@@ -94,7 +94,7 @@ const CASES: Case[] = [
       state.worker.current = null
     },
     open: async (user) => {
-      const panel = await openTicketPanel(user, 'Landing')
+      const panel = await openTicketPanel(user, 'Merge queue')
       await user.click(await within(panel).findByRole('button', { name: 'Land on main' }, T))
       return screen.findByRole('dialog', {}, T)
     },

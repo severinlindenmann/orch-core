@@ -238,7 +238,7 @@ def test_f6_1_1_features_need_an_api_range_that_excludes_1_0(extra):
 
 
 def test_the_official_ids_are_reserved_for_the_official_marketplace():
-    assert constants.OFFICIAL_IDS == ("github", "landing", "model-routing")
+    assert constants.OFFICIAL_IDS == ("github", "merge-queue", "model-routing")
     assert constants.MOVED_IDS == ()
     doc = lambda i: {  # noqa: E731
         "addons": [{"id": i, "version": "1.0.0", "source": {"git": "https://github.com/acme/market"}}]

@@ -7,10 +7,10 @@ const T = { timeout: 5000 }
 
 afterEach(() => vi.unstubAllGlobals())
 
-describe('Landing page', () => {
+describe('Merge queue page', () => {
   it('shows each queue by remote and target, the attempt being checked and its checks, with a Preview chip', async () => {
     renderApp('/addon/land/landing', { viewer: 'p_sev' })
-    const h1 = await screen.findByRole('heading', { level: 1, name: /Landing/ }, T)
+    const h1 = await screen.findByRole('heading', { level: 1, name: /Merge queue/ }, T)
     expect(within(h1).getByText('Preview')).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'git.example.test/acme/billing-api → develop' }, T)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'github.com/acme-energy/energy-dbt → develop' })).toBeInTheDocument()
@@ -31,11 +31,11 @@ describe('Landing page', () => {
   })
 })
 
-describe('Landing in the ticket rail', () => {
+describe('Merge queue in the ticket rail', () => {
   it('DEMO-0053: the conflict resolution voided the approval — back to review, with the resolution diff and the invalidated gate', async () => {
     vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0053', { viewer: 'p_sev' })
-    const panel = await openTicketPanel(user, 'Landing')
+    const panel = await openTicketPanel(user, 'Merge queue')
     expect(await within(panel).findByText('Conflict resolution voids the approval — back to review', {}, T)).toBeInTheDocument()
     expect(within(panel).getByText('Verify: invalidated by orch')).toBeInTheDocument()
     await waitFor(() => expect(panel.querySelector('figure[data-widget="land-diff-13"]')).toBeTruthy(), T)
@@ -44,7 +44,7 @@ describe('Landing in the ticket rail', () => {
   it('DEMO-0052: checking, with the candidate and the checks', async () => {
     vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0052', { viewer: 'p_sev' })
-    const panel = await openTicketPanel(user, 'Landing')
+    const panel = await openTicketPanel(user, 'Merge queue')
     expect(await within(panel).findByText('Checking (attempt #14)', {}, T)).toBeInTheDocument()
     expect(within(panel).getByText('Clean: the approval stands')).toBeInTheDocument()
     await waitFor(() => expect(panel.querySelector('figure[data-widget="land-checks-14"]')).toBeTruthy(), T)
@@ -53,17 +53,17 @@ describe('Landing in the ticket rail', () => {
   it('DEMO-0042: approved, tested and merged are the same candidate', async () => {
     vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0042', { viewer: 'p_sev' })
-    const panel = await openTicketPanel(user, 'Landing')
+    const panel = await openTicketPanel(user, 'Merge queue')
     expect(await within(panel).findByText(/^Approved, tested and merged: the same candidate [0-9a-f]{7}$/, {}, T)).toBeInTheDocument()
   })
 })
 
-describe('Landing on the board and Today', () => {
+describe('Merge queue on the board and Today', () => {
   it('a card in the testing → done path carries a landing chip (no new column)', async () => {
     renderApp('/board', { viewer: 'p_sev' })
     const card = await screen.findByTestId('card-DEMO-0053', {}, T)
     expect(await within(card).findByText('back to review', {}, T)).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: /Landing/ })).toBeNull()
+    expect(screen.queryByRole('region', { name: /Merge queue/ })).toBeNull()
   })
 
   it('busy day: Today shows the needs as core-signed decisions in "From addons"', async () => {

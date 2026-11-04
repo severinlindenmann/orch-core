@@ -122,7 +122,7 @@ with `orch addon login <name>` (for the `github` add-on also by typing it in the
 hand it to agents, and it never appears in a signed text, a log or an add-on answer. Tier A limit (spec 15.1): an agent
 running as the same UID can read or write the stored file directly until the per-add-on UID (#287).
 
-**8.5 Reserved ids.** `github`, `landing` and `model-routing` are reserved for the official marketplace
+**8.5 Reserved ids.** `github`, `merge-queue` and `model-routing` are reserved for the official marketplace
 (`orch.market.constants.OFFICIAL_IDS`); another marketplace that lists one is refused with `market.reserved_id`.
 
 **8.6 `events` (API 1.2, #718).** An add-on can declare the events it can report to a waiting follow-up

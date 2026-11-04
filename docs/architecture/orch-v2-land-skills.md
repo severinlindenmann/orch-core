@@ -5,6 +5,8 @@ this draft; its findings are folded in. Nothing here is built yet.
 
 ## 1. Landing (merge lane), D53
 
+The add-on is now called **Merge queue** (id `merge-queue`, owner 29 Oct 2026).
+
 Agents already work in lanes: one git worktree and branch per ticket (worktrees addon), with claims and task leases.
 What is missing is **landing**: getting finished, approved work onto the target branch one at a time, so the target
 never goes red unnoticed. (Seen on 8 Oct 2026: three PRs merged in parallel left CI on `develop` red.)

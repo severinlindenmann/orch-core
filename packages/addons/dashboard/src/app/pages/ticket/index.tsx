@@ -24,6 +24,7 @@ import { GateNotes } from './Gates'
 import { TicketHeader, TicketProgressLive } from './Header'
 import { FollowupBanner, FollowupLine } from '../schedules/FollowupStrip'
 import { History } from './History'
+import { Work } from './Work'
 import { Overview } from './Overview'
 import { Questions } from './Questions'
 import { Raw } from './Raw'
@@ -212,7 +213,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       <div className={wide ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6' : 'min-w-0'}>
         <Tabs
           // `?tab=changes` on a ticket without changes (yet): Overview.
-          value={tab === 'changes' && !showChanges ? 'overview' : tab}
+          value={(tab === 'changes' && !showChanges) || (tab === 'work' && isRealHost()) ? 'overview' : tab}
           onValueChange={(v) => {
             setTab(v as TabId)
             setFocus(undefined)
@@ -242,6 +243,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
               {/* P11: the count is delivered results only; the agent's own check logs are not results */}
               <span className="font-mono text-[11px] text-text-faint"><ResultCount ticket={ticket} /></span>
             </TabsTrigger>
+            {!isRealHost() && <TabsTrigger value="work">Work</TabsTrigger>}
             <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
@@ -261,6 +263,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
           <TabsContent value="artifacts">
             <Artifacts {...props} focus={focus} />
           </TabsContent>
+          {!isRealHost() && <TabsContent value="work"><Work {...props} /></TabsContent>}
           <TabsContent value="history">
             <History {...props} />
           </TabsContent>

@@ -69,3 +69,6 @@ export const demoSources = () => sources
 
 /** The two runs above: the mock host draws a canned terminal and chat for them instead of attaching a PTY. */
 export const isDemoRun = (run: string) => run === DEMO_MAIN_RUN || run === DEMO_CHILD_RUN
+
+/** The live agent tree, jobs and commands (mocks/addons/focus/live.ts) are drawn for the demo ticket only. */
+export const demoLiveOn = (ticket?: string) => ticket === DEMO_FOCUS_TICKET

@@ -6,3 +6,4 @@ export const demoTranscript = demoOnly
 export const demoDelegations = demoOnly
 export const demoDiff = demoOnly
 export const demoRunList = demoOnly
+export const demoLiveOn = (_ticket?: string): boolean => false

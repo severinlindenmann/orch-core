@@ -108,6 +108,12 @@ CLAIM_HINT_SCAN = 40  # visible open candidates
 CLAIM_HINT_WORK = 120  # ticket reads and key ownership checks, including dependencies
 
 
+def agent_start_failure(failure: dict[str, str]) -> str:
+    """The host's fixed stop words, never the agent's output or raw spawn error."""
+    words = " ".join(failure[k] for k in ("stop_message", "stop_hint") if failure.get(k))
+    return f"Last agent start failed: {words}"
+
+
 def claim_hint(c: Any) -> str:
     """What to do when there is no claim: claim a ticket that is free, else create one (never a command that fails).
     It looks at the best :data:`CLAIM_HINT_SCAN` visible open tickets only; when none is free and there are more,

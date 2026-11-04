@@ -1110,6 +1110,15 @@ class RegistryBackend:
             raise host_error(e, operation) from None
         if ctx.session and operation.is_write and not ctx.dry_run:
             records.succeeded_write(ctx.session)
+        if operation.name == "show" and res.key:
+            from orch.ops.views import agent_start_failure
+
+            from .runners import latest_start_failure
+
+            failure = latest_start_failure(call.service, res.key)
+            if failure is not None:
+                res.data["ticket"]["last_agent_start_failure"] = failure
+                res.lines.append(agent_start_failure(failure))
         return result_dict(res)
 
 

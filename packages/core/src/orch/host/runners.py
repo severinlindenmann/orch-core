@@ -1509,6 +1509,42 @@ _RETRY_HINT = "Start it again; if it keeps failing, ask the person who set up th
 _NOT_FOUND = re.compile(r"not found|no such file", re.I)
 
 
+_START_FAILURES = frozenset({"program_not_found", "spawn_failed", "exited_early"})
+
+
+def latest_start_failure(service: Any, key: str) -> dict[str, str] | None:
+    """W30b: fixed host words for a failed start newer than this ticket's agent activity.
+
+    Run records are shared by workspaces. Only the resolved ticket's records are considered;
+    callers must first authorize the ticket read. Nothing is appended to the ledger.
+    """
+    from orch.model.types import ts
+
+    hub = getattr(service, "runners", None)
+    if hub is None:
+        return None
+    candidates = [
+        rec
+        for rec in list(hub.store.records.values())
+        if rec.get("workspace_id") == service.workspace_id
+        and rec.get("kind") == "agent"
+        and rec.get("ticket") == key
+        and rec.get("stop_cause") in _START_FAILURES  # never W12's ticket_closed: that run did start
+        and rec.get("stop_message")
+    ]
+    if not candidates:
+        return None
+    rec = max(candidates, key=lambda r: (float(r.get("ended_ts") or 0), int(r.get("rev") or 0)))
+    ended = float(rec.get("ended_ts") or 0)
+    activity = max(
+        (ts(e["at"]) for e in service.store.events(key) if e["actor"]["kind"] == "agent" or e["type"] == "claim.taken"),
+        default=0,
+    )
+    if ended <= activity:
+        return None
+    return {k: rec[k] for k in ("stop_cause", "stop_message", "stop_hint") if rec.get(k)}
+
+
 def _program(rec: dict[str, Any]) -> str:
     """The agent program's name as the run knows it (``claude``), never a path."""
     name = str(rec.get("harness") or "").rsplit("/", 1)[-1]

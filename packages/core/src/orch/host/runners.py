@@ -852,9 +852,8 @@ class RunnerHub:
             tail = args.get("tail") or ""
             cause = early_stop(new, args["code"], tail, args["at"])
             if cause is not None:
+                # Opus W30: the tail only decides the cause; it is never kept (terminal output can hold secrets)
                 new.update(zip(("stop_cause", "stop_message", "stop_hint"), cause, strict=True))
-                if tail:
-                    new["exit_tail"] = tail
                 self._audit("run.outcome", run=args["run"], outcome="failed", cause=cause[0])
         if new != rec:
             await self._save(new)
@@ -1059,10 +1058,9 @@ class RunnerHub:
             if cause is not None:
                 failed.update(zip(("stop_cause", "stop_message", "stop_hint"), cause, strict=True))
             await self._save(failed)
-            if audit:
-                self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code)
-                if cause is not None:
-                    self._audit("run.outcome", run=run, outcome="failed", cause=cause[0])
+            if audit:  # one outcome line per failure (Opus W30), with the cause when there is one
+                more = {"cause": cause[0]} if cause is not None else {}
+                self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code, **more)
             if exc.code == "launch.no_grant" and payload.get("kind") == "agent" and not payload.get("run_grant"):
                 # the runner's word is the truth: it holds no grant the host believed current. Forget it, so the
                 # person sees the normal "give agent access" step instead of a dead end
@@ -1540,9 +1538,10 @@ def early_stop(rec: dict[str, Any], code: int | None, tail: str, at: str) -> tup
     try:
         t0 = datetime.fromisoformat(str(rec.get("started_at")).replace("Z", "+00:00"))
         t1 = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
-    except ValueError:
+        late = (t1 - t0).total_seconds() > EARLY_SECONDS
+    except (ValueError, TypeError):  # Opus W30: a time without a zone must never stop the exit from being recorded
         return None
-    if (t1 - t0).total_seconds() > EARLY_SECONDS:
+    if late:
         return None
     if code in (126, 127) and (code == 127 or _NOT_FOUND.search(tail)):
         return _not_found(rec)

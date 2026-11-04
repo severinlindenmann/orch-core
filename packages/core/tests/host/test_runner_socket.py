@@ -1054,13 +1054,24 @@ def test_w30_spawn_error_is_recorded_with_cause_and_audited(w, monkeypatch):
             w.h.run(hub.dispatch(run, {"kind": "agent"}, audit=True))
         rec = hub.store.records[run]
         assert rec["stop_cause"] == cause and rec["stop_message"]
-        assert ("run.outcome", {"run": run, "outcome": "failed", "cause": cause}) in [
-            (e, {k: v for k, v in kw.items() if k != "code"}) for e, kw in seen
+        mine = [
+            (e, {k: v for k, v in kw.items() if k != "code"})
+            for e, kw in seen
+            if kw.get("run") == run and e == "run.outcome"
         ]
+        assert mine == [("run.outcome", {"run": run, "outcome": "spawn_failed", "cause": cause})]  # one line
 
 
-def test_w30_exit_report_tail_is_bounded_and_clean(w, rstate, tmp_path):
-    """The runner sends the last 2 KB of output, without control characters, only for a failed exit."""
+def test_w30_exit_report_tail_is_bounded_and_clean(w, rstate, tmp_path, monkeypatch):
+    """The runner sends the last 2 KB of output, without control characters, only for a failed exit; the host uses it
+    to decide the cause and never keeps it (Opus W30)."""
+    from orch.host import runners as host_runners
+
+    seen_tails: list[str] = []
+    real = host_runners.early_stop
+    monkeypatch.setattr(
+        host_runners, "early_stop", lambda rec, code, tail, at: (seen_tails.append(tail), real(rec, code, tail, at))[1]
+    )
     hub = w.h.host.runners
     r = Runner(w, rstate)
     try:
@@ -1077,7 +1088,15 @@ def test_w30_exit_report_tail_is_bounded_and_clean(w, rstate, tmp_path):
         wait_for(lambda: hub.store.records[run].get("cleanup") == "complete")
         rec = hub.store.records[run]
         assert rec["stop_cause"] == "program_not_found"
-        tail = rec["exit_tail"]
+        assert "exit_tail" not in rec and "tail" not in rec
+        (tail,) = seen_tails
         assert len(tail) <= 2048 and "\x1b" not in tail and "command not found" in tail
     finally:
         r.close()
+
+
+def test_w30_an_exit_time_without_a_zone_still_records_the_exit():
+    from orch.host.runners import early_stop
+
+    rec = {"kind": "agent", "started_at": "2026-11-04T08:00:00Z", "harness": "claude"}
+    assert early_stop(rec, 127, "", "2026-11-04T08:00:01") is None  # naive time: no cause, no crash

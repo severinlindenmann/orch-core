@@ -40,7 +40,7 @@ export function doneToastOf(a: HumanAction): string {
     case 'answer':
       return 'Answer sent'
     case 'approve':
-      return `You approved the ${a.gate === 'verify' ? 'result' : a.gate === 'code' ? 'code' : a.gate}`
+      return `You approved the ${a.gate}`
     case 'verdict':
       return 'Verdict recorded'
     case 'request_changes':

@@ -6,7 +6,7 @@ import { Check, ChevronDown, ChevronRight, FileText, ListChecks, Pencil, UserChe
 import { useState } from 'react'
 import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
 import { Raw } from '@/components/sign/visible'
-import { diffstat } from '@/api/gates'
+import { changesNote } from '@/api/gates'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { availableActions } from './actions'
 import { agentName, fmtDuration, fmtTime, Mono, Pill, Section, type Jump, type TabProps } from './shared'
@@ -190,7 +190,7 @@ function VerdictBanner({ ticket, viewer, jump, sign }: TabProps) {
         {can && <p className="font-medium text-text">Ready for your verdict. Check the evidence below, then give your verdict.</p>}
         <p>
           {head ? (
-            <>Evidence and code together: the verdict covers commit <Mono className="text-text">{head}</Mono> ({diffstat(ticket.branch)} against {ticket.branch.base}).</>
+            <>Evidence and code together: the verdict covers commit <Mono className="text-text">{head}</Mono>{changesNote(ticket.branch) ? ` (${changesNote(ticket.branch)})` : ''}.</>
           ) : (
             'No code is linked to this ticket: the verdict covers the criteria and the files below.'
           )}{' '}

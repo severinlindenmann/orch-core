@@ -1,8 +1,7 @@
 // Hub and dashboard as one app (H1, 27 Oct). The hub is the only authority for a switch ticket; this file only asks the
 // dashboard server for one (`POST /api/w/<ws>/hub/switch`) and for the company rail (`GET /api/w/<ws>/hub/rail`, fetched
 // by the server through the host's hub link). A ticket travels in the URL fragment only.
-import { getToken } from './bootstrap'
-import { createFetchTransport } from './fetchTransport'
+import { switchTransport } from '@/api/client'
 
 export interface RailRow {
   workspace_id: string
@@ -15,7 +14,7 @@ export interface RailRow {
 }
 export interface Rail { hub: { name: string; origin: string | null } | null; workspaces: RailRow[] }
 
-const transport = () => createFetchTransport('', getToken)
+const transport = () => switchTransport
 
 export async function fetchRail(ws: string): Promise<Rail> {
   const res = await transport().request('GET', `/api/w/${ws}/hub/rail`)

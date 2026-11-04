@@ -10,6 +10,7 @@ When orch-publish cannot be read, the last good answer is returned with its age 
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from ..contract.hub import Refused
@@ -58,6 +59,18 @@ def _text(x: Any) -> str | None:
 class PublishedHandlers:
     d: Any
 
+    def _sync_bindings(self) -> None:
+        """B03: push the latest binding of every pinned workspace first, both ways: a switch to full shows its links, a
+        switch to selective hides them, even when the switch's own sync failed. Best effort: it never raises."""
+        try:
+            sync = getattr(self.d, "publish_sync", None)
+            if sync is not None:
+                sync(sorted(self.d.registry.pins()))
+        except Exception as e:  # noqa: BLE001 - a failed push must never block the page or a revoke
+            logging.getLogger("orch_hub.publish").warning(
+                "binding push before the admin read failed: %s", type(e).__name__
+            )
+
     def _published_reader(self) -> Any:
         """Anything with ``published(workspace=None) -> rows``: injected (tests), else built from the publish address."""
         injected = getattr(self.d, "published", None)
@@ -91,6 +104,7 @@ class PublishedHandlers:
         if type(item_id) is not str or len(item_id) != 32 or any(ch not in "0123456789abcdef" for ch in item_id):
             raise _err("unknown_item")
         reg = self.d.registry
+        self._sync_bindings()
         try:
             raw = self._published_reader().published()
         except AdminReadError:
@@ -127,6 +141,7 @@ class PublishedHandlers:
         reg = self.d.registry
         now = int(self.d.now_ms())
         failed, raw = False, []
+        self._sync_bindings()
         try:
             raw = self._published_reader().published()
         except AdminReadError:

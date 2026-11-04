@@ -15,7 +15,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { spacesView, historyView, newSpaceDialog, STATEMENT, NO_START, LATER, RESTORE_LINE, HINT_PICK, HINT_TICK } = await import("../../src/orch_hub/web/pages/spaces.js");
+const { spacesView, historyView, newSpaceDialog, STATEMENT, RESTORE_LINE, HINT_PICK, HINT_TICK } = await import("../../src/orch_hub/web/pages/spaces.js");
 const NOW = 1_800_000_000_000;
 const find = (n, pred) => n.all().filter(pred);
 const data = { spaces: [
@@ -87,7 +87,7 @@ test("New shared space: three steps, the statement is on the page and in the dia
   name.value = " Launches "; name.listeners.input(); purpose.value = "Dates"; purpose.listeners.input();
   clickAll(dlg, "Next")[0].listeners.click();
   assert.match(dlg.textContent, /step 3 of 3/);
-  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("joins now")) // the no-start reason now lives on the page, not hidden in the dialog;
+  assert.ok(dlg.textContent.includes(STATEMENT) && dlg.textContent.includes("Shares everything")) // the no-start reason now lives on the page, not hidden in the dialog;
   const create = clickAll(dlg, "Create")[0];
   const hint = find(dlg, (n) => n.attrs.id === "space-hint")[0];
   const [box_a] = find(dlg, (n) => n.tag === "input" && n.attrs.type === "checkbox" && n.attrs["aria-label"] === "Product");
@@ -108,7 +108,7 @@ test("New shared space: three steps, the statement is on the page and in the dia
   assert.equal(find(view, (n) => n.attrs.id === "space-dialog")[0].children.length, 0);   // the dialog closed
 });
 
-test("New shared space: a waiting workspace is greyed out with its reason from the start and cannot be ticked", () => {
+test("New shared space: only eligible starters can be ticked; later members retain their explanation", () => {
   const made = [];
   const view = spacesView({ ...data, workspaces: WS }, { create: (f) => made.push(f) }, NOW);
   find(view, (n) => n.attrs.id === "new-space")[0].listeners.click();
@@ -119,9 +119,9 @@ test("New shared space: a waiting workspace is greyed out with its reason from t
   const box = (label) => find(dlg, (n) => n.tag === "input" && n.attrs["aria-label"] === label)[0];
   const create = clickAll(dlg, "Create")[0];
   const tick = find(dlg, (n) => n.attrs.id === "space-understood")[0]; tick.checked = true; tick.listeners.change();
-  assert.equal(box("Legal").disabled, true); assert.equal(box("Product").disabled, undefined);
-  assert.ok(dlg.textContent.includes(LATER));
-  assert.equal(find(dlg, (n) => n.tag === "label" && n.className === "check disabled").length, 1, "the row is dimmed");
+  assert.equal(box("Legal"), undefined); assert.equal(box("Product").disabled, undefined);
+  assert.ok(!dlg.textContent.includes("Legal"));
+  assert.equal(find(dlg, (n) => n.tag === "label" && n.className === "check disabled").length, 0, "ineligible members are omitted");
   assert.equal(find(dlg, (n) => n.attrs.id === "space-no-start").length, 0, "no late warning");
   assert.equal(find(dlg, (n) => n.attrs.class === "banner warn" && !n.hidden).length, 0);
   assert.equal(box("Product").checked, true);                                     // preselected
@@ -138,10 +138,7 @@ test("New shared space: selective workspaces get the fix on the page instead of 
   const view = spacesView({ spaces: [], workspaces: [WS[1]] }, { create: () => assert.fail("nothing may be created") }, NOW);
   const reason = find(view, (n) => n.attrs.id === "space-no-start")[0];
   assert.equal(reason.attrs.role, "note");
-  assert.ok(reason.textContent.includes("No space can be started yet."));
-  assert.ok(reason.textContent.includes(NO_START));
-  assert.equal(NO_START, "A space needs a workspace that shares everything with the hub.");
-  assert.ok(reason.textContent.includes("Legal shares only what you choose."));
+  assert.ok(reason.textContent.includes("Legal's workspace needs to share everything before you can start a space."));
   assert.equal(find(reason, (n) => n.tag === "summary")[0].textContent, "Show me how");
   assert.deepEqual(find(reason, (n) => n.tag === "li").map((n) => n.textContent), [
     "Open Legal on its own computer.",
@@ -162,8 +159,8 @@ test("New shared space: only connected candidates count, and every selective wor
     { ...WS[0], status: "unbound" },
   ] }, {}, NOW);
   const reason = find(view, (n) => n.attrs.id === "space-no-start")[0];
-  assert.ok(reason.textContent.includes("Legal shares only what you choose."));
-  assert.ok(reason.textContent.includes("<b>Anna</b> shares only what you choose."));
+  assert.ok(reason.textContent.includes("Your workspaces need to share everything before you can start a space."));
+  assert.ok(reason.textContent.includes("Open Legal or <b>Anna</b> on its own computer."));
   assert.doesNotMatch(reason.textContent, /Product/);
   assert.equal(find(reason, (n) => n.tag === "b" && n.textContent === "Anna").length, 0);
   assert.equal(find(view, (n) => n.attrs.id === "new-space")[0].disabled, true);
@@ -241,4 +238,13 @@ test("say() gives plain words for the space codes and never echoes a raw code", 
     const t = say(code);
     assert.doesNotMatch(t, /[(_]/, code); assert.ok(t.length > 10);
   }
+});
+
+test("QA P03: with no starter the button is not the main action and the empty text does not point at it", () => {
+  const view = spacesView({ spaces: [], workspaces: [WS[1]] }, {}, NOW);
+  const button = find(view, (n) => n.attrs.id === "new-space")[0];
+  assert.equal(button.disabled, true);
+  assert.notEqual(button.attrs.class, "pri");
+  assert.doesNotMatch(view.textContent, /Press “New shared space”/);
+  assert.match(view.textContent, /starts from a workspace that shares everything with the hub/);
 });

@@ -16,6 +16,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { PauseButton, TasksChip } from './Delegation'
 import { CreateFocusTicket, StartDialog } from './StartDialog'
 import { Promote } from './Promote'
+import { LiveFocus, LiveHeaderControls } from './live/LiveFocus'
+import { liveEnabled } from './live/useLive'
 
 export function FocusPage() {
   usePageHeader('Focus mode')
@@ -34,6 +36,9 @@ function FocusSession({ ticket, scratchRun, workspace, start }: { ticket?: strin
   const [panel, setPanel] = useState(() => window.innerWidth >= 768)
   const [tab, setTab] = useState<PanelTab>(ticket ? 'Changes' : 'Artifacts')
   const [create, setCreate] = useState(false)
+  // Preview: the agent tree, jobs and commands of the demo ticket (mock host only). Details start off.
+  const live = !!ticket && liveEnabled(ticket)
+  const [details, setDetails] = useState(false)
   const data = useQuery({ ...queries.ticket(workspace, ticket ?? ''), enabled: !!ticket })
   useEffect(() => {
     const changed = () => setFullscreen(document.fullscreenElement === root.current)
@@ -67,6 +72,10 @@ function FocusSession({ ticket, scratchRun, workspace, start }: { ticket?: strin
   const mine = runs.data?.runs.filter((r) => r.ticket === ticket && (r.kind === 'agent' || r.as_person) && r.harness !== 'shell') ?? []
   const status = !ticket ? null : runs.isError ? 'Session unavailable' : runs.isPending ? 'Checking agent...' : mine.some((r) => r.state === 'running') ? 'Agent is working' : mine.some((r) => r.state === 'starting') ? 'Agent is starting' : 'No agent running'
   const review = () => { setTab('Decisions'); setPanel(true) }
+  const sidePanel = panel && <aside id="focus-side-panel" aria-label="Session details" className={cn('fixed inset-0 z-40 flex min-w-0 flex-col overflow-hidden bg-surface md:static md:w-[460px]', live && 'md:w-[380px]', 'md:z-auto md:max-w-[60%] md:shrink-0 md:border-l md:border-border')}>
+    <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4 md:hidden"><h2 className="font-medium">Details</h2><Button variant="outline" size="sm" className="h-11" onClick={() => setPanel(false)}><X />Close</Button></div>
+    <Panel ticket={ticket} scratch={!ticket} tab={tab} onTab={setTab} />
+  </aside>
   return (
     <div ref={root} data-testid="focus-root" className={cn('flex h-full min-h-0 min-w-0 flex-col overflow-auto rounded-lg bg-bg text-text', fallback && 'focus-fullscreen fixed inset-0 z-50 rounded-none')}>
       <header className="flex h-14 shrink-0 flex-nowrap items-center gap-2 border-b border-border bg-surface px-3 py-2 md:px-4">
@@ -77,10 +86,10 @@ function FocusSession({ ticket, scratchRun, workspace, start }: { ticket?: strin
         </div>
         {!ticket && !start && <Button variant="outline" size="sm" className="shrink-0" onClick={() => setCreate(true)}>Create ticket from this</Button>}
         {!start && <>
-          {status && <span role="status" className="hidden shrink-0 text-xs text-text-muted md:inline">{status}</span>}
-          <TasksChip ticket={ticket} />
+          {status && !live && <span role="status" className="hidden shrink-0 text-xs text-text-muted md:inline">{status}</span>}
+          {live ? <LiveHeaderControls details={details} onDetails={setDetails} /> : <TasksChip ticket={ticket} />}
           <div className="hidden items-center gap-2 md:flex">
-            <PauseButton ticket={ticket} />
+            {!live && <PauseButton ticket={ticket} />}
             <Button variant="ghost" size="sm" aria-pressed={fullscreen || fallback} onClick={() => void toggleFullscreen()}><Maximize />Fullscreen</Button>
             <Button variant="ghost" size="sm" aria-expanded={panel} aria-controls="focus-side-panel" onClick={() => setPanel(!panel)}>{panel ? <PanelRightClose /> : <PanelRightOpen />}{panel ? 'Hide panel' : 'Show panel'}</Button>
           </div>
@@ -88,8 +97,8 @@ function FocusSession({ ticket, scratchRun, workspace, start }: { ticket?: strin
             <Popover><PopoverTrigger asChild><Button variant="outline" size="icon" className="size-11" aria-label="More"><Ellipsis /></Button></PopoverTrigger>
               <PopoverContent align="end" className="w-60 space-y-2 p-3">
                 {status && <p role="status" className="text-xs text-text-muted">{status}</p>}
-                <PauseButton ticket={ticket} />
-                <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => setPanel(true)}><PanelRightOpen />Details</Button>
+                {!live && <PauseButton ticket={ticket} />}
+                <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => setPanel(true)}><PanelRightOpen />{live ? 'Changes and commands' : 'Details'}</Button>
                 <Button variant="ghost" size="sm" className="w-full justify-start" aria-pressed={fullscreen || fallback} onClick={() => void toggleFullscreen()}><Maximize />Fullscreen</Button>
                 <Button asChild variant="outline" size="sm" className="w-full">{ticket ? <Link to="/ticket/$key" params={{ key: ticket }}>Exit focus</Link> : <Link to="/">Exit focus</Link>}</Button>
               </PopoverContent></Popover>
@@ -97,14 +106,11 @@ function FocusSession({ ticket, scratchRun, workspace, start }: { ticket?: strin
         </>}
         <Button asChild variant="outline" size="sm" className={cn('shrink-0', !start && 'hidden md:inline-flex')}>{ticket ? <Link to="/ticket/$key" params={{ key: ticket }}>Exit focus</Link> : <Link to="/">Exit focus</Link>}</Button>
       </header>
-      {start ? <StartDialog /> : <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      {start ? <StartDialog /> : live ? <LiveFocus ws={workspace} ticket={ticket} details={details} side={sidePanel} /> : <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {ticket && data.isError ? <p role="alert" className="p-5 text-sm">Could not load this ticket. <Button variant="outline" size="sm" onClick={() => void data.refetch()}>Try again</Button></p> : <Conversation ticket={ticket} scratchRun={scratchRun} onReview={ticket ? review : undefined} />}
         </div>
-        {panel && <aside id="focus-side-panel" aria-label="Session details" className="fixed inset-0 z-40 flex min-w-0 flex-col overflow-hidden bg-surface md:static md:z-auto md:w-[460px] md:max-w-[60%] md:shrink-0 md:border-l md:border-border">
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4 md:hidden"><h2 className="font-medium">Details</h2><Button variant="outline" size="sm" className="h-11" onClick={() => setPanel(false)}><X />Close</Button></div>
-          <Panel ticket={ticket} scratch={!ticket} tab={tab} onTab={setTab} />
-        </aside>}
+        {sidePanel}
       </div>}
       {create && (scratchRun ? <Promote run={scratchRun} onClose={() => setCreate(false)} /> : <CreateFocusTicket onClose={() => setCreate(false)} />)}
     </div>

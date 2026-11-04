@@ -153,7 +153,7 @@ describe('mock tickets search', () => {
       expect(sessionBelongsTo('s_77c2.3', 's_77c2')).toBe(true)
       expect(sessionBelongsTo('s_77c21', 's_77c2')).toBe(false)
     })
-    it('Mara cannot revoke Severin\'s grant, a viewer cannot revoke or issue', async () => {
+    it('Mara cannot revoke Anna Test\'s grant, a viewer cannot revoke or issue', async () => {
       const { api, store } = setup()
       const ws = store.workspaces[0].id
       store.setViewer('p_mara')

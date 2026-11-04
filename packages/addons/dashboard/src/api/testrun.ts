@@ -45,6 +45,8 @@ export class TestrunError extends Error {
 export const KEEPALIVE_MAX = 60_000
 
 async function call(method: string, path: string, body?: unknown, keepalive = false): Promise<Response> {
+  // Keep the literal mode check so Vite removes this import before the production mock-module guard.
+  if (import.meta.env.MODE === 'demo') return (await import('@/mocks/testrun')).demoTestrun(method, path, body)
   const token = getToken()
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`

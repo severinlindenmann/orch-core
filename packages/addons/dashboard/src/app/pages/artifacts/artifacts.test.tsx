@@ -24,7 +24,7 @@ describe('Artifacts page', () => {
     expect(await screen.findByText('12 artifacts', {}, T)).toBeInTheDocument()
     const row = screen.getByRole('button', { name: 'Preview tariff-export.log' }).closest('tr')!
     expect(within(row).getByRole('link', { name: 'DEMO-0043' })).toBeInTheDocument()
-    expect(within(row).getByText('Claude Code for Severin')).toBeInTheDocument()
+    expect(within(row).getByText('Claude Code for Anna Test')).toBeInTheDocument()
     for (const f of ['Kind', 'Ticket', 'Added by', 'Added']) expect(screen.getByRole('combobox', { name: f })).toBeInTheDocument()
     // Narrowing and clearing (the menus are Radix selects, exercised in the browser pass; the host filters are in mocks/artifacts.test.ts).
     await user.type(screen.getByRole('searchbox', { name: 'Search artifacts' }), '.log')

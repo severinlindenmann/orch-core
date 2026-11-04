@@ -65,7 +65,7 @@ describe('action answers: core keeps only what the viewer may be pointed at', ()
   it('keeps a terminal only while terminals is active and the session is in this viewer\'s view', () => {
     let s = setup({ terminal: 'shell1' })
     expect(s.store.runAddon(s.ws, 'quick', 'add', {})).toMatchObject({ terminal: 'shell1' })
-    // Mara cannot see Severin's own shell.
+    // Mara cannot see Anna Test's own shell.
     s = setup({ terminal: 'shell1' })
     s.store.setViewer('p_mara')
     expect(s.store.runAddon(s.ws, 'quick', 'add', {})).not.toHaveProperty('terminal')

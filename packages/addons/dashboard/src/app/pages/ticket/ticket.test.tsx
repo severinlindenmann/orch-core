@@ -38,7 +38,7 @@ describe('ticket page', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
 
     await waitFor(() => expect(document.getElementById('question-Q2')).toHaveAttribute('data-state', 'answered'), T)
-    expect(within(document.getElementById('question-Q2')!).getByText(/Severin.*via dashboard.*Touch ID/)).toBeInTheDocument()
+    expect(within(document.getElementById('question-Q2')!).getByText(/Anna Test.*via dashboard.*Touch ID/)).toBeInTheDocument()
   })
 
   it('tells Tom that DEMO-0044 is not visible to him', async () => {

@@ -144,7 +144,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'K1',
         title: 'The Activity page',
         text: 'Click "Activity" in the left menu.',
-        see: 'A list of what happened, grouped under "Today, <date>" and earlier days, newest first. Each line reads like "Severin closed the ticket on RA-0001", with the ticket title under it and the time (your local time) on the right.',
+        see: 'A list of what happened, grouped under "Today, <date>" and earlier days, newest first. Each line reads like "Anna Test closed the ticket on RA-0001", with the ticket title under it and the time (your local time) on the right.',
       },
       {
         id: 'K2',

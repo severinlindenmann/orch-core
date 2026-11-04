@@ -1,3 +1,4 @@
+import { isDemoBuild } from '@/lib/demo'
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
 import { ArrowLeft, Check, ClipboardCopy, Copy, Download, ImagePlus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -401,7 +402,7 @@ export function ChecklistPage() {
     <div className="h-full overflow-y-auto bg-bg">
       <div className="mx-auto max-w-3xl px-4 py-4 sm:py-6">
         {/* A full page load: the checklist opens without the session, so the dashboard has to ask for it again. */}
-        <a href="/" className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text"><ArrowLeft className="size-4" /> Back to the dashboard</a>
+        <a href={isDemoBuild ? `${import.meta.env.BASE_URL}#/` : '/'} className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text"><ArrowLeft className="size-4" /> Back to the dashboard</a>
         <h1 className="mt-3 text-xl font-semibold text-text">{RUN2_TITLE}</h1>
         <p className="mt-1 text-sm text-text-muted">{RUN2_SUBTITLE}</p>
 

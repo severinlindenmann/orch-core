@@ -73,7 +73,7 @@ describe('Settings › Connections', () => {
     expect(status('gcloud-billing')).toHaveTextContent('wrong identity')
     expect(status('tariff-api')).toHaveTextContent('service down')
     expect(status('az-storage')).toHaveTextContent('unknown')
-    expect(screen.getByTestId('connection-gcloud-billing')).toHaveTextContent('expected orch-agent@acme-energy.iam.gserviceaccount.com, got severin@acme-energy.ch')
+    expect(screen.getByTestId('connection-gcloud-billing')).toHaveTextContent('expected orch-agent@service.example.test, got anna@example.test')
   })
 
   it('Run check shows the bounded, filtered output in Details; a CLI login says orch never stores its token', async () => {
@@ -154,7 +154,7 @@ describe('Today: re-login', () => {
   it('the owner gets one item per failing login with the hint; Run check again clears it after the login', async () => {
     const { user } = renderApp('/')
     const row = await screen.findByTestId('relogin-databricks-prod', {}, T)
-    expect(screen.getByTestId('relogin-gcloud-billing')).toHaveTextContent('wrong identity: expected orch-agent@acme-energy.iam.gserviceaccount.com, got severin@acme-energy.ch')
+    expect(screen.getByTestId('relogin-gcloud-billing')).toHaveTextContent('wrong identity: expected orch-agent@service.example.test, got anna@example.test')
     await user.click(within(row).getByRole('button', { name: 'Re-login needed: databricks-prod' }))
     expect(within(row).getByText(/^databricks auth login --profile prod/)).toBeInTheDocument()
     expect(within(row).getByRole('button', { name: 'Copy the login command for databricks-prod' })).toBeInTheDocument()

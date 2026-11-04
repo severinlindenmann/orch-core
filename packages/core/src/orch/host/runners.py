@@ -51,6 +51,7 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -109,6 +110,10 @@ RUNNER_RETRY_MS = {"attach.limit": 2000}
 #: how long an exited run's ring is kept by the runner (:data:`orch.runner.supervise.KEEP_RING_SECONDS`)
 REPLAY_SECONDS = 3600
 WATCH_SECONDS = 0.5
+#: grace between the polite stop (SIGHUP + SIGTERM) and the hard stop (SIGKILL) of an agent whose ticket closed
+CLOSE_GRACE_MS = 10_000
+#: ticket-log lines after which a ticket may have become done or closed
+CLOSING_TYPES = frozenset({"ticket.closed", "verdict.given", "gate.approved", "status.changed"})
 #: an attachment whose person, grant or ticket cannot be decided for this long is ended (fail closed)
 UNDECIDED_SECONDS = 2.0
 #: how long the host waits for the runner to confirm an ``attach.end``; unanswered, the runner session is dropped
@@ -383,6 +388,7 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
             "signal": {"type": ["string", "null"], "maxLength": 16},
             "at": _TIME,
             "cleanup": _CLEANUP,
+            "tail": {"type": "string", "maxLength": 2048},  # W30: the last output of a failed exit, for the cause
             "claim_released": {"type": "boolean"},
         },
         ("run", "code", "signal", "at", "cleanup"),
@@ -458,6 +464,9 @@ def view(rec: dict[str, Any]) -> dict[str, Any]:
             "code": exit_.get("code"), "signal": exit_.get("signal"), "at": exit_.get("at"),
             "reason": exit_.get("reason") or "exited", "cleanup": rec.get("cleanup") or "unknown",
         }  # fmt: skip
+        for k in ("stop_cause", "stop_message", "stop_hint"):  # W30: why an agent stopped before it began
+            if rec.get(k):
+                out[k] = rec[k]
     else:
         out["exit"] = None
     return out
@@ -544,6 +553,7 @@ class RunnerHub:
         self.host = host
         self.store = RunStore(host.state_dir, host.host_uid)
         self.command_timeout = command_timeout
+        self._close_tasks: set[asyncio.Task[Any]] = set()
         self.session: Session | None = None
         self.uid: int | None = None
         self.generation: str | None = None  # the runner's gen (§12.3.2 Gen)
@@ -844,6 +854,13 @@ class RunnerHub:
                                              "reason": reason})  # fmt: skip
         if rec.get("cleanup") != args["cleanup"] and rec.get("cleanup") in (None, "incomplete"):
             new["cleanup"] = args["cleanup"]
+        if rec.get("state") in LIVE and "stop_cause" not in rec:
+            tail = args.get("tail") or ""
+            cause = early_stop(new, args["code"], tail, args["at"])
+            if cause is not None:
+                # Opus W30: the tail only decides the cause; it is never kept (terminal output can hold secrets)
+                new.update(zip(("stop_cause", "stop_message", "stop_hint"), cause, strict=True))
+                self._audit("run.outcome", run=args["run"], outcome="failed", cause=cause[0])
         if args.get("claim_released") is True:  # W31: the runner let go of the run's claim as the agent
             new["claim_released"] = True
         if new != rec:
@@ -1044,9 +1061,14 @@ class RunnerHub:
                 raise HostError(
                     "outcome.unknown", f"the spawn of {run} was sent; the runner did not confirm it"
                 ) from None
-            await self._save({**self.store.records[run], "state": "exited", "exit": _exit("spawn_failed", exc.code)})
-            if audit:
-                self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code)
+            failed = {**self.store.records[run], "state": "exited", "exit": _exit("spawn_failed", exc.code)}
+            cause = spawn_stop(failed, exc.code)
+            if cause is not None:
+                failed.update(zip(("stop_cause", "stop_message", "stop_hint"), cause, strict=True))
+            await self._save(failed)
+            if audit:  # one outcome line per failure (Opus W30), with the cause when there is one
+                more = {"cause": cause[0]} if cause is not None else {}
+                self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code, **more)
             if exc.code == "launch.no_grant" and payload.get("kind") == "agent" and not payload.get("run_grant"):
                 # the runner's word is the truth: it holds no grant the host believed current. Forget it, so the
                 # person sees the normal "give agent access" step instead of a dead end
@@ -1086,14 +1108,41 @@ class RunnerHub:
                 pass  # the parent's answer is the caller's; a child that would not stop shows as running
         return out
 
-    async def _stop_one(self, run: str, grace_ms: int = 10_000) -> dict[str, Any]:
+    def start_close_stop(self, workspace_id: str, key: str) -> None:
+        """On the host loop: :meth:`stop_for_closed_ticket` as a task that is kept until it ends."""
+        task = asyncio.get_running_loop().create_task(self.stop_for_closed_ticket(workspace_id, key))
+        self._close_tasks.add(task)
+        task.add_done_callback(self._close_tasks.discard)
+
+    async def stop_for_closed_ticket(self, workspace_id: str, key: str) -> list[str]:
+        """The ticket ``key`` of this workspace closed (done or closed): end its live agent runs. The runner's normal
+        stop (SIGHUP + SIGTERM, a grace of :data:`CLOSE_GRACE_MS`, then SIGKILL); the run record keeps
+        ``stop_cause`` and one security-audit line says why. Runs of another ticket, and terminals of people, stay.
+        Returns the runs asked to stop; a failure is audited and left to the next close (never raises)."""
+        runs = [
+            r["run"] for r in list(self.store.records.values())
+            if r.get("workspace_id") == workspace_id and r.get("ticket") == key and r.get("kind") == "agent"
+            and r.get("state") in LIVE and not r.get("stopping")
+        ]  # fmt: skip
+        done: list[str] = []
+        for run in runs:
+            self._audit("run.stopped_ticket_closed", run=run, workspace_id=workspace_id, ticket=key)
+            try:
+                await self._stop_one(run, CLOSE_GRACE_MS, cause="ticket_closed")
+                done.append(run)
+            except HostError as exc:
+                self._audit("run.stop_failed", run=run, workspace_id=workspace_id, ticket=key, code=exc.code)
+        return done
+
+    async def _stop_one(self, run: str, grace_ms: int = 10_000, cause: str | None = None) -> dict[str, Any]:
         rec = self.store.records.get(run)
         if rec is None:
             raise HostError("not_found", "no such run")
         if rec.get("state") not in LIVE:
             return {"state": rec.get("state"), "cleanup": rec.get("cleanup") or "unknown"}
         if not rec.get("stopping"):
-            rec = await self._save({**rec, "stopping": True}, publish=False)  # the exit report then says "stopped"
+            more = {"stop_cause": cause} if cause else {}
+            rec = await self._save({**rec, "stopping": True, **more}, publish=False)  # exit report then says "stopped"
         try:
             res = await self.command("stop", {"run": run, "grace_ms": grace_ms}, timeout=grace_ms / 1000 + 10)
         except HostError:
@@ -1488,6 +1537,52 @@ def _ticket_visible(service: Any, sub: RunSub, key: str) -> bool:
         return False
 
 
+#: an agent that ends within this many seconds of its start, with a non-zero code, "stopped before it began" (W30)
+EARLY_SECONDS = 30
+_HINT = "Ask the person who set up this computer to check the installation."
+_RETRY_HINT = "Start it again; if it keeps failing, ask the person who set up this computer."
+_NOT_FOUND = re.compile(r"not found|no such file", re.I)
+
+
+def _program(rec: dict[str, Any]) -> str:
+    """The agent program's name as the run knows it (``claude``), never a path."""
+    name = str(rec.get("harness") or "").rsplit("/", 1)[-1]
+    return name if re.fullmatch(r"[A-Za-z0-9._-]{1,32}", name) and name != "shell" else "the agent"
+
+
+def _not_found(rec: dict[str, Any]) -> tuple[str, str, str]:
+    return ("program_not_found", f"The agent program could not be started: {_program(rec)} was not found.", _HINT)
+
+
+def spawn_stop(rec: dict[str, Any], code: str) -> tuple[str, str, str] | None:
+    """W30: the cause of an agent run whose ``spawn`` the runner refused: (stop_cause, message, hint)."""
+    if rec.get("kind") != "agent":
+        return None
+    if code == "harness.not_found":
+        return _not_found(rec)
+    if code == "run.spawn_failed":
+        return ("spawn_failed", f"The agent program could not be started: {_program(rec)}.", _RETRY_HINT)
+    return None
+
+
+def early_stop(rec: dict[str, Any], code: int | None, tail: str, at: str) -> tuple[str, str, str] | None:
+    """W30: the cause of an agent run that exited by itself (not stopped, code non-zero) right after its start; a
+    normal exit, a person's stop and a long run give ``None`` and keep today's behaviour."""
+    if rec.get("kind") != "agent" or rec.get("stopping") or not code:
+        return None
+    try:
+        t0 = datetime.fromisoformat(str(rec.get("started_at")).replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        late = (t1 - t0).total_seconds() > EARLY_SECONDS
+    except (ValueError, TypeError):  # Opus W30: a time without a zone must never stop the exit from being recorded
+        return None
+    if late:
+        return None
+    if code in (126, 127) and (code == 127 or _NOT_FOUND.search(tail)):
+        return _not_found(rec)
+    return ("exited_early", f"The agent stopped right after it started ({_program(rec)}).", _RETRY_HINT)
+
+
 def _exit(reason: str, error: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {"code": None, "signal": None, "at": _iso(), "reason": reason}
     if error:
@@ -1617,6 +1712,28 @@ def serve(call: Call) -> dict[str, Any]:
         for r in window
     ]
     return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})
+
+
+def on_ticket_commit(service: Any, log: str, event: dict[str, Any]) -> None:
+    """``Store.on_commit`` (worker thread, under the store lock): a ticket line that closed its ticket ends the
+    ticket's live agent runs, on the host loop. Never raises: the commit stands."""
+    if event.get("type") not in CLOSING_TYPES or log == "workspace":
+        return
+    try:
+        view = service.store.ticket(log, heal=False)
+        hub = getattr(service, "runners", None)
+        loop = getattr(getattr(hub, "host", None), "loop", None)
+        if view is None or view.status not in ("done", "closed") or loop is None:
+            return
+        wid, key = service.entry.workspace_id, view.key
+        if not any(
+            r.get("workspace_id") == wid and r.get("ticket") == key and r.get("state") in LIVE
+            for r in list(hub.store.records.values())
+        ):
+            return  # the common case: no live run on it
+        loop.call_soon_threadsafe(hub.start_close_stop, wid, key)
+    except Exception:  # noqa: BLE001
+        LOG.exception("stopping the agents of a closed ticket failed")
 
 
 def _contacted(service: Any, window: list[dict[str, Any]]) -> dict[str, dict[str, bool]]:

@@ -236,7 +236,7 @@ describe('Tickets grouped by epic (N2)', () => {
     mockStore.sim.stopAll()
   }, 30_000)
 
-  it('is remembered per viewer: Tom does not inherit Severin\'s choice', async () => {
+  it('is remembered per viewer: Tom does not inherit Anna Test\'s choice', async () => {
     renderApp('/tickets', { viewer: 'p_tom', storage: { 'orch.tickets.group.p_sev': JSON.stringify({ group: 'none' }) } })
     const table = await screen.findByRole('table', { name: 'Tickets' })
     await within(table).findByText('DEMO-0043')

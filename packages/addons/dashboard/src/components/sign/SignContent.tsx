@@ -109,7 +109,7 @@ export function useWorkspaceMembers(ws: string | undefined): Member[] {
  * Name and id as separate isolates, so neither can reorder or hide the other. `plain` (the main view): a name that passed
  * every rule above is shown alone; the id it stands for is one line away in the Technical details (`name (id) = full id`).
  * A person without a showable name always keeps the id and the reason. Next to a name the main view always keeps the same
- * 12-hex short id the details use, muted ("Severin · p_181d953f12ab…"): names can look alike, so who is meant stays
+ * 12-hex short id the details use, muted ("Anna Test · p_181d953f12ab…"): names can look alike, so who is meant stays
  * visible without opening the details.
  */
 function Person({ parts, plain = false }: { parts: PersonParts; plain?: boolean }) {

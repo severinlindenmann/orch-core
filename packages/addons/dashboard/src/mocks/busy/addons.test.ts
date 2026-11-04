@@ -84,7 +84,7 @@ describe('busy day: addons are installed and filled', () => {
     const view = JSON.stringify(await s.api.getAddonState(s.ws, 'activity'))
     expect(view.length).toBeGreaterThan(5000)
   })
-  it('gives Severin addon decisions on top of the open items', async () => {
+  it('gives Anna Test addon decisions on top of the open items', async () => {
     const d = await s.api.getAddonDecisions(s.ws)
     expect(d.length).toBeGreaterThanOrEqual(8)
   })
@@ -123,14 +123,14 @@ describe('busy day: restricted tickets stay out of addon views', () => {
     const decisions = JSON.stringify(await x.api.getAddonDecisions(x.ws))
     for (const t of hidden) expect(decisions).not.toContain(t.key)
   }
-  it('control: Severin does see restricted tickets in publish, worktrees and quick (so the sweep tests something)', async () => {
+  it('control: Anna Test does see restricted tickets in publish, worktrees and quick (so the sweep tests something)', async () => {
     const restricted = s.store.listTickets(s.ws).filter((t) => t.restricted).map((t) => t.key)
     for (const name of ['publish', 'worktrees', 'quick', 'wiki']) {
       const json = JSON.stringify(await s.api.getAddonState(s.ws, name))
       expect(restricted.some((k) => json.includes(k)), name).toBe(true)
     }
   })
-  it('Mara (outside the Severin-only tickets)', () => sweep('p_mara'))
+  it('Mara (outside the Anna Test-only tickets)', () => sweep('p_mara'))
   it('Tom (outside every restricted ticket)', () => sweep('p_tom'))
 })
 

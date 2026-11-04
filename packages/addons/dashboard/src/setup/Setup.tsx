@@ -1,3 +1,4 @@
+import { isDemoBuild } from '@/lib/demo'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
@@ -1634,7 +1635,7 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
             : 'This page could not start setup. If you finished setup before, your workspace is ready.'}
         </p>
         <p>
-          <a className="primary" href="/">
+          <a className="primary" href={isDemoBuild ? import.meta.env.BASE_URL : '/'}>
             Open dashboard →
           </a>
         </p>

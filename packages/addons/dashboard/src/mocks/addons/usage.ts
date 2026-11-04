@@ -129,7 +129,7 @@ const AGENT_SEED = [
 
 /** Who ran the agents: every agent session runs under one person's grant (the owner most of the time). */
 const PERSON_SEED: Person[] = [
-  { id: 'p_sev', name: 'Severin', weight: 64 },
+  { id: 'p_sev', name: 'Anna Test', weight: 64 },
   { id: 'p_mara', name: 'Mara', weight: 36 },
 ]
 

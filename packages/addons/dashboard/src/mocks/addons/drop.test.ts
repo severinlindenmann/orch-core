@@ -93,7 +93,7 @@ describe('sharing a file', () => {
   it('a link is handed out once in core\'s secret dialog and never stored in state', async () => {
     const s = setup()
     const r = await run(s, 'share', { formData: { file: 'tariff-export.csv', to: 'link', days: 1, max_views: 5 } })
-    expect(r.secret!.value).toMatch(/^https:\/\/relay\.dev\.severin\.io\/d\/\d+#k=/)
+    expect(r.secret!.value).toMatch(/^https:\/\/relay\.example\.test\/d\/\d+#k=/)
     expect(r.secret!.note).toMatch(/shown once/)
     expect(r.secret!.note).toContain('Opens only in the orch app (iPhone or Mac). The relay has no download page')
     const st = await state(s)
@@ -133,7 +133,7 @@ describe('sharing a file', () => {
 describe('sent drops', () => {
   it('only the sender or an owner extends; remove and extend write addon events', async () => {
     const mara = setup('p_mara')
-    expect(await fail(run(mara, 'extend', { id: 'out_report' }))).toBe('403 forbidden') // Severin sent it
+    expect(await fail(run(mara, 'extend', { id: 'out_report' }))).toBe('403 forbidden') // Anna Test sent it
     expect((await run(mara, 'extend', { id: 'out_int' })).message).toMatch(/now expires/) // her own
     const sev = setup()
     expect((await run(sev, 'extend', { id: 'out_int' })).message).toMatch(/now expires/) // the owner
@@ -144,7 +144,7 @@ describe('sent drops', () => {
   })
   it('Extend is offered only to the sender or an owner', async () => {
     const mara = (await state(setup('p_mara'))).sentRows
-    expect(mara.find((r) => r.id === 'out_report')).toMatchObject({ canChange: true, canExtend: false }) // Severin sent it
+    expect(mara.find((r) => r.id === 'out_report')).toMatchObject({ canChange: true, canExtend: false }) // Anna Test sent it
     expect(mara.find((r) => r.id === 'out_int')?.canExtend).toBe(true) // her own
     const sev = (await state(setup())).sentRows
     expect(sev.filter((r) => r.canChange).every((r) => r.canExtend)).toBe(true) // the owner

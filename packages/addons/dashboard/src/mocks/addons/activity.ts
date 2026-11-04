@@ -152,7 +152,7 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
   // Someone removed later is no longer a member: their name is still in the member.added event.
   for (const e of c.store.wsEventsOf(c.ws)) if (e.type === 'member.added' && typeof e.person === 'string' && typeof e.name === 'string' && !names.has(e.person)) names.set(e.person, e.name)
   const sees = atLeast(roleOf(w, c.viewer), 'maintainer')
-  // Display names: a member's name, "Claude Code for Severin", an addon's title ("Estimate"), "orch".
+  // Display names: a member's name, "Claude Code for Anna Test", an addon's title ("Estimate"), "orch".
   const who = (a: Actor) => {
     if (a.kind === 'person') return names.get(a.id) ?? a.id
     if (a.kind === 'agent') {

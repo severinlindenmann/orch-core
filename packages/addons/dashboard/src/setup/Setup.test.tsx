@@ -150,10 +150,10 @@ function fake(
           : {
               workspace: {
                 prefix: 'RA',
-                name: 'Severin',
+                name: 'Anna Test',
                 workspace_name: 'Marketing',
                 dir: '/demo/orch-run2-a',
-                lines: ['Workspace Marketing (RA) for Severin', 'Ticket prefix: RA', 'Person: Severin', 'Folder: /demo/orch-run2-a'],
+                lines: ['Workspace Marketing (RA) for Anna Test', 'Ticket prefix: RA', 'Person: Anna Test', 'Folder: /demo/orch-run2-a'],
               },
             }),
         tty_confirm: !!options.finish,
@@ -1367,7 +1367,7 @@ test('after the terminal confirms, the words are replaced by a matched notice', 
 test('reviewFacts builds the short card in plain words from the review', () => {
   const review = {
     review_id: 'r', digest: 'd', fingerprint: null, tty_confirm: false, risk: null, runner_grant: null,
-    workspace: { prefix: 'MD', name: 'Severin', workspace_name: 'Marketing', dir: '/p', lines: [] },
+    workspace: { prefix: 'MD', name: 'Anna Test', workspace_name: 'Marketing', dir: '/p', lines: [] },
     flags: [{ id: 'custody', text: 'x' }, { id: 'records', text: 'y' }],
     items: [
       { id: 'runner_grant', title: 'Agent access', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' } },

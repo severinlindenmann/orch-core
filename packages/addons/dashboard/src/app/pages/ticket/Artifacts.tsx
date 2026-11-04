@@ -738,7 +738,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
  * What the viewer shows above the content: kind and size, then (Artifacts page) the ticket it is on, prominent; who
  * added it, when, its hash and what it proves on one quiet line.
  */
-export function ArtifactFacts({ a, by }: { a: Artifact; /** "Claude Code for Severin" where the page knows more than the ticket's actor label. */ by?: string }) {
+export function ArtifactFacts({ a, by }: { a: Artifact; /** "Claude Code for Anna Test" where the page knows more than the ticket's actor label. */ by?: string }) {
   return (
     <p className="text-[11px] text-text-faint">
       Added by {by ?? (a.added_by === 'host' ? 'orch' : agentName(a.added_by))} · <Ago at={a.at} /> · sha256 {shortHash(a.sha256, 12)}

@@ -27,7 +27,7 @@ describe('sidebar grant indicator', () => {
     expect(await screen.findByText(/^Agents can work until 13:3\d$/)).toBeInTheDocument()
   })
 
-  it('follows the current workspace (no grant for Severin in Client VM)', async () => {
+  it('follows the current workspace (no grant for Anna Test in Client VM)', async () => {
     const { user } = renderApp('/')
     expect(await screen.findByText('Agents can work until 18:00')).toBeInTheDocument()
     await user.keyboard('{Meta>}3{/Meta}')

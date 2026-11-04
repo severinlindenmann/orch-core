@@ -22,7 +22,7 @@ import { useWorkspace } from '@/app/workspace'
 
 const KEY = /^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$/
 
-/** The actor in words: a person's name, "Claude Code for Severin", an add-on's id, or "orch". */
+/** The actor in words: a person's name, "Claude Code for Anna Test", an add-on's id, or "orch". */
 export function actorName(a: ActivityRow['actor']): string {
   if (a.kind === 'person') return a.name || 'Someone'
   if (a.kind === 'agent') {

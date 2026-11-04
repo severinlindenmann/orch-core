@@ -7,7 +7,7 @@
     "members": [
       {
         "person": "p_sev",
-        "name": "Severin",
+        "name": "Anna Test",
         "role": "owner",
         "devices": 2,
         "last_seen": "2026-10-09T11:28:00Z"
@@ -280,7 +280,7 @@
     "members": [
       {
         "person": "p_sev",
-        "name": "Severin",
+        "name": "Anna Test",
         "role": "owner",
         "devices": 2,
         "last_seen": "2026-10-09T11:28:00Z"
@@ -412,7 +412,7 @@
     "members": [
       {
         "person": "p_sev",
-        "name": "Severin",
+        "name": "Anna Test",
         "role": "owner",
         "devices": 2,
         "last_seen": "2026-10-09T11:28:00Z"

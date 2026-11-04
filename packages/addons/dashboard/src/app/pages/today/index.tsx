@@ -69,7 +69,7 @@ function actionRef(a: HumanAction): string {
   return a.gate
 }
 
-/** A viewer's summary line for one person who decides: "Severin decides · 4 open", opening into that person's rows. */
+/** A viewer's summary line for one person who decides: "Anna Test decides · 4 open", opening into that person's rows. */
 function PersonSummary({ person, entries, scope, renderRow }: { person: string; entries: Entry[]; scope: string; renderRow: (row: Row) => ReactNode }) {
   const [open, setOpen] = useSessionState(`orch.today.person.${scope}.${person}`, false)
   const kinds = buildGroups(entries).map((g) => `${g.count} ${g.label.toLowerCase()}`).join(' · ')

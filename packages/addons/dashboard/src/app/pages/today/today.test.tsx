@@ -297,6 +297,6 @@ describe('Today by role', () => {
 
   it('Mara: a last line says how many wait for an owner', async () => {
     renderApp('/', { viewer: 'p_mara' })
-    expect(await screen.findByText(/\d+ more (is|are) waiting for an owner \(Severin\)/, {}, T)).toBeInTheDocument()
+    expect(await screen.findByText(/\d+ more (is|are) waiting for an owner \(Anna Test\)/, {}, T)).toBeInTheDocument()
   })
 })

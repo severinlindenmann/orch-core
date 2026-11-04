@@ -51,7 +51,7 @@ describe('canRevokeGrant', () => {
 
 describe('roleOf', () => {
   it("reads a person's role from the workspace members", () => {
-    const ws = { members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }] }
+    const ws = { members: [{ person: 'p_sev', name: 'Anna Test', role: 'owner' as const }] }
     expect(roleOf(ws, 'p_sev')).toBe('owner')
     expect(roleOf(ws, 'p_x')).toBeUndefined()
     expect(roleOf(undefined, 'p_sev')).toBeUndefined()

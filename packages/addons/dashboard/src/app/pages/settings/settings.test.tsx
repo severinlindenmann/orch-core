@@ -17,7 +17,7 @@ describe('Settings', () => {
   })
   it('refuses to demote the last owner', async () => {
     const { user } = renderApp('/settings/members')
-    const row = await screen.findByRole('row', { name: /Severin/ })
+    const row = await screen.findByRole('row', { name: /Anna Test/ })
     expect(within(row).getByRole('combobox', { name: /^Role of / })).toBeDisabled()
     await user.hover(within(row).getByRole('combobox', { name: /^Role of / }))
     expect(await screen.findByText(/last owner/)).toBeInTheDocument()

@@ -147,7 +147,7 @@ export function revokeSplit(m: PreviewMandate): { voids: MandateDecision[]; land
 /** Decisions the owner has not looked at yet (the digest on Today). */
 export const unseen = (m: PreviewMandate) => m.decisions.filter((d) => !d.review && !d.voided)
 
-/** "Verdict: via mandate md_3, for Severin — no person reviewed this (commit b7e1f02)". Used by tests and docs. */
+/** "Verdict: via mandate md_3, for Anna Test — no person reviewed this (commit b7e1f02)". Used by tests and docs. */
 export function decisionLabel(d: MandateDecision, mandate: string, issuer: string): string {
   return `${DECISION_KIND_LABEL[d.kind]}: via mandate ${mandate}, for ${issuer} — no person reviewed this${d.commit ? ` (commit ${d.commit})` : ''}`
 }

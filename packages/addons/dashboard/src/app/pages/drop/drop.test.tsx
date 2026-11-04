@@ -76,7 +76,7 @@ describe('the list', () => {
     const row = await rowOf('quarterly-report.pdf')
     expect(within(row).getByTestId('drop-kind')).toHaveTextContent('File · application/pdf')
     expect(within(row).getByTestId('drop-size').textContent).toMatch(/KiB$/)
-    expect(within(row).getByTestId('drop-author')).toHaveTextContent('Severin · device d_phone_1 · from a phone')
+    expect(within(row).getByTestId('drop-author')).toHaveTextContent('Anna Test · device d_phone_1 · from a phone')
     expect(within(row).getByTestId('drop-state')).toHaveTextContent('Live')
     expect(within(row).getByTestId('drop-download')).toBeEnabled()
     // Agent-sealed is marked.
@@ -527,7 +527,7 @@ describe('Drop A2: shared from your phone', () => {
     await waitFor(() => expect(screen.queryByText('plain-file.pdf')).toBeNull(), T)
     expect(ops('list').at(-1)!.args).toEqual(['received', null, 'shared_from_phone'])
     const row = await rowOf('boarding-pass.pdf')
-    expect(within(row).getByTestId('drop-shared-label')).toHaveTextContent('Severin’s iPhone')
+    expect(within(row).getByTestId('drop-shared-label')).toHaveTextContent('Anna Test’s iPhone')
     expect(within(row).getByTestId('drop-claimed')).toBeInTheDocument()
     expect(within(row).getByTestId('drop-shared-until').textContent).toMatch(/^· shared until /)
     expect(within(row).queryByTestId('drop-gestureless')).toBeNull()

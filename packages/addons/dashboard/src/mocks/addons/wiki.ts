@@ -66,7 +66,7 @@ See the [dbt seeds guide](https://docs.getdbt.com/docs/build/seeds) for the load
     slug: 'dbt-seeds',
     title: 'dbt seeds: when to use them',
     updated: daysAgo(9),
-    by: 'Severin',
+    by: 'Anna Test',
     tickets: ['DEMO-0041'],
     markdown: `# dbt seeds: when to use them
 
@@ -100,7 +100,7 @@ Anything above 1 % is treated as a data incident, not a rounding problem.
     slug: 'on-call-runbook',
     title: 'On-call runbook',
     updated: daysAgo(5),
-    by: 'Severin',
+    by: 'Anna Test',
     tickets: [],
     markdown: `# On-call runbook
 
@@ -115,7 +115,7 @@ Anything above 1 % is treated as a data incident, not a rounding problem.
 | Role | Who | Hours |
 | --- | --- | --- |
 | Primary | Mara | 08:00 to 18:00 |
-| Secondary | Severin | 24 h, escalation only |
+| Secondary | Anna Test | 24 h, escalation only |
 
 Never delete a partition to make a run pass.
 `,
@@ -138,7 +138,7 @@ Never delete a partition to make a run pass.
     slug: 'dbt-model-naming',
     title: 'dbt model naming',
     updated: daysAgo(21),
-    by: 'Severin',
+    by: 'Anna Test',
     tickets: ['DEMO-0042'],
     markdown: `# dbt model naming
 
@@ -230,7 +230,7 @@ function busyPages(ws: string, store: MockStore, rng: Rng): Page[] {
         slug,
         title,
         updated: dayIso(rng.int(0, 28), rng.int(7, 17)),
-        by: rng.pick(['Mara', 'Severin']),
+        by: rng.pick(['Mara', 'Anna Test']),
         tickets: rng.sample(tickets, rng.int(0, 3)).map((t) => t.key),
         markdown: `# ${title}\n\nHow the Acme energy data team handles ${topic.toLowerCase()}: ${form}.\n\n## Rules\n\n${Array.from({ length: rng.int(3, 7) }, (_, i) => `${i + 1}. ${rng.pick(['Name the owner in the pull request.', 'Check the September data first.', 'Never edit a past row, add a new one.', 'Run the reconciliation before the close.', 'Keep timestamps in UTC.', 'Write down the tolerance you used.'])}`).join('\n')}\n\n## Checks\n\n| Check | Where | Tolerance |\n| --- | --- | --- |\n| Row count | dbt test | exact |\n| Billed kWh | reconciliation | 0.1 % |\n\n\`\`\`sql\nselect count(*) from {{ ref('fct_billing') }};\n\`\`\`\n`,
       })

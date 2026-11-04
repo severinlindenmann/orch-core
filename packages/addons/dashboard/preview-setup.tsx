@@ -46,6 +46,7 @@ const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
   if (path === 'secrets/confirm') r = { ok: true }
   if (path === 'review') r = review
   if (path === 'create') r = { run_id: 'x' }
+  if (path === 'finish') r = { url: import.meta.env.BASE_URL }
   if (path.startsWith('progress')) {
     const ids = [['keys','Creating your key'],['genesis','Saving your approval'],['register','Starting orch in the background'],['git','Preparing work copies'],['runner','Letting the dashboard run agents'],['settings','Saving the workspace settings'],['addon:quick','Quick tasks'],['flags','Turning on one-click approval'],['runner_grant','Letting agents start on this computer'],['custody','Storing your key for one-click approval']]
     r = { done: true, error: null, retry: [], waiting: null, steps: ids.map(([id,label]) => ({ id, label, status: 'done' })) }

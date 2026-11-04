@@ -1,3 +1,4 @@
+import { isDemoBuild } from '@/lib/demo'
 import { useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import { ArrowLeft, Check, Copy, Download, Plus, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -208,7 +209,7 @@ export function FeedbackPage() {
     <div className="h-full w-full min-w-0 max-w-full overflow-y-auto bg-bg">
       <div className="mx-auto w-full min-w-0 max-w-3xl px-4 py-4 sm:py-6">
         {/* A full page load, like the checklist: this page sits outside the shell. */}
-        <a href="/" className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text"><ArrowLeft className="size-4" /> Back to the dashboard</a>
+        <a href={isDemoBuild ? `${import.meta.env.BASE_URL}#/` : '/'} className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text"><ArrowLeft className="size-4" /> Back to the dashboard</a>
         <h1 className="mt-3 text-xl font-semibold text-text">Feedback</h1>
         <p className="mt-1 text-sm text-text-muted">Write what you noticed and paste screenshots with Cmd+V. The next field opens by itself. Add sub-points (1.1, 1.2) with “sub-feedback”, then export a ZIP (text and images) or copy the report (text and image file names only) for the agent. Saved in this browser only.</p>
 

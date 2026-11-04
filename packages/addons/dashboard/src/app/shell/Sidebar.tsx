@@ -1,3 +1,4 @@
+import { isDemoBuild } from '@/lib/demo'
 import { toast } from 'sonner'
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
@@ -96,7 +97,7 @@ function readMore(ws: string | undefined) {
   try {
     const stored = ws ? localStorage.getItem(MORE_KEY(ws)) : null
     // Keep the development mock's review links discoverable on its first visit.
-    return stored === null ? !isRealHost() && import.meta.env.DEV : stored === 'true'
+    return stored === null ? !isRealHost() && (import.meta.env.DEV || isDemoBuild) : stored === 'true'
   } catch {
     return false
   }
@@ -185,7 +186,7 @@ function AddonNavIcon({ item, collapsed }: { item: { addon: string; icon?: strin
 }
 
 const PEOPLE = [
-  { id: 'p_sev', name: 'Severin' },
+  { id: 'p_sev', name: 'Anna Test' },
   { id: 'p_mara', name: 'Mara' },
   { id: 'p_tom', name: 'Tom' },
 ]
@@ -195,7 +196,7 @@ export function Sidebar() {
   const qc = useQueryClient()
   const { data: me } = useMe()
   const hostInfo = useQuery(queries.hostInfo())
-  const devMode = !!hostInfo.data?.dev || (!isRealHost() && import.meta.env.DEV)
+  const devMode = !!hostInfo.data?.dev || (!isRealHost() && (import.meta.env.DEV || isDemoBuild))
   const navItems = useSlot('nav')
   const { data: packages } = useAddons()
   const previews = new Set(packages?.filter((a) => a.preview).map((a) => a.name))
@@ -423,7 +424,7 @@ export function Sidebar() {
 
           {devMode && <RailTip label="Test checklist">
             {/* A full page load: the checklist is its own page outside the shell, so an in-app move would render the old page without its shell for a moment. */}
-            <a href="/checklist" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
+            <a href={isDemoBuild ? `${import.meta.env.BASE_URL}#/checklist` : '/checklist'} className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
               <ListChecks className="size-4" />
               <span className={label}>Test checklist</span>
             </a>
@@ -431,7 +432,7 @@ export function Sidebar() {
 
           <RailTip label="Feedback">
             {/* A full page load, like the checklist: the page is outside the shell. */}
-            <a href="/feedback" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Feedback">
+            <a href={isDemoBuild ? `${import.meta.env.BASE_URL}#/feedback` : '/feedback'} className={cn(link, 'text-[12px] text-text-muted')} aria-label="Feedback">
               <MessageSquareText className="size-4" />
               <span className={label}>Feedback</span>
             </a>

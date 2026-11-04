@@ -60,7 +60,7 @@ describe('runCommand: first line of each command', () => {
     expect(first('git status')).toBe('On branch feat/billing-join')
     expect(runCommand('git log --oneline -5', ctx()).lines).toHaveLength(5)
     expect(first('ls')).toMatch(/seeds/)
-    expect(first('pwd')).toBe('/Users/severin/energy')
+    expect(first('pwd')).toBe('/Users/demo/energy')
     expect(first('help')).toMatch(/^commands: .*orch status/)
     expect(runCommand('exit', ctx())).toMatchObject({ exit: true, lines: ['logout'] })
     expect(runCommand('clear', ctx()).clear).toBe(true)
@@ -122,14 +122,14 @@ describe('createShell: line editing, history and Ctrl-C', () => {
   it('echoes typing, runs on Enter and prints a new prompt', () => {
     const sh = createShell(() => live)
     expect(sh.feed('pwd')).toBe('pwd')
-    expect(sh.feed('\r')).toBe('\r\n/Users/severin/energy\r\nseverin@acme ~/energy (feat/billing-join) $ ')
+    expect(sh.feed('\r')).toBe('\r\n/Users/demo/energy\r\nseverin@acme ~/energy (feat/billing-join) $ ')
   })
   it('backspace edits the line', () => {
     const sh = createShell(() => live)
     sh.feed('pwx')
     expect(sh.feed('\x7f')).toBe('\b \b')
     sh.feed('d')
-    expect(sh.feed('\r')).toContain('/Users/severin/energy')
+    expect(sh.feed('\r')).toContain('/Users/demo/energy')
   })
   it('arrow up recalls the previous commands, arrow down comes back', () => {
     const sh = createShell(() => live)

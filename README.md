@@ -1,6 +1,10 @@
 
 # orch
 
+> **Live demo:** click through orch with sample data, no install needed:
+> **[severinlindenmann.github.io/orch-core](https://severinlindenmann.github.io/orch-core/)**
+> (workspace dashboard, setup wizard, hub console, publish pages).
+
 **Let coding agents do the work. Keep every decision yours.**
 
 <p align="center">

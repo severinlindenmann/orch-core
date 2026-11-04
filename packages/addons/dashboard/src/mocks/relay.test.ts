@@ -25,7 +25,7 @@ describe('relay state (simulated)', () => {
     const r = await api.getRelay(ws)
     expect(r.simulated).toBe(true)
     expect(r.link).toBe('off')
-    expect(r.devices.map((d) => d.label)).toEqual(["Severin's MacBook Pro", "Severin's iPhone", "Mara's MacBook Air", "Tom's iPad"])
+    expect(r.devices.map((d) => d.label)).toEqual(["Anna's MacBook Pro", "Anna's iPhone", "Mara's MacBook Air", "Tom's iPad"])
     expect(r.devices.find((d) => d.this_device)).toMatchObject({ id: 'd_mac', primary: true, last_seen: r.now })
     expect(r.epoch).toBe(1)
     expect(r.next_rotation).toBe('2026-11-12T07:42:10Z')
@@ -56,7 +56,7 @@ describe('relay state (simulated)', () => {
     vi.advanceTimersByTime(4100)
     expect((await s.api.getRelay(s.ws)).link).toBe('online')
   })
-  it('hides a queued push about a ticket the viewer cannot see (DEMO-0044 is restricted to Severin and Mara)', async () => {
+  it('hides a queued push about a ticket the viewer cannot see (DEMO-0044 is restricted to Anna Test and Mara)', async () => {
     const sev = setup('p_sev')
     expect((await sev.api.getRelay(sev.ws)).queue.some((q) => q.ticket === 'DEMO-0044')).toBe(true)
     const tom = setup('p_tom')
@@ -88,12 +88,12 @@ describe('pairing a device', () => {
     expect(Date.parse(p.expires_at) - Date.parse(p.started_at)).toBe(600_000)
     expect(await fail(s.api.postRelay(s.ws, { op: 'pair.confirm', pairing: p.id, fingerprint: 'XXXXXX' }))).toBe('409 pairing.waiting')
     const r2 = await s.api.simulateRelay(s.ws, { op: 'scan' })
-    expect(r2.pairing).toMatchObject({ state: 'confirm', label: "Severin's iPad", platform: 'ipad' })
+    expect(r2.pairing).toMatchObject({ state: 'confirm', label: "Anna Test's iPad", platform: 'ipad' })
     expect(r2.pairing!.fingerprint).toMatch(/^[0-9A-HJKMNP-TV-Z]{6}$/)
     expect(await fail(s.api.postRelay(s.ws, { op: 'pair.confirm', pairing: p.id, fingerprint: 'ZZZZZZ' }))).toBe('409 pairing.mismatch')
     const r3 = await s.api.postRelay(s.ws, { op: 'pair.confirm', pairing: p.id, fingerprint: r2.pairing!.fingerprint! })
     expect(r3.pairing).toBeNull()
-    const ipad = r3.devices.find((d) => d.label === "Severin's iPad")!
+    const ipad = r3.devices.find((d) => d.label === "Anna Test's iPad")!
     expect(ipad.epoch).toBe(0) // the key is on its way
     expect(r3.queue.some((q) => q.kind === 'seal_key' && q.device === ipad.id)).toBe(true)
     vi.advanceTimersByTime(20_000)

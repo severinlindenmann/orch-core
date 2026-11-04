@@ -20,8 +20,8 @@ vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof
 const ws = 'a'.repeat(32)
 const person = 'p_user1'
 const FEATURES = ['identity', 'today', 'tickets', 'board', 'ticket', 'changes', 'evidence']
-const workspaces = [{ id: ws, prefix: 'DEMO', name: 'Dev workspace', members: [{ person, name: 'Severin', role: 'owner', devices: 1 }], needs_you: 2, host_state: 'ok', features: FEATURES }]
-const me = [{ person, name: 'Severin', role: 'owner', tier: 'A', workspace: ws }]
+const workspaces = [{ id: ws, prefix: 'DEMO', name: 'Dev workspace', members: [{ person, name: 'Anna Test', role: 'owner', devices: 1 }], needs_you: 2, host_state: 'ok', features: FEATURES }]
+const me = [{ person, name: 'Anna Test', role: 'owner', tier: 'A', workspace: ws }]
 const empty = { rows: [], next_page: null, total: 0, sub_cursor: 'c', as_of: '2026-10-11T09:00:00Z' }
 let ticketDoc: unknown
 let login: string | undefined = 'local'

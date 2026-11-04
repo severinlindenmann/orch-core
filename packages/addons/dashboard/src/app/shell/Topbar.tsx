@@ -1,3 +1,4 @@
+import { isDemoBuild } from '@/lib/demo'
 import { HubChip } from './HubChip'
 import { TerminalWaitChip } from './TerminalWaitChip'
 import { AgentAccess } from './AgentAccess'
@@ -83,6 +84,7 @@ export function Topbar() {
         </span>
       </div>
       <DevBadge />
+      {isDemoBuild && <Badge variant="outline">Demo - sample data</Badge>}
       <HubChip ws={workspace?.id} />
       <TerminalWaitChip ws={workspace?.id} />
       <div className="flex-1" />

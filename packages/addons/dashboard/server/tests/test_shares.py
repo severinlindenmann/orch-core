@@ -161,6 +161,41 @@ def test_a_host_without_publish_says_unavailable(client, token, stub, host):
     assert host.calls == []
 
 
+@pytest.mark.parametrize("ticket", ["", "?ticket=DEMO-1"])
+def test_list_waits_quietly_for_the_first_hub_snapshot(client, token, stub, gateway, monkeypatch, ticket):
+    link = Host()
+    link.answers["addon.list"] = {
+        "addons": [
+            {"name": name, "enabled": False, "state": "paused", "paused": {"cause": "unverified"}}
+            for name in ("dashboard", "publish")
+        ]
+    }
+    monkeypatch.setattr(gateway, "link", lambda ws: link)
+    res = client.get(url(stub, "/shares" + ticket), headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == {"available": False, "why": "paused", "pending": True}
+    assert all(call[0] == "addon.list" for call in link.calls)
+
+
+@pytest.mark.parametrize("state,cause", [("disabled", None), ("paused", "hub_moved")])
+def test_list_keeps_real_dashboard_refusals(client, token, stub, gateway, monkeypatch, state, cause):
+    link = Host()
+    link.answers["addon.list"] = {
+        "addons": [{"name": "dashboard", "enabled": False, "state": state, "paused": {"cause": cause}}]
+    }
+    monkeypatch.setattr(gateway, "link", lambda ws: link)
+    res = client.get(url(stub, "/shares"), headers=hdr(token))
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "addon.disabled"
+
+
+def test_list_keeps_a_disabled_publish_refusal(client, token, stub, host):
+    host.answers["publish.list"] = HostError({"code": "addon.disabled"}, 3)
+    res = client.get(url(stub, "/shares"), headers=hdr(token))
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "addon.disabled"
+
+
 def test_list_for_one_ticket_names_the_ticket(client, token, stub, host):
     host.answers["publish.list"] = LIST
     assert client.get(url(stub, "/shares?ticket=DEMO-1"), headers=hdr(token)).status_code == 200

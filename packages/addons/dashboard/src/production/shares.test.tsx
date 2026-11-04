@@ -123,6 +123,20 @@ it('a show-once link opened as often as allowed reads Used up, not Live', () => 
   expect(effectiveState({ ...base, views: null })).toBe('live')
 })
 
+it('J13: while the hub has not confirmed (pending) the page stays loading, never "no shares", then shows the real list', async () => {
+  route()
+  let pending = true
+  const base = state.host.override
+  state.host.override = (path, method, body) => pending && path.endsWith('/shares') && method === 'GET'
+    ? Response.json({ available: false, why: 'paused', pending: true }) : base?.(path, method, body)
+  show('/w/DEMO/shares')
+  expect(await screen.findByText(/Reading the shares/, {}, T)).toBeInTheDocument()
+  expect(screen.queryByText(/Publish is not on/)).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
+  pending = false
+  expect(await screen.findByRole('table', { name: 'Shares' }, { timeout: 6000 })).toBeInTheDocument()
+}, 10000)
+
 it('lists the shares: kind, end time, opens and state, with Stop sharing only on an active one; no link anywhere', async () => {
   route()
   show('/w/DEMO/shares')

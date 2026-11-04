@@ -1,8 +1,10 @@
 // P06: the join dialog says "Connected" and closes only after the hub has confirmed its first settings.
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
+import { sharesApi } from '@/api/shares'
+import { invalidateLive } from '@/api/useLiveUpdates'
 import * as sealed from '@/api/sealed'
 import * as gesture from '@/components/sign/trustedPress'
 import { setHubScenario, setMockConfirmAfter, setMockConnectError, setMockOneClick, setMockVault } from '@/mocks/hub'
@@ -96,6 +98,24 @@ describe('P18: nothing behind the dialog is read before the hub confirmed', () =
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
     await waitFor(() => expect(today.mock.calls.length).toBeGreaterThan(before[0]), T) // read once the hub confirmed
   })
+})
+
+it('a live signed-join update mounts HubSharing and reads shares before hub confirmation', async () => {
+  setMockConfirmAfter(99)
+  const success = vi.spyOn(toast, 'success')
+  const shares = vi.spyOn(sharesApi, 'list').mockResolvedValue({ available: false, why: 'paused' })
+  const view = await joinUntilSigned()
+  await screen.findByTestId('hub-connect-waiting', {}, T)
+  expect(shares).not.toHaveBeenCalled()
+  const status = view.client.getQueryCache().findAll({ queryKey: ['hub'] })
+    .find(q => q.queryKey[2] === 'status')!
+  const ws = status.queryKey[1] as string
+  // The signed workspace event can reach the page independently of ConnectStage.done.
+  await act(async () => invalidateLive(view.client, ws, 'changes', [{ id: 'join', type: 'hub.joined' }]))
+  await waitFor(() => expect(shares).toHaveBeenCalledWith(ws), T)
+  expect(screen.getByTestId('hub-connect-waiting')).toBeTruthy()
+  expect(success).not.toHaveBeenCalled()
+  expect(screen.queryByText(/Publish is not on/)).toBeNull()
 })
 
 describe('P18: closing while the hub is silent', () => {

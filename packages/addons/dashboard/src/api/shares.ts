@@ -57,7 +57,7 @@ export interface Staged {
 }
 
 export type SharesData =
-  | { available: false }
+  | { available: false; why?: 'paused'; pending?: true }
   | {
       available: true
       configured: boolean
@@ -108,9 +108,19 @@ export const sharesApi = {
   register: (ws: string, idem: string) => call<{ registered: boolean; result: 'registered' | 'unchanged' }>('POST', `${w(ws)}/shares/register`, { idem }),
 }
 
+/** J13: while the hub has not confirmed its first snapshot the read answers `pending`: the query stays loading and
+ *  reads again every 2 s (up to 2 min), never shown as an error or as "no shares". */
+const pendingAware = async (read: () => Promise<SharesData>): Promise<SharesData> => {
+  for (let i = 0; ; i++) {
+    const got = await read()
+    if (!(got.available === false && got.pending) || i >= 60) return got
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+}
+
 export const shareQueries = {
-  list: (ws: string) => queryOptions({ queryKey: ['shares', ws], queryFn: () => sharesApi.list(ws), retry: false }),
-  ofTicket: (ws: string, ticket: string) => queryOptions({ queryKey: ['shares', ws, ticket], queryFn: () => sharesApi.list(ws, ticket), retry: false }),
+  list: (ws: string) => queryOptions({ queryKey: ['shares', ws], queryFn: () => pendingAware(() => sharesApi.list(ws)), retry: false }),
+  ofTicket: (ws: string, ticket: string) => queryOptions({ queryKey: ['shares', ws, ticket], queryFn: () => pendingAware(() => sharesApi.list(ws, ticket)), retry: false }),
 }
 
 export const kindText = (kind: Share['kind'], limit?: number | null): string =>

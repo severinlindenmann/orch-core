@@ -3,6 +3,12 @@
 Non-trivial product and engineering decisions made during the autonomous run, for the owner's review.
 Format: date, decision, why, how to revert.
 
+## 2026-11-04 — J13 shares during an unverified hub join
+
+- **Decision:** GET shares returns `{available: false, why: 'paused'}` when Dashboard is paused solely for an unverified first hub snapshot. Shares renders “Waiting for the hub…”. Actual disabled errors and write gates remain unchanged.
+- **Why:** A live signed-join update can refresh hub status and mount HubSharing behind the join dialog before confirmation; its shares query otherwise receives 409 from the Dashboard gate.
+- **Revert:** Remove the narrow read-only pause projection and its waiting text; retain disabled-error behavior.
+
 ## 2026-10-28 — D2 grant sequences retain C3's press guard
 
 - **Decision:** Mark grant-carrying sequence Views as `grant` with `confirm.mode: press`. Enforce nonempty signer risk lines and the closed one-press allowlist at the relay; preserve dashboard execution checks at prepare and sign.

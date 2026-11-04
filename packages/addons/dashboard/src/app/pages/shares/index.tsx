@@ -78,7 +78,9 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
         <h1 className="text-xl font-semibold tracking-tight">Shares</h1>
         <UnsentShares workspace={workspace} />
         <p data-testid="shares-unavailable" className="text-[13px] text-text-muted">
-          Publish is not on for this workspace, so there is nothing to list here. Turn it on on the Add-ons page.
+          {list.data?.available === false && list.data.why === 'paused'
+            ? 'Waiting for the hub…'
+            : 'Publish is not on for this workspace, so there is nothing to list here. Turn it on on the Add-ons page.'}
         </p>
       </div>
     )

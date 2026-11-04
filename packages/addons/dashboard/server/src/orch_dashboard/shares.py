@@ -271,7 +271,14 @@ def register(app: FastAPI, gateway: Gateway) -> None:
 
     @app.get("/api/w/{ws}/shares")
     def shares(query: Annotated[ListQuery, Query()], ws: str = Depends(reads.workspace)):
-        link = gateway.enabled(ws)
+        try:
+            link = gateway.enabled(ws)
+        except HostError as exc:
+            # A signed join pauses Dashboard too until the first hub snapshot is verified.
+            # Reads may arrive from the page behind the join dialog during that interval.
+            if exc.error.get("code") == "addon.disabled" and gateway.paused_unverified(ws):
+                return {"available": False, "why": "paused", "pending": True}  # never "no shares": the page waits
+            raise
         if not supported(link):
             return {"available": False}
         args = {"live": True, **({"ref": query.ticket} if query.ticket else {})}
